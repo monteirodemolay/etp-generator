@@ -78,6 +78,8 @@ function emptyEtp() {
       prazoGarantiaDias: "", prazoEntregaDias: "",
       metodologiaCalculo: "mediana", // "mediana" | "media"
       impactoAmbientalRelevante: false, impactoAmbientalDescricao: "",
+      metodologiaQuantidades: "", // "" | "historico" | "beneficiarios" | "parametro" | "substituicao" | "comparacao" | "outro"
+      detalhamentoQuantidades: "",
     },
     itens: [],
     cotacoes: {}, // { [itemId]: [{id, fonte, valor}] }
@@ -677,8 +679,28 @@ ${blocoAlternativas}`;
 
 function gerarTextoPadraoV(etp) {
   const itens = etp.itens || [];
+  const metodo = etp.meta.metodologiaQuantidades;
+  const detalhamento = etp.meta.detalhamentoQuantidades?.trim();
+
+  const basesMetodologicas = {
+    historico: "no histórico de consumo ou utilização registrado pela unidade requisitante",
+    beneficiarios: "no número de beneficiários ou atendimentos realizados pela unidade, aplicado a um parâmetro técnico de consumo por pessoa/atendimento",
+    parametro: "em parâmetro técnico ou normativo aplicável à natureza do objeto",
+    substituicao: "na necessidade de substituição de itens que atingiram o fim de sua vida útil ou se encontram em condições inadequadas de uso",
+    comparacao: "em comparação com unidades ou órgãos de porte e natureza semelhantes",
+  };
+
+  let paragrafoMetodologia;
+  if (metodo === "outro" && detalhamento) {
+    paragrafoMetodologia = `<p>${escapeHtml(detalhamento)}</p>`;
+  } else if (metodo && basesMetodologicas[metodo]) {
+    paragrafoMetodologia = `<p>O levantamento quantitativo foi realizado com base ${basesMetodologicas[metodo]}${detalhamento ? `. Especificamente, ${escapeHtml(detalhamento)}` : ""}, observando-se critérios de economicidade e adequação à real necessidade da contratação, sem prejuízo de eventual repactuação em caso de alteração superveniente da demanda.</p>`;
+  } else {
+    paragrafoMetodologia = `<p>A definição dos quantitativos considerou a demanda identificada pelo setor requisitante, observando-se critérios de economicidade e adequação à real necessidade da contratação, sem prejuízo de eventual repactuação em caso de alteração superveniente da demanda. [Detalhe a metodologia de levantamento — histórico de consumo, número de beneficiários, parâmetro técnico etc. — no campo correspondente em Dados do Processo, que este texto se completa sozinho.]</p>`;
+  }
+
   return `<p>As quantidades estimadas para cada item constam da Planilha de Itens que integra este Estudo Técnico Preliminar, sintetizadas no quadro de quantitativos apresentado a seguir, totalizando ${itens.length} item(ns).</p>
-<p>A definição dos quantitativos considerou a demanda identificada pelo setor requisitante[, bem como o histórico de consumo da ${escapeHtml(etp.meta.orgao?.trim() || "unidade")}, quando aplicável], observando-se critérios de economicidade e adequação à real necessidade da contratação, sem prejuízo de eventual repactuação em caso de alteração superveniente da demanda.</p>`;
+${paragrafoMetodologia}`;
 }
 
 function gerarTextoPadraoVII(etp) {
@@ -1453,6 +1475,40 @@ function MetaForm({ etp, onMeta }) {
         <input value={etp.meta.impactoAmbientalDescricao || ""} onChange={e => onMeta("impactoAmbientalDescricao", e.target.value)}
           placeholder="Descreva brevemente o impacto e a medida de mitigação prevista"
           className="w-full mb-4 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+      )}
+
+      <label className="block mb-2">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+          Como as quantidades foram levantadas (inciso V)
+        </span>
+        <select value={etp.meta.metodologiaQuantidades || ""} onChange={e => onMeta("metodologiaQuantidades", e.target.value)}
+          className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+          <option value="">Não definido</option>
+          <option value="historico">Histórico de consumo/utilização</option>
+          <option value="beneficiarios">Número de beneficiários/atendimentos</option>
+          <option value="parametro">Parâmetro técnico ou normativo</option>
+          <option value="substituicao">Substituição de itens por fim de vida útil</option>
+          <option value="comparacao">Comparação com unidades/órgãos similares</option>
+          <option value="outro">Outro (descrever)</option>
+        </select>
+      </label>
+      {etp.meta.metodologiaQuantidades && (
+        <label className="block mb-4">
+          <span className="text-xs" style={{ color: C.inkMuted }}>
+            {({
+              historico: "Detalhe o período analisado e o consumo médio observado (ex.: \"últimos 12 meses, consumo médio de 40 unidades/mês\").",
+              beneficiarios: "Informe o número de beneficiários/atendimentos e o parâmetro de consumo por pessoa (ex.: \"120 assistidos, 1 kit por pessoa/semestre\").",
+              parametro: "Cite a norma, portaria ou parâmetro técnico utilizado como referência.",
+              substituicao: "Informe quantos itens serão substituídos e a condição que motiva a troca (ex.: \"8 equipamentos com mais de 10 anos de uso, fora de garantia\").",
+              comparacao: "Cite a unidade/órgão comparado e os números levantados.",
+              outro: "Descreva livremente a metodologia utilizada — este texto entra direto no modelo padrão do inciso V.",
+            })[etp.meta.metodologiaQuantidades]}
+          </span>
+          <textarea value={etp.meta.detalhamentoQuantidades || ""} onChange={e => onMeta("detalhamentoQuantidades", e.target.value)}
+            rows={2} placeholder="Digite os números e/ou a referência concreta que embasou o levantamento..."
+            className="mt-1.5 w-full px-3 py-2 rounded-lg border text-sm leading-relaxed resize-y"
+            style={{ borderColor: C.border, background: "white" }} />
+        </label>
       )}
 
       <div className="mt-6 p-4 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
