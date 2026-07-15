@@ -68,7 +68,17 @@ function emptyEtp() {
   SECOES.forEach(s => (sections[s.id] = ""));
   return {
     id: "etp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-    meta: { titulo: "", orgao: "", setor: "", responsavel: "", processo: "", tipo: TIPOS_OBJETO[0], local: "", introducao: "", fonteRecurso: "", data: todayISO() },
+    meta: {
+      titulo: "", orgao: "", setor: "", responsavel: "", processo: "", tipo: TIPOS_OBJETO[0], local: "",
+      introducao: "", fonteRecurso: "", data: todayISO(),
+      // Campos estruturados — alimentam automaticamente os modelos padrão dos incisos III, VI, VII, VIII, XI e XII
+      parcelamento: "", // "" | "nao" | "sim"
+      correlataExiste: false, correlataDescricao: "",
+      manutencaoContinuada: false,
+      prazoGarantiaDias: "", prazoEntregaDias: "",
+      metodologiaCalculo: "mediana", // "mediana" | "media"
+      impactoAmbientalRelevante: false, impactoAmbientalDescricao: "",
+    },
     itens: [],
     cotacoes: {}, // { [itemId]: [{id, fonte, valor}] }
     valoresAdotados: {}, // { [itemId]: "12.34" } — valor unitário adotado após o levantamento de preços
@@ -557,25 +567,18 @@ function gerarTextoPadraoII(etp) {
 // texto fixo com lacunas preenchidas automaticamente a partir dos dados já cadastrados no ETP.
 // Pode ser reaproveitado em qualquer aquisição; o servidor ajusta manualmente o que for específico do caso.
 function gerarTextoPadraoVI(etp) {
-  const bemOuServico = etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI" ? "serviços" : "bens";
-  const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
-  const fonte = etp.meta.fonteRecurso?.trim();
-  const paragrafoFonte = fonte
-    ? `<p>Foram consideradas ainda as exigências constantes de ${escapeHtml(fonte)}, cujos recursos estão destinados exclusivamente à aquisição dos ${bemOuServico} descritos neste Estudo Técnico Preliminar.</p>`
-    : "";
+  const bem = bemOuServicoDe(etp);
+  const itemPalavra = bem === "serviços" ? "serviços" : "itens";
+  const metodologia = etp.meta.metodologiaCalculo === "media" ? "média aritmética simples" : "mediana";
+  const fontesUsadas = [...new Set(Object.values(etp.cotacoes || {}).flat().map(q => q.fonte).filter(Boolean))];
+  const fontesTexto = fontesUsadas.length > 0 ? fontesUsadas.join(", ") : "";
 
   return `
-<p>Para garantir a seleção da solução mais apropriada para a aquisição dos ${bemOuServico}, foi adotada uma metodologia criteriosa de levantamento mercadológico, baseada na análise de preços praticados por fornecedores especializados, em pesquisas em plataformas públicas e na avaliação de experiências anteriores de entidades similares. A pesquisa de mercado teve como objetivo identificar as opções mais vantajosas para a Administração, assegurando que os itens adquiridos atendam aos padrões de qualidade exigidos, com especificações técnicas adequadas e compatíveis com o uso institucional pretendido.</p>
-${paragrafoFonte}
-<p>No processo de avaliação, as alternativas abaixo foram analisadas, porém não foram consideradas adequadas frente à necessidade concreta de ${escapeHtml(entidade)}:</p>
-<ul>
-<li>Locação de equipamentos: opção descartada em razão da natureza da fonte de recurso — quando voltada exclusivamente para aquisição definitiva — e da ausência de economicidade a longo prazo, considerando que a locação demandaria custos recorrentes, sem incorporação patrimonial para a entidade executora das ações;</li>
-<li>Aproveitamento de equipamentos existentes: os poucos equipamentos atualmente disponíveis se encontram em estado de obsolescência ou com desempenho insuficiente, sendo incompatíveis com as demandas operacionais e com os parâmetros de eficiência e segurança exigidos para os serviços prestados;</li>
-<li>Aquisição de itens com menor capacidade técnica ou de uso residencial: descartada por não atenderem às exigências institucionais de uso contínuo, coletivo e intensivo, o que comprometeria a durabilidade e a eficácia dos serviços prestados.</li>
-</ul>
-<p>A escolha pela aquisição de itens novos, com especificações institucionais e garantia técnica, representa a solução mais eficiente e vantajosa. Os materiais listados foram selecionados com base na compatibilidade com as atividades desenvolvidas, na capacidade técnica dos produtos e na viabilidade de manutenção e reposição de peças.</p>
-<p>A aquisição na forma aqui estabelecida promove não apenas a modernização e a funcionalidade das instalações, mas também reforça a transparência, a padronização e a economicidade no uso dos recursos públicos. Além disso, os bens adquiridos passarão a compor o patrimônio vinculado às ações desenvolvidas, garantindo a continuidade dos serviços.</p>
-<p>Portanto, a escolha dos itens e das especificações técnicas constantes neste Estudo Técnico Preliminar está embasada em levantamento realista, comparativo e fundamentado de mercado, considerando aspectos técnicos, econômicos e operacionais, culminando em uma solução segura, duradoura e alinhada ao interesse público.</p>
+<p>Apresenta-se, neste item, o levantamento e a estimativa de custos para a ${verboDe(etp)} dos ${bem} elencados, com o objetivo de fornecer uma projeção financeira detalhada, embasando a gestão eficiente dos recursos públicos vinculados.</p>
+<p>Considerando a especificidade dos ${itemPalavra}, procedeu-se à coleta de cotações junto a fornecedores do segmento${fontesTexto ? `, por meio de ${escapeHtml(fontesTexto)}` : ""}.</p>
+<p>Os valores levantados por fornecedor, bem como a ${metodologia} apurada para cada item, constam no quadro de estimativa de valores apresentado a seguir, elaborado a partir do levantamento de preços registrado na etapa "4. Levantamento de Preços" deste Estudo Técnico Preliminar.</p>
+<p><b>Metodologia de Cálculo:</b></p>
+<p>Neste Estudo Técnico Preliminar (ETP), adotou-se a ${metodologia} como método principal de estimativa de valor por item, por refletir de forma clara e objetiva os preços atualmente praticados no mercado, promovendo equilíbrio entre economicidade e exequibilidade da futura contratação.</p>
 `.trim();
 }
 
@@ -603,9 +606,11 @@ A não realização desta ${verboDe(etp)} comprometeria a regularidade e a quali
 
 function gerarTextoPadraoIII(etp) {
   const bem = bemOuServicoDe(etp);
+  const garantia = etp.meta.prazoGarantiaDias?.trim() ? `${etp.meta.prazoGarantiaDias} dias` : "[prazo]";
+  const entrega = etp.meta.prazoEntregaDias?.trim() ? `${etp.meta.prazoEntregaDias} dias` : "[prazo]";
   return `Os ${bem} objeto desta contratação deverão atender às especificações técnicas descritas na Planilha de Itens que integra este Estudo Técnico Preliminar, observando padrões de qualidade, segurança e desempenho compatíveis com o uso institucional pretendido.
 
-Além das especificações técnicas de cada item, deverão ser observados os seguintes requisitos gerais: (i) garantia mínima de [prazo] contra defeitos de fabricação, contada do recebimento definitivo; (ii) prazo de entrega/execução de até [prazo] dias corridos, contados da emissão da ordem de fornecimento ou serviço; (iii) apresentação de manual de uso e instruções em língua portuguesa, quando aplicável; (iv) atendimento às normas técnicas da ABNT e do INMETRO pertinentes a cada item, quando existentes.
+Além das especificações técnicas de cada item, deverão ser observados os seguintes requisitos gerais: (i) garantia mínima de ${garantia} contra defeitos de fabricação, contada do recebimento definitivo; (ii) prazo de entrega/execução de até ${entrega} corridos, contados da emissão da ordem de fornecimento ou serviço; (iii) apresentação de manual de uso e instruções em língua portuguesa, quando aplicável; (iv) atendimento às normas técnicas da ABNT e do INMETRO pertinentes a cada item, quando existentes.
 
 Em atenção ao art. 25, §1º, da Lei nº 14.133/2021, sempre que tecnicamente viável e sem comprometer a competitividade do certame, serão priorizados critérios e práticas de sustentabilidade ambiental, buscando itens que gerem menor impacto ambiental em seu ciclo de vida.`;
 }
@@ -614,9 +619,16 @@ function gerarTextoPadraoIV(etp) {
   const fontesUsadas = [...new Set(Object.values(etp.cotacoes || {}).flat().map(q => q.fonte).filter(Boolean))];
   const fontesTexto = fontesUsadas.length > 0 ? fontesUsadas.join(", ") : "Banco de Preços, pesquisa direta com fornecedores e demais fontes públicas disponíveis";
   const bem = bemOuServicoDe(etp);
+  const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
+
   return `O levantamento de mercado realizado identificou fornecedores e prestadores capazes de atender às especificações constantes da Planilha de Itens deste Estudo Técnico Preliminar, mediante consulta a ${fontesTexto}, cujos resultados fundamentam a estimativa de valor apresentada no inciso VI.
 
 A pesquisa considerou a disponibilidade de mercado, a existência de padrão usual de especificação para os ${bem} pretendidos e a viabilidade de definição objetiva do objeto no instrumento convocatório, nos termos do art. 6º, XLI, e do art. 29 da Lei nº 14.133/2021.
+
+No processo de avaliação, as alternativas abaixo foram analisadas, porém não foram consideradas adequadas frente à necessidade concreta de ${entidade}:
+• Locação de equipamentos: opção descartada em razão da natureza da fonte de recurso — quando voltada exclusivamente para aquisição definitiva — e da ausência de economicidade a longo prazo, considerando que a locação demandaria custos recorrentes, sem incorporação patrimonial para a entidade executora das ações;
+• Aproveitamento de equipamentos existentes: os poucos equipamentos atualmente disponíveis se encontram em estado de obsolescência ou com desempenho insuficiente, sendo incompatíveis com as demandas operacionais e com os parâmetros de eficiência e segurança exigidos;
+• Aquisição de itens com menor capacidade técnica ou de uso residencial: descartada por não atenderem às exigências institucionais de uso contínuo, coletivo e intensivo, o que comprometeria a durabilidade e a eficácia dos serviços prestados.
 
 Optou-se pela solução de mercado descrita neste Estudo Técnico Preliminar por representar, entre as alternativas pesquisadas, a que melhor atende à relação entre custo, qualidade e adequação à necessidade identificada no inciso I.`;
 }
@@ -631,17 +643,32 @@ function gerarTextoPadraoVII(etp) {
   const itens = etp.itens || [];
   const classificacoes = [...new Set(itens.map(i => i.classificacao).filter(Boolean))];
   const bem = bemOuServicoDe(etp);
+  const paragrafoManutencao = etp.meta.manutencaoContinuada
+    ? `Esta contratação inclui exigência de manutenção, assistência técnica ou fornecimento continuado de peças, cujas condições específicas estão detalhadas nos requisitos técnicos constantes do inciso III deste Estudo.`
+    : `Ressalvado o disposto em instrumento contratual específico, esta contratação não inclui, por si só, exigências de manutenção continuada, assistência técnica ou fornecimento de peças além da garantia legal e contratual aplicável aos ${bem} adquiridos.`;
   return `A solução consiste na ${verboDe(etp)} de ${itens.length} item(ns) descrito(s) na Planilha de Itens que integra este Estudo Técnico Preliminar${classificacoes.length ? `, compreendendo ${classificacoes.join(", ").toLowerCase()}` : ""}.
 
 A entrega/execução será realizada em conformidade com o critério de parcelamento definido no inciso VIII deste Estudo, observadas as especificações técnicas de cada item.
 
-Ressalvado o disposto em instrumento contratual específico, esta contratação não inclui, por si só, exigências de manutenção continuada, assistência técnica ou fornecimento de peças além da garantia legal e contratual aplicável aos ${bem} adquiridos.`;
+${paragrafoManutencao}`;
 }
 
 function gerarTextoPadraoVIII(etp) {
+  if (etp.meta.parcelamento === "nao") {
+    return `Considerando a natureza e as características dos itens que compõem esta aquisição, a contratação não será dividida em itens ou lotes distintos, sendo processada como lote único.
+
+Essa opção se justifica pela busca de economia de escala na aquisição, pela unidade técnica e funcional do objeto, e pela ausência de prejuízo à competitividade do certame, nos termos do art. 40, V, "b", da Lei nº 14.133/2021. O fracionamento da contratação, no caso concreto, não traria ganho de competitividade relevante que justificasse a perda de economia de escala e a maior complexidade de gestão contratual decorrente de múltiplos fornecedores.`;
+  }
+  if (etp.meta.parcelamento === "sim") {
+    return `Considerando a natureza e as características dos itens que compõem esta aquisição, a contratação será dividida em itens/lotes distintos.
+
+Essa opção se justifica pela viabilidade técnica e econômica de fornecimento por diferentes fornecedores, o que amplia a competitividade do certame sem perda relevante de economia de escala, nos termos do art. 40, V, "b", da Lei nº 14.133/2021. A divisão observa a natureza heterogênea e/ou a origem diversa dos itens relacionados na Planilha de Itens deste Estudo, sem comprometer a qualidade técnica da execução.`;
+  }
   return `Considerando a natureza e as características dos itens que compõem esta aquisição, [a contratação NÃO será dividida em itens/lotes — opção recomendada quando há economia de escala relevante e unidade técnica do objeto / a contratação SERÁ dividida em itens/lotes distintos — opção recomendada quando há viabilidade de fornecimento por múltiplos fornecedores sem perda de economia de escala].
 
-[Complete com a justificativa aplicável ao caso concreto, considerando: economia de escala; unidade técnica ou funcional do objeto; viabilidade técnica e econômica de fornecimento por diferentes fornecedores; eventual risco de fracionamento indevido da despesa, entre outros aspectos pertinentes, nos termos do art. 40, V, "b", da Lei nº 14.133/2021.]`;
+[Complete com a justificativa aplicável ao caso concreto, considerando: economia de escala; unidade técnica ou funcional do objeto; viabilidade técnica e econômica de fornecimento por diferentes fornecedores; eventual risco de fracionamento indevido da despesa, entre outros aspectos pertinentes, nos termos do art. 40, V, "b", da Lei nº 14.133/2021.]
+
+Dica: defina isso rapidamente no campo "Parcelamento" em Dados do Processo, e este texto se completa sozinho.`;
 }
 
 function gerarTextoPadraoIX(etp) {
@@ -654,13 +681,23 @@ function gerarTextoPadraoX(etp) {
 }
 
 function gerarTextoPadraoXI(etp) {
+  if (etp.meta.correlataExiste && etp.meta.correlataDescricao?.trim()) {
+    return `Foi identificada contratação correlata ou interdependente relacionada ao objeto desta contratação: ${etp.meta.correlataDescricao.trim()}.
+
+A execução do objeto deste Estudo Técnico Preliminar deverá ser articulada com a contratação relacionada acima, de modo a garantir a compatibilidade de prazos e a continuidade das ações envolvidas.`;
+  }
   return `Não foram identificadas contratações correlatas ou interdependentes que condicionem a execução do objeto desta contratação.
 
-[Caso exista alguma contratação relacionada — por exemplo, obra, serviço de instalação, ou outro fornecimento do qual esta aquisição dependa ou que dependa dela —, substitua este texto descrevendo a contratação relacionada e a natureza da dependência entre elas.]`;
+[Caso exista alguma contratação relacionada — por exemplo, obra, serviço de instalação, ou outro fornecimento do qual esta aquisição dependa ou que dependa dela —, marque o campo correspondente em Dados do Processo e descreva-a lá, que este texto se completa sozinho.]`;
 }
 
 function gerarTextoPadraoXII(etp) {
   const bem = bemOuServicoDe(etp);
+  if (etp.meta.impactoAmbientalRelevante && etp.meta.impactoAmbientalDescricao?.trim()) {
+    return `Considerando a natureza dos ${bem} objeto desta contratação, foi identificado o seguinte impacto ambiental a ser considerado: ${etp.meta.impactoAmbientalDescricao.trim()}.
+
+A Administração observará, no que couber, critérios de sustentabilidade previstos no art. 25, §1º, da Lei nº 14.133/2021, adotando as medidas de mitigação cabíveis para minimizar o impacto identificado.`;
+  }
   return `Considerando a natureza dos ${bem} objeto desta contratação, não são esperados impactos ambientais significativos decorrentes de sua aquisição ou execução.
 
 Ainda assim, a Administração observará, no que couber, critérios de sustentabilidade previstos no art. 25, §1º, da Lei nº 14.133/2021, priorizando produtos e embalagens de menor impacto ambiental, bem como a destinação adequada de resíduos e embalagens, quando aplicável.`;
@@ -1288,6 +1325,83 @@ function MetaForm({ etp, onMeta }) {
           Se preenchido, entra automaticamente no modelo padrão do inciso VI (Estimativa do Valor).
         </span>
       </label>
+
+      <div className="mt-8 mb-3">
+        <h3 className="serif text-lg font-semibold" style={{ color: C.navy }}>Detalhes para os modelos padrão</h3>
+        <p className="text-xs" style={{ color: C.inkMuted }}>
+          Opcional, mas quanto mais preenchido aqui, menos colchete <code>[complete aqui]</code> sobra nos
+          modelos padrão (sem IA) dos incisos III, VI, VII, VIII, XI e XII.
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Prazo de garantia (dias)" value={etp.meta.prazoGarantiaDias} onChange={v => onMeta("prazoGarantiaDias", v)}
+          placeholder="Ex.: 365" />
+        <Field label="Prazo de entrega/execução (dias)" value={etp.meta.prazoEntregaDias} onChange={v => onMeta("prazoEntregaDias", v)}
+          placeholder="Ex.: 30" />
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <label className="block mb-4">
+          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+            Parcelamento (inciso VIII)
+          </span>
+          <select value={etp.meta.parcelamento || ""} onChange={e => onMeta("parcelamento", e.target.value)}
+            className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+            <option value="">Não definido</option>
+            <option value="nao">Não será parcelada (lote único)</option>
+            <option value="sim">Será parcelada em itens/lotes</option>
+          </select>
+        </label>
+        <label className="block mb-4">
+          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+            Metodologia de cálculo do valor (inciso VI)
+          </span>
+          <select value={etp.meta.metodologiaCalculo || "mediana"} onChange={e => onMeta("metodologiaCalculo", e.target.value)}
+            className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+            <option value="mediana">Mediana</option>
+            <option value="media">Média aritmética simples</option>
+          </select>
+        </label>
+      </div>
+
+      <label className="flex items-start gap-2 mb-3 cursor-pointer">
+        <input type="checkbox" checked={!!etp.meta.manutencaoContinuada}
+          onChange={e => onMeta("manutencaoContinuada", e.target.checked)}
+          className="mt-0.5" style={{ accentColor: C.brass }} />
+        <span className="text-sm" style={{ color: C.ink }}>
+          Esta contratação exige manutenção, assistência técnica ou fornecimento continuado de peças (inciso VII)
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 mb-2 cursor-pointer">
+        <input type="checkbox" checked={!!etp.meta.correlataExiste}
+          onChange={e => onMeta("correlataExiste", e.target.checked)}
+          className="mt-0.5" style={{ accentColor: C.brass }} />
+        <span className="text-sm" style={{ color: C.ink }}>
+          Há contratação correlata ou interdependente (inciso XI)
+        </span>
+      </label>
+      {etp.meta.correlataExiste && (
+        <input value={etp.meta.correlataDescricao || ""} onChange={e => onMeta("correlataDescricao", e.target.value)}
+          placeholder="Descreva brevemente a contratação relacionada e a natureza da dependência"
+          className="w-full mb-4 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+      )}
+
+      <label className="flex items-start gap-2 mb-2 cursor-pointer">
+        <input type="checkbox" checked={!!etp.meta.impactoAmbientalRelevante}
+          onChange={e => onMeta("impactoAmbientalRelevante", e.target.checked)}
+          className="mt-0.5" style={{ accentColor: C.brass }} />
+        <span className="text-sm" style={{ color: C.ink }}>
+          Há impacto ambiental relevante a considerar (inciso XII)
+        </span>
+      </label>
+      {etp.meta.impactoAmbientalRelevante && (
+        <input value={etp.meta.impactoAmbientalDescricao || ""} onChange={e => onMeta("impactoAmbientalDescricao", e.target.value)}
+          placeholder="Descreva brevemente o impacto e a medida de mitigação prevista"
+          className="w-full mb-4 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+      )}
+
       <div className="mt-6 p-4 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
         Os incisos marcados com <b style={{ color: C.brass }}>*</b> na barra lateral (I, IV, VI, VIII e XIII) são de
         preenchimento obrigatório conforme o art. 18, §2º da Lei nº 14.133/2021 — os demais podem ser
