@@ -579,6 +579,115 @@ ${paragrafoFonte}
 `.trim();
 }
 
+// Helper comum: "bens" ou "serviços", conforme o tipo de objeto do ETP
+function bemOuServicoDe(etp) {
+  return etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI" ? "serviços" : "bens";
+}
+function verboDe(etp) {
+  return bemOuServicoDe(etp) === "serviços" ? "contratação" : "aquisição";
+}
+
+// ---------- Modelos padrão dos demais incisos — mesmo princípio do II/VI: texto fixo,
+// sem chamada de IA, com lacunas preenchidas a partir dos dados já cadastrados no ETP. ----------
+
+function gerarTextoPadraoI(etp) {
+  const entidade = etp.meta.orgao?.trim() || "[órgão]";
+  const setor = etp.meta.setor?.trim() || "[setor requisitante]";
+  const bem = bemOuServicoDe(etp);
+  return `A ${entidade}, por meio do(a) ${setor}, identificou a necessidade de ${verboDe(etp)} dos ${bem} relacionados na Planilha de Itens que integra este Estudo Técnico Preliminar, indispensáveis à continuidade e ao adequado desempenho das atividades institucionais.
+
+[Complete aqui a justificativa concreta da necessidade: qual carência específica motiva esta contratação, quais atividades ou serviços dependem dela, e o que ocorreria caso a contratação não fosse realizada. Esta é a única seção que exige redação própria do servidor responsável, por tratar-se da motivação específica do caso concreto.]
+
+A não realização desta ${verboDe(etp)} comprometeria a regularidade e a qualidade dos serviços prestados por ${entidade}, justificando-se, portanto, a presente contratação como medida necessária ao atendimento do interesse público.`;
+}
+
+function gerarTextoPadraoIII(etp) {
+  const bem = bemOuServicoDe(etp);
+  return `Os ${bem} objeto desta contratação deverão atender às especificações técnicas descritas na Planilha de Itens que integra este Estudo Técnico Preliminar, observando padrões de qualidade, segurança e desempenho compatíveis com o uso institucional pretendido.
+
+Além das especificações técnicas de cada item, deverão ser observados os seguintes requisitos gerais: (i) garantia mínima de [prazo] contra defeitos de fabricação, contada do recebimento definitivo; (ii) prazo de entrega/execução de até [prazo] dias corridos, contados da emissão da ordem de fornecimento ou serviço; (iii) apresentação de manual de uso e instruções em língua portuguesa, quando aplicável; (iv) atendimento às normas técnicas da ABNT e do INMETRO pertinentes a cada item, quando existentes.
+
+Em atenção ao art. 25, §1º, da Lei nº 14.133/2021, sempre que tecnicamente viável e sem comprometer a competitividade do certame, serão priorizados critérios e práticas de sustentabilidade ambiental, buscando itens que gerem menor impacto ambiental em seu ciclo de vida.`;
+}
+
+function gerarTextoPadraoIV(etp) {
+  const fontesUsadas = [...new Set(Object.values(etp.cotacoes || {}).flat().map(q => q.fonte).filter(Boolean))];
+  const fontesTexto = fontesUsadas.length > 0 ? fontesUsadas.join(", ") : "Banco de Preços, pesquisa direta com fornecedores e demais fontes públicas disponíveis";
+  const bem = bemOuServicoDe(etp);
+  return `O levantamento de mercado realizado identificou fornecedores e prestadores capazes de atender às especificações constantes da Planilha de Itens deste Estudo Técnico Preliminar, mediante consulta a ${fontesTexto}, cujos resultados fundamentam a estimativa de valor apresentada no inciso VI.
+
+A pesquisa considerou a disponibilidade de mercado, a existência de padrão usual de especificação para os ${bem} pretendidos e a viabilidade de definição objetiva do objeto no instrumento convocatório, nos termos do art. 6º, XLI, e do art. 29 da Lei nº 14.133/2021.
+
+Optou-se pela solução de mercado descrita neste Estudo Técnico Preliminar por representar, entre as alternativas pesquisadas, a que melhor atende à relação entre custo, qualidade e adequação à necessidade identificada no inciso I.`;
+}
+
+function gerarTextoPadraoV(etp) {
+  const itens = etp.itens || [];
+  return `<p>As quantidades estimadas para cada item constam da Planilha de Itens que integra este Estudo Técnico Preliminar, sintetizadas no quadro de quantitativos apresentado a seguir, totalizando ${itens.length} item(ns).</p>
+<p>A definição dos quantitativos considerou a demanda identificada pelo setor requisitante[, bem como o histórico de consumo da ${escapeHtml(etp.meta.orgao?.trim() || "unidade")}, quando aplicável], observando-se critérios de economicidade e adequação à real necessidade da contratação, sem prejuízo de eventual repactuação em caso de alteração superveniente da demanda.</p>`;
+}
+
+function gerarTextoPadraoVII(etp) {
+  const itens = etp.itens || [];
+  const classificacoes = [...new Set(itens.map(i => i.classificacao).filter(Boolean))];
+  const bem = bemOuServicoDe(etp);
+  return `A solução consiste na ${verboDe(etp)} de ${itens.length} item(ns) descrito(s) na Planilha de Itens que integra este Estudo Técnico Preliminar${classificacoes.length ? `, compreendendo ${classificacoes.join(", ").toLowerCase()}` : ""}.
+
+A entrega/execução será realizada em conformidade com o critério de parcelamento definido no inciso VIII deste Estudo, observadas as especificações técnicas de cada item.
+
+Ressalvado o disposto em instrumento contratual específico, esta contratação não inclui, por si só, exigências de manutenção continuada, assistência técnica ou fornecimento de peças além da garantia legal e contratual aplicável aos ${bem} adquiridos.`;
+}
+
+function gerarTextoPadraoVIII(etp) {
+  return `Considerando a natureza e as características dos itens que compõem esta aquisição, [a contratação NÃO será dividida em itens/lotes — opção recomendada quando há economia de escala relevante e unidade técnica do objeto / a contratação SERÁ dividida em itens/lotes distintos — opção recomendada quando há viabilidade de fornecimento por múltiplos fornecedores sem perda de economia de escala].
+
+[Complete com a justificativa aplicável ao caso concreto, considerando: economia de escala; unidade técnica ou funcional do objeto; viabilidade técnica e econômica de fornecimento por diferentes fornecedores; eventual risco de fracionamento indevido da despesa, entre outros aspectos pertinentes, nos termos do art. 40, V, "b", da Lei nº 14.133/2021.]`;
+}
+
+function gerarTextoPadraoIX(etp) {
+  const entidade = etp.meta.orgao?.trim() || "[órgão]";
+  return `Com a presente contratação, a Administração busca obter, direta e indiretamente, os seguintes resultados: (i) atendimento à necessidade identificada no inciso I deste Estudo Técnico Preliminar, com a disponibilização, em tempo hábil, dos itens necessários ao pleno funcionamento das atividades de ${entidade}; (ii) modernização e padronização dos bens/serviços utilizados, com reflexo positivo na qualidade e na continuidade dos serviços prestados; (iii) uso eficiente dos recursos públicos, mediante planejamento adequado da contratação; (iv) fortalecimento da transparência e da economicidade na gestão dos recursos destinados a ${entidade}.`;
+}
+
+function gerarTextoPadraoX(etp) {
+  return `Previamente à celebração do contrato, a Administração deverá adotar as seguintes providências: (i) confirmação da disponibilidade orçamentária e financeira para a despesa, nos termos do art. 18, §1º, VI, c/c art. 7º, III, da Lei nº 14.133/2021; (ii) verificação da adequação do espaço físico e das condições de recebimento dos itens, quando aplicável; (iii) designação do(s) servidor(es) responsável(is) pelo recebimento provisório e definitivo, nos termos dos arts. 140 e seguintes da Lei nº 14.133/2021; (iv) demais atos de instrução processual exigidos para a formalização da contratação.`;
+}
+
+function gerarTextoPadraoXI(etp) {
+  return `Não foram identificadas contratações correlatas ou interdependentes que condicionem a execução do objeto desta contratação.
+
+[Caso exista alguma contratação relacionada — por exemplo, obra, serviço de instalação, ou outro fornecimento do qual esta aquisição dependa ou que dependa dela —, substitua este texto descrevendo a contratação relacionada e a natureza da dependência entre elas.]`;
+}
+
+function gerarTextoPadraoXII(etp) {
+  const bem = bemOuServicoDe(etp);
+  return `Considerando a natureza dos ${bem} objeto desta contratação, não são esperados impactos ambientais significativos decorrentes de sua aquisição ou execução.
+
+Ainda assim, a Administração observará, no que couber, critérios de sustentabilidade previstos no art. 25, §1º, da Lei nº 14.133/2021, priorizando produtos e embalagens de menor impacto ambiental, bem como a destinação adequada de resíduos e embalagens, quando aplicável.`;
+}
+
+function gerarTextoPadraoXIII(etp) {
+  const entidade = etp.meta.orgao?.trim() || "[órgão]";
+  return `Diante do exposto, com base nos elementos técnicos, jurídicos e econômicos reunidos neste Estudo Técnico Preliminar — descrição da necessidade, alinhamento ao Plano de Contratações Anual, levantamento de mercado, estimativas de quantidade e de valor, análise de alternativas e demais aspectos abordados —, conclui-se pela viabilidade técnica e econômica desta contratação, por se tratar de solução adequada, vantajosa e compatível com o interesse público e com a necessidade identificada por ${entidade}.`;
+}
+
+// Mapa central: cada inciso aponta para sua função de modelo padrão (todas gratuitas, sem IA)
+const MODELOS_PADRAO = {
+  I: gerarTextoPadraoI,
+  II: gerarTextoPadraoII,
+  III: gerarTextoPadraoIII,
+  IV: gerarTextoPadraoIV,
+  V: gerarTextoPadraoV,
+  VI: gerarTextoPadraoVI,
+  VII: gerarTextoPadraoVII,
+  VIII: gerarTextoPadraoVIII,
+  IX: gerarTextoPadraoIX,
+  X: gerarTextoPadraoX,
+  XI: gerarTextoPadraoXI,
+  XII: gerarTextoPadraoXII,
+  XIII: gerarTextoPadraoXIII,
+};
+
 // ---------- App ----------
 export default function App() {
   const [view, setView] = useState("list"); // list | editor | preview
@@ -1281,11 +1390,12 @@ function SectionForm({ etp, section, value, onChange }) {
   }
 
   function handleModeloPadrao() {
-    const texto = section.id === "II" ? gerarTextoPadraoII(etp) : gerarTextoPadraoVI(etp);
-    onChange(texto);
+    const gerar = MODELOS_PADRAO[section.id];
+    if (gerar) onChange(gerar(etp));
   }
 
-  const temModeloPadraoII = section.id === "II" && etp.pca && etp.itens?.length > 0;
+  const temModeloPadrao = !!MODELOS_PADRAO[section.id];
+  const bloqueadoPorPca = section.id === "II" && !(etp.pca && etp.itens?.length > 0);
   const textoPlano = rich ? (value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : (value || "").trim();
 
   return (
@@ -1301,13 +1411,13 @@ function SectionForm({ etp, section, value, onChange }) {
       <p className="text-sm mb-3" style={{ color: C.inkMuted }}>{section.ajuda}</p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        {(section.id === "VI" || section.id === "II") && (
-          <button onClick={handleModeloPadrao} disabled={section.id === "II" && !temModeloPadraoII}
+        {temModeloPadrao && (
+          <button onClick={handleModeloPadrao} disabled={bloqueadoPorPca}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
             style={{ background: C.brass, color: C.navyDark }}
-            title={section.id === "II" && !temModeloPadraoII
+            title={bloqueadoPorPca
               ? 'Importe a planilha do PCA na etapa "2. Alinhamento ao PCA" primeiro'
-              : "Preenche com o texto-modelo salvo no app, sem usar IA"}>
+              : "Preenche com o texto-modelo salvo no app — grátis, sem IA e sem API"}>
             <FileEdit size={13} /> Usar modelo padrão (sem IA)
           </button>
         )}
