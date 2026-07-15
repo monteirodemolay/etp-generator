@@ -361,6 +361,13 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     ? `<h3>Relação de itens objeto desta aquisição</h3><ul>${itens.map(it => `<li>${escapeHtml(it.descricao || "-")}${it.quantidade ? ` — ${escapeHtml(String(it.quantidade))} ${escapeHtml(it.unidade || "")}` : ""}</li>`).join("")}</ul>`
     : "";
 
+  const quadroQuantitativos = itens.length > 0
+    ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
+    : "";
+  const quadroValores = temValores
+    ? `<h3>Quadro de estimativa de valores</h3><table><tr><th>Item</th><th>Descrição</th><th>Qtd.</th><th>Vlr. Unit.</th><th>Vlr. Total</th></tr>${linhasValores}<tr><td colspan="4" style="text-align:right"><b>Total estimado</b></td><td><b>${brl(totalGeral)}</b></td></tr></table>`
+    : "";
+
   const secoesHtml = SECOES.map(s => `
     <h2>${s.id} — ${escapeHtml(s.titulo)}${s.obrig ? " *" : ""}</h2>
     ${isRichSection(s.id)
@@ -368,6 +375,8 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
       : `<p>${escapeHtml(etp.sections[s.id]?.trim() || "Não preenchido.").replace(/\n/g, "<br/>")}</p>`}
     ${s.id === "I" ? listaItensNecessidade : ""}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
+    ${s.id === "V" ? quadroQuantitativos : ""}
+    ${s.id === "VI" ? quadroValores : ""}
   `).join("");
 
   const html = `<!DOCTYPE html>
@@ -400,8 +409,6 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     <tr><td><b>Data:</b></td><td>${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}</td></tr>
   </table>
   ${etp.meta.introducao?.trim() ? `<h2>Introdução</h2><p>${escapeHtml(etp.meta.introducao).replace(/\n/g, "<br/>")}</p>` : ""}
-  ${itens.length > 0 ? `<h2>Especificações e Quantitativos</h2><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>` : ""}
-  ${temValores ? `<h2>Estimativa de Valores</h2><table><tr><th>Item</th><th>Descrição</th><th>Qtd.</th><th>Vlr. Unit.</th><th>Vlr. Total</th></tr>${linhasValores}<tr><td colspan="4" style="text-align:right"><b>Total estimado</b></td><td><b>${brl(totalGeral)}</b></td></tr></table>` : ""}
   ${secoesHtml}
   <div class="assinatura">
     <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
@@ -500,6 +507,29 @@ Responda APENAS com a frase do objeto (começando com "${verbo} de"), sem aspas,
   const text = (await callClaude(contexto, 300)).trim().replace(/^["']|["']$/g, "");
   if (!text) throw new Error("Resposta vazia da IA");
   return text;
+}
+
+// Modelo padrão do inciso II (alinhamento ao PCA), sem chamada de IA — usa o resultado do cruzamento
+// já feito na etapa "2. Alinhamento ao PCA" (mesmos dados, nenhuma nova ingestão).
+function gerarTextoPadraoII(etp) {
+  const itens = etp.itens || [];
+  if (!etp.pca || itens.length === 0) return "";
+
+  const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+  const total = itens.length;
+  const dataImportacao = fmtDate(etp.pca.importedAt);
+
+  let texto = `A presente contratação foi confrontada com o Plano de Contratações Anual (PCA) vigente, a partir da planilha "${etp.pca.nomeArquivo}" (extraída do painel do PCA em ${dataImportacao}). `;
+
+  if (encontrados === total) {
+    texto += `Da comparação, verificou-se que a totalidade dos ${total} item(ns) que compõem esta aquisição já consta prevista no PCA, conforme demonstrado no quadro de alinhamento apresentado a seguir.`;
+  } else if (encontrados > 0) {
+    texto += `Da comparação, verificou-se que ${encontrados} de ${total} item(ns) que compõem esta aquisição já constam previstos no PCA, conforme demonstrado no quadro de alinhamento apresentado a seguir. Os demais ${total - encontrados} item(ns) ainda não constam expressamente no plano vigente, devendo ser objeto de inclusão ou atualização do planejamento, ou de justificativa fundamentada para a exceção, previamente à formalização da contratação, nos termos do art. 12, VII, da Lei nº 14.133/2021.`;
+  } else {
+    texto += `Da comparação, não foram localizados registros correspondentes aos itens desta aquisição no PCA vigente, conforme demonstrado no quadro de alinhamento apresentado a seguir, devendo ser providenciada a inclusão ou atualização do planejamento, ou apresentada justificativa fundamentada para a exceção, previamente à formalização da contratação, nos termos do art. 12, VII, da Lei nº 14.133/2021.`;
+  }
+
+  return texto;
 }
 
 // Modelo padrão do inciso VI (metodologia de levantamento de preços), sem chamada de IA —
@@ -1217,9 +1247,11 @@ function SectionForm({ etp, section, value, onChange }) {
   }
 
   function handleModeloPadrao() {
-    onChange(gerarTextoPadraoVI(etp));
+    const texto = section.id === "II" ? gerarTextoPadraoII(etp) : gerarTextoPadraoVI(etp);
+    onChange(texto);
   }
 
+  const temModeloPadraoII = section.id === "II" && etp.pca && etp.itens?.length > 0;
   const textoPlano = rich ? (value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : (value || "").trim();
 
   return (
@@ -1235,10 +1267,13 @@ function SectionForm({ etp, section, value, onChange }) {
       <p className="text-sm mb-3" style={{ color: C.inkMuted }}>{section.ajuda}</p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        {section.id === "VI" && (
-          <button onClick={handleModeloPadrao}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-            style={{ background: C.brass, color: C.navyDark }} title="Preenche com o texto-modelo salvo no app, sem usar IA">
+        {(section.id === "VI" || section.id === "II") && (
+          <button onClick={handleModeloPadrao} disabled={section.id === "II" && !temModeloPadraoII}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
+            style={{ background: C.brass, color: C.navyDark }}
+            title={section.id === "II" && !temModeloPadraoII
+              ? 'Importe a planilha do PCA na etapa "2. Alinhamento ao PCA" primeiro'
+              : "Preenche com o texto-modelo salvo no app, sem usar IA"}>
             <FileEdit size={13} /> Usar modelo padrão (sem IA)
           </button>
         )}
@@ -1918,6 +1953,32 @@ function PreviewView({ etp, onBack }) {
           t += `• ${it.descricao || "-"}${it.quantidade ? ` — ${it.quantidade} ${it.unidade || ""}` : ""}\n`;
         });
       }
+      if (s.id === "II" && etp.pca && etp.itens?.length > 0) {
+        t += `\nQuadro de alinhamento ao PCA:\n`;
+        etp.itens.forEach(it => {
+          const m = pcaMatchFor(it, etp.pca.linhas);
+          t += `• ${it.descricao || "-"} — ${m ? `consta (seq. ${m.sequencial || "-"})` : "não consta"}\n`;
+        });
+      }
+      if (s.id === "V" && etp.itens?.length > 0) {
+        t += `\nQuadro de quantitativos:\n`;
+        etp.itens.forEach(it => {
+          t += `• ${it.descricao || "-"} — ${it.unidade || ""} — qtd. ${it.quantidade || "-"}\n`;
+        });
+      }
+      if (s.id === "VI" && Object.keys(etp.valoresAdotados || {}).length > 0) {
+        t += `\nQuadro de estimativa de valores:\n`;
+        let totalGeral = 0;
+        etp.itens.forEach(it => {
+          const v = (etp.valoresAdotados || {})[it.id];
+          if (v) {
+            const totalItem = num(it.quantidade) * num(v);
+            totalGeral += totalItem;
+            t += `• ${it.descricao || "-"} — qtd. ${it.quantidade || "-"} × ${brl(num(v))} = ${brl(totalItem)}\n`;
+          }
+        });
+        t += `Valor total estimado: ${brl(totalGeral)}\n`;
+      }
       t += `\n`;
     });
     t += `${linhaAssinaturaData(etp)}\n`;
@@ -2014,69 +2075,6 @@ function PreviewView({ etp, onBack }) {
             </div>
           )}
 
-          {etp.itens?.length > 0 && (
-            <div className="mb-8">
-              <h3 className="serif text-base font-bold mb-2" style={{ color: C.navy }}>Especificações e Quantitativos</h3>
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                  <tr style={{ background: C.paperDark }}>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Und.</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Qtd.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {etp.itens.map((it, idx) => (
-                    <tr key={it.id}>
-                      <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
-                      <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
-                      <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.unidade}</td>
-                      <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {etp.itens?.length > 0 && Object.keys(etp.valoresAdotados || {}).length > 0 && (
-            <div className="mb-8">
-              <h3 className="serif text-base font-bold mb-2" style={{ color: C.navy }}>Estimativa de Valores (Levantamento de Preços)</h3>
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                  <tr style={{ background: C.paperDark }}>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Qtd.</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Unit. Adotado</th>
-                    <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {etp.itens.map((it, idx) => {
-                    const v = (etp.valoresAdotados || {})[it.id];
-                    return (
-                      <tr key={it.id}>
-                        <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
-                        <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
-                        <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
-                        <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{v ? brl(num(v)) : "—"}</td>
-                        <td className="px-2 py-1.5 border font-medium" style={{ borderColor: C.border }}>{v ? brl(num(it.quantidade) * num(v)) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                  <tr style={{ background: C.paperDark }}>
-                    <td colSpan={4} className="px-2 py-1.5 border text-right font-semibold" style={{ borderColor: C.border }}>Valor total estimado</td>
-                    <td className="px-2 py-1.5 border font-bold" style={{ borderColor: C.border, color: C.navy }}>
-                      {brl(etp.itens.reduce((s, i) => s + num(i.quantidade) * num((etp.valoresAdotados || {})[i.id]), 0))}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-
           {SECOES.map(s => (
             <div key={s.id} className="mb-6">
               <h3 className="serif text-base font-bold mb-1.5" style={{ color: C.navy }}>
@@ -2135,6 +2133,71 @@ function PreviewView({ etp, onBack }) {
                   <p className="text-[10px] mt-1" style={{ color: C.inkMuted }}>
                     Fonte: planilha "{etp.pca.nomeArquivo}", importada em {fmtDate(etp.pca.importedAt)}.
                   </p>
+                </div>
+              )}
+              {s.id === "V" && etp.itens?.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
+                    Quadro de quantitativos
+                  </p>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: C.paperDark }}>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Und.</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Qtd.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {etp.itens.map((it, idx) => (
+                        <tr key={it.id}>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.unidade}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {s.id === "VI" && etp.itens?.length > 0 && Object.keys(etp.valoresAdotados || {}).length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
+                    Quadro de estimativa de valores
+                  </p>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: C.paperDark }}>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Qtd.</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Unit. Adotado</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {etp.itens.map((it, idx) => {
+                        const v = (etp.valoresAdotados || {})[it.id];
+                        return (
+                          <tr key={it.id}>
+                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
+                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
+                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
+                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{v ? brl(num(v)) : "—"}</td>
+                            <td className="px-2 py-1.5 border font-medium" style={{ borderColor: C.border }}>{v ? brl(num(it.quantidade) * num(v)) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                      <tr style={{ background: C.paperDark }}>
+                        <td colSpan={4} className="px-2 py-1.5 border text-right font-semibold" style={{ borderColor: C.border }}>Valor total estimado</td>
+                        <td className="px-2 py-1.5 border font-bold" style={{ borderColor: C.border, color: C.navy }}>
+                          {brl(etp.itens.reduce((s2, i) => s2 + num(i.quantidade) * num((etp.valoresAdotados || {})[i.id]), 0))}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
