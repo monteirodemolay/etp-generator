@@ -395,6 +395,13 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>ETP</title>
 <style>
+  @page Section1 {
+    size: 8.5in 11.0in;
+    margin: 1.1in 1.0in 1.0in 1.0in;
+    mso-header-margin: 0.4in;
+    mso-header: h1;
+  }
+  div.Section1 { page: Section1; }
   body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1a1a1a; }
   h1 { font-size: 15pt; text-align: center; margin-bottom: 2pt; }
   .subtitulo { text-align: center; font-size: 10.5pt; color: #555; margin-bottom: 18pt; }
@@ -403,13 +410,14 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 10pt; }
   td, th { border: 1px solid #999; padding: 4px 6px; text-align: left; }
   .meta-table td { border: none; padding: 2px 0; font-size: 10.5pt; }
-  .timbre { display: block; margin: 0 auto 14pt; max-height: 110px; }
+  .timbre { display: block; margin: 0 auto; max-height: 80px; }
   .assinatura { text-align: center; margin-top: 40pt; }
   .rodape { font-size: 8pt; color: #777; margin-top: 24pt; border-top: 1px solid #ccc; padding-top: 8pt; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<img class="timbre" src="${timbreDataUrl}" />` : ""}
+  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" style="text-align:center; margin:0; border-bottom:1px solid #ccc; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" /></p></div>` : ""}
+  <div class="Section1">
   <h1>ESTUDO TÉCNICO PRELIMINAR</h1>
   <p class="subtitulo">Lei nº 14.133/2021 · art. 18</p>
   <table class="meta-table">
@@ -426,6 +434,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
   <p style="margin-top: 40pt">_______________________________________</p>
   <p>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</p>
+  </div>
   </div>
 </body>
 </html>`;
@@ -717,7 +726,20 @@ export default function App() {
         @media print {
           .no-print { display: none !important; }
           .print-area { box-shadow: none !important; margin: 0 !important; }
+          .timbre-inline-print { display: none !important; }
+          .timbre-fixed-print {
+            display: block !important;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            text-align: center;
+            padding: 6px 0 10px;
+            background: white;
+          }
+          .print-area { padding-top: 110px !important; }
         }
+        .timbre-fixed-print { display: none; }
       `}</style>
 
       {view === "list" && (
@@ -2200,7 +2222,12 @@ function PreviewView({ etp, onBack }) {
       <div className="max-w-3xl mx-auto py-6 px-4">
         <div className="print-area bg-white shadow-sm rounded-lg p-10" style={{ border: `1px solid ${C.border}` }}>
           {timbre && (
-            <div className="mb-6 flex justify-center">
+            <div className="timbre-fixed-print">
+              <img src={timbre} alt="Timbre da Secretaria" style={{ maxHeight: "90px", maxWidth: "90%" }} />
+            </div>
+          )}
+          {timbre && (
+            <div className="mb-6 flex justify-center timbre-inline-print">
               <img src={timbre} alt="Timbre da Secretaria" style={{ maxHeight: "110px", maxWidth: "100%" }} />
             </div>
           )}
