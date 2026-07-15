@@ -69,7 +69,7 @@ function emptyEtp() {
   return {
     id: "etp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
     meta: {
-      titulo: "", orgao: "", setor: "", responsavel: "", processo: "", tipo: TIPOS_OBJETO[0], local: "",
+      titulo: "", orgao: "", setor: "", responsavel: "", cargo: "", processo: "", tipo: TIPOS_OBJETO[0], local: "",
       introducao: "", fonteRecurso: "", data: todayISO(),
       // Campos estruturados — alimentam automaticamente os modelos padrão dos incisos III, VI, VII, VIII, XI e XII
       parcelamento: "", // "" | "nao" | "sim"
@@ -83,6 +83,7 @@ function emptyEtp() {
     cotacoes: {}, // { [itemId]: [{id, fonte, valor}] }
     valoresAdotados: {}, // { [itemId]: "12.34" } — valor unitário adotado após o levantamento de preços
     pca: null, // { nomeArquivo, importedAt, linhas: [...] } — última planilha do PCA importada
+    solucoesMercado: [], // [{id, nome, selecionada}] — soluções de mercado pesquisadas para o inciso IV
     sections,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -390,6 +391,13 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     ? `<h3>Quadro de estimativa de valores</h3><table><tr><th>Item</th><th>Descrição</th><th>Qtd.</th><th>Vlr. Unit.</th><th>Vlr. Total</th></tr>${linhasValores}<tr><td colspan="4" style="text-align:right"><b>Total estimado</b></td><td><b>${brl(totalGeral)}</b></td></tr></table>`
     : "";
 
+  const linhasCotacoes = itens.flatMap(it => (etp.cotacoes?.[it.id] || []).map(q =>
+    `<tr><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(q.fonte || "-")}</td><td>${escapeHtml(q.empresa || "—")}</td><td>${brl(num(q.valor))}</td></tr>`
+  )).join("");
+  const quadroCotacoes = linhasCotacoes
+    ? `<h3>Quadro detalhado de cotações por item e fonte</h3><table><tr><th>Item</th><th>Fonte</th><th>Fornecedor</th><th>Valor Cotado</th></tr>${linhasCotacoes}</table><p style="font-size:9pt;color:#666;">Cotações detalhadas por item, conforme documentos anexos ao processo.</p>`
+    : "";
+
   const secoesHtml = SECOES.map(s => `
     <h2>${s.id} — ${escapeHtml(s.titulo)}${s.obrig ? " *" : ""}</h2>
     ${isRichSection(s.id)
@@ -398,7 +406,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     ${s.id === "I" ? listaItensNecessidade : ""}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
     ${s.id === "V" ? quadroQuantitativos : ""}
-    ${s.id === "VI" ? quadroValores : ""}
+    ${s.id === "VI" ? quadroValores + quadroCotacoes : ""}
   `).join("");
 
   const html = `<!DOCTYPE html>
@@ -412,21 +420,23 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     mso-header: h1;
   }
   div.Section1 { page: Section1; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1a1a1a; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1a1a1a; line-height: 1.5; }
   h1 { font-size: 15pt; text-align: center; margin-bottom: 2pt; }
   .subtitulo { text-align: center; font-size: 10.5pt; color: #555; margin-bottom: 18pt; }
-  h2 { font-size: 12.5pt; margin-top: 16pt; margin-bottom: 4pt; color: #1C2E4A; }
+  h2 { font-size: 12.5pt; text-align: center; margin-top: 18pt; margin-bottom: 8pt; color: #1C2E4A; }
   h3 { font-size: 11pt; margin-top: 10pt; margin-bottom: 4pt; }
+  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
+  .assinatura p { text-align: center; margin: 3pt 0; }
   table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 10pt; }
   td, th { border: 1px solid #999; padding: 4px 6px; text-align: left; }
   .meta-table td { border: none; padding: 2px 0; font-size: 10.5pt; }
   .timbre { display: block; margin: 0 auto; max-height: 80px; }
-  .assinatura { text-align: center; margin-top: 40pt; }
+  .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; mso-pagination: widow-orphan; }
   .rodape { font-size: 8pt; color: #777; margin-top: 24pt; border-top: 1px solid #ccc; padding-top: 8pt; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" style="text-align:center; margin:0; border-bottom:1px solid #ccc; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" /></p></div>` : ""}
+  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" align="center" style="text-align:center; margin:0; border-bottom:1px solid #ccc; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
   <div class="Section1">
   <h1>ESTUDO TÉCNICO PRELIMINAR</h1>
   <p class="subtitulo">Lei nº 14.133/2021 · art. 18</p>
@@ -434,7 +444,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     <tr><td width="140"><b>Objeto:</b></td><td>${escapeHtml(objetoCompleto(etp) || "-")}</td></tr>
     <tr><td><b>Órgão:</b></td><td>${escapeHtml(etp.meta.orgao || "-")}</td></tr>
     <tr><td><b>Setor:</b></td><td>${escapeHtml(etp.meta.setor || "-")}</td></tr>
-    <tr><td><b>Responsável:</b></td><td>${escapeHtml(etp.meta.responsavel || "-")}</td></tr>
+    <tr><td><b>Responsável:</b></td><td>${escapeHtml(etp.meta.responsavel || "-")}${etp.meta.cargo ? ` — ${escapeHtml(etp.meta.cargo)}` : ""}</td></tr>
     <tr><td><b>Processo:</b></td><td>${escapeHtml(etp.meta.processo || "-")}</td></tr>
     <tr><td><b>Data:</b></td><td>${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}</td></tr>
   </table>
@@ -443,7 +453,8 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   <div class="assinatura">
     <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
   <p style="margin-top: 40pt">_______________________________________</p>
-  <p>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</p>
+  <p><b>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</b></p>
+  <p>${escapeHtml(etp.meta.cargo || "[Cargo do responsável]")}</p>
   </div>
   </div>
 </body>
@@ -606,13 +617,28 @@ A não realização desta ${verboDe(etp)} comprometeria a regularidade e a quali
 
 function gerarTextoPadraoIII(etp) {
   const bem = bemOuServicoDe(etp);
-  const garantia = etp.meta.prazoGarantiaDias?.trim() ? `${etp.meta.prazoGarantiaDias} dias` : "[prazo]";
-  const entrega = etp.meta.prazoEntregaDias?.trim() ? `${etp.meta.prazoEntregaDias} dias` : "[prazo]";
-  return `Os ${bem} objeto desta contratação deverão atender às especificações técnicas descritas na Planilha de Itens que integra este Estudo Técnico Preliminar, observando padrões de qualidade, segurança e desempenho compatíveis com o uso institucional pretendido.
+  const garantia = etp.meta.prazoGarantiaDias?.trim() ? `${etp.meta.prazoGarantiaDias} dias` : "12 (doze) meses, ou a estipulada no próprio item";
+  const entrega = etp.meta.prazoEntregaDias?.trim() ? `${etp.meta.prazoEntregaDias} dias` : "90 (noventa) dias";
+  const local = etp.meta.local?.trim() || "[cidade/região da execução do contrato]";
+  const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
+  const condicaoEntrega = etp.meta.parcelamento === "sim"
+    ? "de forma parcelada, conforme os itens/lotes definidos no inciso VIII deste Estudo"
+    : "de forma única e integral, em uma só remessa";
 
-Além das especificações técnicas de cada item, deverão ser observados os seguintes requisitos gerais: (i) garantia mínima de ${garantia} contra defeitos de fabricação, contada do recebimento definitivo; (ii) prazo de entrega/execução de até ${entrega} corridos, contados da emissão da ordem de fornecimento ou serviço; (iii) apresentação de manual de uso e instruções em língua portuguesa, quando aplicável; (iv) atendimento às normas técnicas da ABNT e do INMETRO pertinentes a cada item, quando existentes.
+  return `A definição dos requisitos necessários e suficientes para a escolha da solução de ${bem === "serviços" ? "contratação" : "aquisição"} é fundamental para atender à demanda de forma eficaz, segura e vantajosa para a Administração e para a entidade beneficiária.
 
-Em atenção ao art. 25, §1º, da Lei nº 14.133/2021, sempre que tecnicamente viável e sem comprometer a competitividade do certame, serão priorizados critérios e práticas de sustentabilidade ambiental, buscando itens que gerem menor impacto ambiental em seu ciclo de vida.`;
+Os seguintes parâmetros, exigências e referências são elencados, dentre outros aplicáveis ao caso concreto, para garantir a seleção da proposta mais vantajosa:
+
+• Padrões Mínimos de Qualidade: todos os ${bem} devem atender a normas técnicas e padrões de qualidade reconhecidos, com fabricação recente, em perfeitas condições de uso e com durabilidade e eficiência compatíveis com o uso institucional pretendido;
+• Especificações Técnicas: cada item deverá atender às especificações técnicas mínimas descritas na Planilha de Itens que integra este Estudo Técnico Preliminar, incluindo capacidade, potência, funcionalidade, acabamento, eficiência energética e demais atributos que garantam funcionalidade e segurança no uso cotidiano;
+• Condições de Entrega: os itens deverão ser entregues ${condicaoEntrega}, devidamente embalados, com todos os manuais, acessórios e itens obrigatórios (cabos, suportes, controles etc., quando aplicável), no local indicado pela Administração, no prazo máximo de ${entrega} contados da emissão da ordem de fornecimento ou serviço;
+• Certificações e Normas Técnicas Aplicáveis: os itens devem possuir, quando aplicável, certificações de conformidade emitidas por órgãos reguladores como o INMETRO ou equivalente, além de atender às normas da ABNT e demais regulamentações técnicas específicas vigentes para cada tipo de item;
+• Licenças e Regularidade da Empresa Fornecedora: a empresa contratada deve comprovar regularidade junto aos órgãos competentes e possuir autorização legal para comercialização ou prestação dos itens ofertados, garantindo que a contratação seja realizada com empresa idônea e devidamente habilitada;
+• Critérios de Sustentabilidade: considerando a responsabilidade socioambiental da Administração, serão priorizadas, sempre que possível, propostas de fornecedores que demonstrem compromisso com práticas sustentáveis, incluindo, quando aplicável, equipamentos com selo Procel de eficiência energética e processos de produção e descarte de menor impacto ambiental;
+• Garantia e Assistência Técnica: os itens deverão contar com garantia mínima de ${garantia}, contra defeitos de fabricação, e a empresa fornecedora deverá garantir suporte técnico e assistência autorizada ou credenciada em ${local} ou região próxima, assegurando manutenção e eventuais reparos dentro do prazo contratual;
+• Formalização de Instrumento Contratual: em razão do valor estimado da contratação e da diversidade dos itens a serem adquiridos, poderá ser exigida a formalização de instrumento contratual específico, nos termos do art. 95, §1º, da Lei nº 14.133/2021, como meio de assegurar a adequada execução, o cumprimento de prazos e obrigações, e a segurança jurídica do processo.
+
+Considerando a natureza desta ${verboDe(etp)}, os itens deverão ser entregues ${condicaoEntrega}, a fim de garantir a continuidade e o pleno funcionamento das atividades desenvolvidas por ${entidade}.`;
 }
 
 function gerarTextoPadraoIV(etp) {
@@ -620,17 +646,33 @@ function gerarTextoPadraoIV(etp) {
   const fontesTexto = fontesUsadas.length > 0 ? fontesUsadas.join(", ") : "Banco de Preços, pesquisa direta com fornecedores e demais fontes públicas disponíveis";
   const bem = bemOuServicoDe(etp);
   const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
+  const solucoes = etp.solucoesMercado || [];
+  const escolhida = solucoes.find(s => s.selecionada);
+  const naoEscolhidas = solucoes.filter(s => !s.selecionada);
+
+  let blocoAlternativas;
+  if (solucoes.length > 0) {
+    blocoAlternativas = `No processo de avaliação, foram levantadas ${solucoes.length} solução(ões) de mercado para atender à necessidade identificada no inciso I:\n` +
+      solucoes.map(s => `• ${s.nome}${s.selecionada ? " — SOLUÇÃO ESCOLHIDA" : ""};`).join("\n") +
+      (escolhida
+        ? `\n\nEntre as soluções pesquisadas, optou-se por "${escolhida.nome}", por representar, entre as alternativas relacionadas${naoEscolhidas.length > 0 ? " — as demais descartadas por não atenderem tão adequadamente à relação entre custo, qualidade e adequação à necessidade concreta —" : ""}, a que melhor atende à relação entre custo, qualidade e adequação à necessidade identificada no inciso I.`
+        : `\n\n[Marque, na lista de soluções acima, qual delas foi escolhida — o texto se completa sozinho.]`);
+  } else {
+    blocoAlternativas = `No processo de avaliação, as alternativas abaixo foram analisadas, porém não foram consideradas adequadas frente à necessidade concreta de ${entidade}:
+• Locação de equipamentos: opção descartada em razão da natureza da fonte de recurso — quando voltada exclusivamente para aquisição definitiva — e da ausência de economicidade a longo prazo, considerando que a locação demandaria custos recorrentes, sem incorporação patrimonial para a entidade executora das ações;
+• Aproveitamento de equipamentos existentes: os poucos equipamentos atualmente disponíveis se encontram em estado de obsolescência ou com desempenho insuficiente, sendo incompatíveis com as demandas operacionais e com os parâmetros de eficiência e segurança exigidos;
+• Aquisição de itens com menor capacidade técnica ou de uso residencial: descartada por não atenderem às exigências institucionais de uso contínuo, coletivo e intensivo, o que comprometeria a durabilidade e a eficácia dos serviços prestados.
+
+Optou-se pela solução de mercado descrita neste Estudo Técnico Preliminar por representar, entre as alternativas pesquisadas, a que melhor atende à relação entre custo, qualidade e adequação à necessidade identificada no inciso I.
+
+Dica: cadastre as soluções realmente pesquisadas no quadro acima (podem ser 3, 4, 5 ou mais) e marque a escolhida, que este texto se adapta automaticamente a elas.`;
+  }
 
   return `O levantamento de mercado realizado identificou fornecedores e prestadores capazes de atender às especificações constantes da Planilha de Itens deste Estudo Técnico Preliminar, mediante consulta a ${fontesTexto}, cujos resultados fundamentam a estimativa de valor apresentada no inciso VI.
 
 A pesquisa considerou a disponibilidade de mercado, a existência de padrão usual de especificação para os ${bem} pretendidos e a viabilidade de definição objetiva do objeto no instrumento convocatório, nos termos do art. 6º, XLI, e do art. 29 da Lei nº 14.133/2021.
 
-No processo de avaliação, as alternativas abaixo foram analisadas, porém não foram consideradas adequadas frente à necessidade concreta de ${entidade}:
-• Locação de equipamentos: opção descartada em razão da natureza da fonte de recurso — quando voltada exclusivamente para aquisição definitiva — e da ausência de economicidade a longo prazo, considerando que a locação demandaria custos recorrentes, sem incorporação patrimonial para a entidade executora das ações;
-• Aproveitamento de equipamentos existentes: os poucos equipamentos atualmente disponíveis se encontram em estado de obsolescência ou com desempenho insuficiente, sendo incompatíveis com as demandas operacionais e com os parâmetros de eficiência e segurança exigidos;
-• Aquisição de itens com menor capacidade técnica ou de uso residencial: descartada por não atenderem às exigências institucionais de uso contínuo, coletivo e intensivo, o que comprometeria a durabilidade e a eficácia dos serviços prestados.
-
-Optou-se pela solução de mercado descrita neste Estudo Técnico Preliminar por representar, entre as alternativas pesquisadas, a que melhor atende à relação entre custo, qualidade e adequação à necessidade identificada no inciso I.`;
+${blocoAlternativas}`;
 }
 
 function gerarTextoPadraoV(etp) {
@@ -822,6 +864,14 @@ export default function App() {
     });
   }
 
+  function updateSolucoesMercado(solucoesMercado) {
+    setCurrent(prev => {
+      const next = { ...prev, solucoesMercado, updatedAt: Date.now() };
+      persist(next);
+      return next;
+    });
+  }
+
   function updateCotacoes(cotacoes) {
     setCurrent(prev => {
       const next = { ...prev, cotacoes, updatedAt: Date.now() };
@@ -901,6 +951,7 @@ export default function App() {
         <EditorView
           etp={current} activeSection={activeSection} setActiveSection={setActiveSection}
           onMeta={updateMeta} onSection={updateSection} onItens={updateItens} onCotacoes={updateCotacoes}
+          onSolucoesMercado={updateSolucoesMercado}
           onValoresAdotados={updateValoresAdotados} onPca={updatePca}
           saveState={saveState} onBack={backToList} onPreview={() => setView("preview")}
         />
@@ -1099,7 +1150,7 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
 }
 
 // ---------- Editor View ----------
-function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes, onValoresAdotados, onPca, saveState, onBack, onPreview }) {
+function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes, onValoresAdotados, onPca, onSolucoesMercado, saveState, onBack, onPreview }) {
   const p = progress(etp);
 
   return (
@@ -1207,10 +1258,10 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
             ) : activeSection === "pca" ? (
               <PCAForm etp={etp} onPca={onPca} />
             ) : activeSection === "cotacoes" ? (
-              <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} />
+              <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
             ) : (
               <SectionForm etp={etp} section={SECOES.find(s => s.id === activeSection)} value={etp.sections[activeSection]}
-                onChange={v => onSection(activeSection, v)} />
+                onChange={v => onSection(activeSection, v)} onSolucoesMercado={onSolucoesMercado} />
             )}
           </div>
         </main>
@@ -1290,6 +1341,8 @@ function MetaForm({ etp, onMeta }) {
           placeholder="Ex.: Divisão de Proteção Social Básica" />
         <Field label="Responsável técnico" value={etp.meta.responsavel} onChange={v => onMeta("responsavel", v)}
           placeholder="Nome do(a) elaborador(a)" />
+        <Field label="Cargo do responsável" value={etp.meta.cargo} onChange={v => onMeta("cargo", v)}
+          placeholder="Ex.: Administrador(a) / Pregoeiro(a) / Chefe do Setor de Compras" />
         <Field label="Nº do processo" value={etp.meta.processo} onChange={v => onMeta("processo", v)}
           placeholder="Ex.: 2026.001.000123" />
       </div>
@@ -1482,7 +1535,72 @@ function RichTextEditor({ value, onChange }) {
   );
 }
 
-function SectionForm({ etp, section, value, onChange }) {
+// ---------- Soluções de mercado pesquisadas (inciso IV) ----------
+function SolucoesMercadoManager({ solucoes, onChange }) {
+  const [novaSolucao, setNovaSolucao] = useState("");
+
+  function adicionar() {
+    if (!novaSolucao.trim()) return;
+    onChange([...solucoes, { id: "sol_" + Math.random().toString(36).slice(2, 8), nome: novaSolucao.trim(), selecionada: solucoes.length === 0 }]);
+    setNovaSolucao("");
+  }
+  function remover(id) {
+    onChange(solucoes.filter(s => s.id !== id));
+  }
+  function selecionar(id) {
+    onChange(solucoes.map(s => ({ ...s, selecionada: s.id === id })));
+  }
+
+  return (
+    <div className="mb-4 p-3.5 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
+      <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
+        Soluções de mercado pesquisadas
+      </span>
+
+      {solucoes.length === 0 ? (
+        <p className="text-xs mb-2" style={{ color: C.inkMuted }}>
+          Nenhuma solução cadastrada ainda. Adicione todas as opções encontradas na pesquisa (podem ser 3, 4, 5 ou mais) e marque a escolhida.
+        </p>
+      ) : (
+        <div className="space-y-1.5 mb-3">
+          {solucoes.map(s => (
+            <div key={s.id} className="flex items-center gap-2 p-2 rounded-lg border" style={{ borderColor: s.selecionada ? C.brass : C.border, background: "white" }}>
+              <span className="text-sm flex-1">{s.nome}</span>
+              {s.selecionada ? (
+                <span className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full shrink-0" style={{ background: "rgba(166,131,46,0.15)", color: C.brass }}>
+                  <Check size={12} /> Escolhida
+                </span>
+              ) : (
+                <button onClick={() => selecionar(s.id)}
+                  className="text-xs font-medium px-2 py-1 rounded-full shrink-0" style={{ color: C.navy, border: `1px solid ${C.border}` }}>
+                  Selecionar esta
+                </button>
+              )}
+              <button onClick={() => remover(s.id)} className="shrink-0" style={{ color: C.red }}><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input value={novaSolucao} onChange={e => setNovaSolucao(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && adicionar()}
+          placeholder="Ex.: Aquisição direta de equipamento novo"
+          className="flex-1 px-2 py-1.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
+        <button onClick={adicionar} disabled={!novaSolucao.trim()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+          style={{ background: C.navy, color: C.paper }}>
+          <Plus size={13} /> Adicionar
+        </button>
+      </div>
+      <p className="text-[10px] mt-2" style={{ color: C.inkMuted }}>
+        Essas opções entram automaticamente no "Usar modelo padrão" abaixo, junto com a que foi escolhida.
+      </p>
+    </div>
+  );
+}
+
+function SectionForm({ etp, section, value, onChange, onSolucoesMercado }) {
   const [loading, setLoading] = useState(false);
   const [instrucoes, setInstrucoes] = useState("");
   const [showInstr, setShowInstr] = useState(false);
@@ -1523,6 +1641,10 @@ function SectionForm({ etp, section, value, onChange }) {
         )}
       </div>
       <p className="text-sm mb-3" style={{ color: C.inkMuted }}>{section.ajuda}</p>
+
+      {section.id === "IV" && (
+        <SolucoesMercadoManager solucoes={etp.solucoesMercado || []} onChange={onSolucoesMercado} />
+      )}
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         {temModeloPadrao && (
@@ -1975,17 +2097,26 @@ function PCAForm({ etp, onPca }) {
 
 const FONTES_COTACAO = ["Banco de Preços", "Internet", "Outro"];
 
-function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
+function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
   const itens = etp.itens || [];
   const cotacoes = etp.cotacoes || {};
   const valoresAdotados = etp.valoresAdotados || {};
+  const metodologia = etp.meta.metodologiaCalculo === "media" ? "media" : "mediana";
+  const labelMetodologia = metodologia === "media" ? "média" : "mediana";
   const totalGeral = itens.reduce((sum, it) => sum + num(it.quantidade) * num(valoresAdotados[it.id]), 0);
+
+  function valorMetodologia(stats) {
+    return metodologia === "media" ? stats.media : stats.mediana;
+  }
 
   const [activeItemId, setActiveItemId] = useState(null);
   const [margem, setMargem] = useState(25);
   const [showExportForm, setShowExportForm] = useState(false);
   const [exportNome, setExportNome] = useState("");
   const [exportCnpj, setExportCnpj] = useState("");
+  const [novaFonte, setNovaFonte] = useState(FONTES_COTACAO[0]);
+  const [novaEmpresa, setNovaEmpresa] = useState("");
+  const [novoValor, setNovoValor] = useState("");
 
   const fileRef = useRef(null);
   const [importing, setImporting] = useState(false);
@@ -2004,13 +2135,26 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
     return Math.abs(v - mediana) / mediana > margem / 100;
   }
 
-  function addQuote(itemId) {
-    const list = cotacoes[itemId] || [];
-    onCotacoes({ ...cotacoes, [itemId]: [...list, { id: "q_" + Math.random().toString(36).slice(2, 8), fonte: FONTES_COTACAO[0], empresa: "", valor: "" }] });
+  function abrirPopup(itemId) {
+    setActiveItemId(itemId);
+    setNovaFonte(FONTES_COTACAO[0]);
+    setNovaEmpresa("");
+    setNovoValor("");
   }
-  function updateQuote(itemId, qid, field, val) {
-    const list = (cotacoes[itemId] || []).map(q => (q.id === qid ? { ...q, [field]: val } : q));
-    onCotacoes({ ...cotacoes, [itemId]: list });
+
+  function salvarNovaCotacao() {
+    if (!activeItemId || !novoValor.trim()) return;
+    const list = cotacoes[activeItemId] || [];
+    onCotacoes({
+      ...cotacoes,
+      [activeItemId]: [...list, {
+        id: "q_" + Math.random().toString(36).slice(2, 8),
+        fonte: novaFonte?.trim() || FONTES_COTACAO[0], empresa: novaEmpresa.trim(), valor: novoValor.trim(),
+      }],
+    });
+    setNovaFonte(FONTES_COTACAO[0]);
+    setNovaEmpresa("");
+    setNovoValor("");
   }
   function removeQuote(itemId, qid) {
     onCotacoes({ ...cotacoes, [itemId]: (cotacoes[itemId] || []).filter(q => q.id !== qid) });
@@ -2079,6 +2223,18 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
         valor exigida pelo art. 23, §1º, da Lei nº 14.133/2021.
       </p>
 
+      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg flex-wrap" style={{ background: C.paperDark }}>
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Metodologia de cálculo:</span>
+        <select value={metodologia} onChange={e => onMeta("metodologiaCalculo", e.target.value)}
+          className="px-2 py-1.5 rounded border text-sm bg-white" style={{ borderColor: C.border }}>
+          <option value="mediana">Mediana</option>
+          <option value="media">Média aritmética simples</option>
+        </select>
+        <span className="text-xs" style={{ color: C.inkMuted }}>
+          Uma única escolha vale para todos os itens — usada no botão "usar {labelMetodologia}" e no texto padrão do inciso VI.
+        </span>
+      </div>
+
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <button onClick={() => setShowExportForm(v => !v)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
@@ -2130,7 +2286,7 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                 <tr style={{ background: C.paperDark }}>
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Qtd.</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-48" style={{ color: C.inkMuted }}>Cotações</th>
+                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-52" style={{ color: C.inkMuted }}>Cotações</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-32" style={{ color: C.inkMuted }}>Valor Adotado</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Total do Item</th>
                 </tr>
@@ -2149,11 +2305,11 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                       </td>
                       <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "?"} {it.unidade}</td>
                       <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>
-                        <button onClick={() => setActiveItemId(it.id)}
+                        <button onClick={() => abrirPopup(it.id)}
                           className="text-left px-2 py-1.5 rounded-md border w-full" style={{ borderColor: C.border }}>
                           {s.n > 0 ? (
                             <>
-                              {s.n} cotação(ões) · Média <b style={{ color: C.navy }}>{brl(s.media)}</b>
+                              {s.n} cotação(ões) · {labelMetodologia === "média" ? "Média" : "Mediana"} <b style={{ color: C.navy }}>{brl(valorMetodologia(s))}</b>
                               {temForaDoPadrao && (
                                 <span className="flex items-center gap-1 mt-0.5" style={{ color: C.red }}>
                                   <AlertCircle size={11} /> valor fora do padrão
@@ -2171,8 +2327,8 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                             placeholder="0,00" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
                         </div>
                         {s.n > 0 && (
-                          <button onClick={() => setAdotado(it.id, s.media.toFixed(2))}
-                            className="text-[10px] mt-1" style={{ color: C.brass }}>usar média</button>
+                          <button onClick={() => setAdotado(it.id, valorMetodologia(s).toFixed(2))}
+                            className="text-[10px] mt-1" style={{ color: C.brass }}>usar {labelMetodologia}</button>
                         )}
                       </td>
                       <td className="px-2 py-2 text-xs font-medium" style={{ color: C.navy }}>
@@ -2196,82 +2352,100 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
           onClick={() => setActiveItemId(null)}>
           <div onClick={e => e.stopPropagation()}
-            className="w-full max-w-xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between mb-1">
+            className="w-full max-w-xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl" style={{ borderColor: C.border }}>
               <div>
-                <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Cotações do item</h3>
-                <p className="text-sm" style={{ color: C.inkMuted }}>
+                <h3 className="serif text-lg font-semibold" style={{ color: C.navy }}>Cotações do item</h3>
+                <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>
                   {itemAtivo.descricao} · {itemAtivo.quantidade || "?"} {itemAtivo.unidade}
                 </p>
               </div>
-              <button onClick={() => setActiveItemId(null)} style={{ color: C.inkMuted }}><X size={18} /></button>
+              <button onClick={() => setActiveItemId(null)} className="shrink-0" style={{ color: C.inkMuted }}><X size={18} /></button>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap my-3 p-2.5 rounded-lg text-xs" style={{ background: C.paperDark, color: C.inkMuted }}>
-              <Info size={13} className="shrink-0" style={{ color: C.brass }} />
-              <span>Margem de aceitação em torno da mediana:</span>
-              <input type="number" min="0" value={margem}
-                onChange={e => setMargem(Math.max(0, Number(e.target.value) || 0))}
-                className="w-14 px-1.5 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
-              <span>%. Cotações fora dessa faixa ficam sinalizadas — a exclusão é sempre uma escolha sua.</span>
-            </div>
-
-            <div className="space-y-2 mb-2">
-              {quotesAtivo.length === 0 && (
-                <p className="text-sm" style={{ color: C.inkMuted }}>Nenhuma cotação registrada ainda.</p>
-              )}
-              {quotesAtivo.map(q => {
-                const flagged = forDoPadrao(q.valor, statsAtivo.mediana);
-                return (
-                  <div key={q.id} className="p-2 rounded-lg border" style={{ borderColor: flagged ? C.red : C.border, background: flagged ? "rgba(166,64,61,0.05)" : "white" }}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <input list="fontes-cotacao-datalist" value={q.fonte}
-                        onChange={e => updateQuote(itemAtivo.id, q.id, "fonte", e.target.value)}
-                        placeholder="Fonte" className="px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border, width: "150px" }} />
-                      <input value={q.empresa || ""} onChange={e => updateQuote(itemAtivo.id, q.id, "empresa", e.target.value)}
-                        placeholder="Fornecedor (opcional)" className="px-2 py-1.5 rounded border text-xs flex-1 min-w-[130px]" style={{ borderColor: C.border }} />
-                      <input value={q.valor} onChange={e => updateQuote(itemAtivo.id, q.id, "valor", e.target.value)}
-                        placeholder="Valor (R$)" className="px-2 py-1.5 rounded border text-sm w-28" style={{ borderColor: C.border }} />
-                      <button onClick={() => removeQuote(itemAtivo.id, q.id)} title="Remover cotação" style={{ color: C.red }}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                    {flagged && (
-                      <p className="text-[10px] mt-1.5 flex items-center gap-1" style={{ color: C.red }}>
-                        <AlertCircle size={11} className="shrink-0" />
-                        Fora da margem de {margem}% em torno da mediana ({brl(statsAtivo.mediana)}) — considere revisar
-                        ou excluir esta cotação.
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <datalist id="fontes-cotacao-datalist">
-              {fontesConhecidas.map(f => <option key={f} value={f} />)}
-            </datalist>
-
-            <button onClick={() => addQuote(itemAtivo.id)}
-              className="flex items-center gap-1.5 text-xs font-medium mb-4" style={{ color: C.navy }}>
-              <Plus size={12} /> Adicionar cotação
-            </button>
-
-            {statsAtivo.n > 0 && (
-              <div className="flex items-center gap-4 text-xs mb-3 p-2.5 rounded-lg flex-wrap" style={{ background: C.paperDark, color: C.inkMuted }}>
-                <span>{statsAtivo.n} cotação(ões)</span>
-                <span>Média: <b style={{ color: C.navy }}>{brl(statsAtivo.media)}</b></span>
-                <span>Mediana: <b style={{ color: C.navy }}>{brl(statsAtivo.mediana)}</b></span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 pt-3 border-t flex-wrap" style={{ borderColor: C.border }}>
-              <span className="text-xs font-medium" style={{ color: C.inkMuted }}>Valor unitário adotado:</span>
-              <input value={adotadoAtivo} onChange={e => setAdotado(itemAtivo.id, e.target.value)}
-                placeholder="0,00" className="w-28 px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+            <div className="p-5">
               {statsAtivo.n > 0 && (
-                <button onClick={() => setAdotado(itemAtivo.id, statsAtivo.media.toFixed(2))}
-                  className="text-xs font-medium" style={{ color: C.brass }}>usar média</button>
+                <div className="flex items-center gap-4 text-xs mb-4 p-3 rounded-lg flex-wrap" style={{ background: C.paperDark, color: C.inkMuted }}>
+                  <span className="font-semibold" style={{ color: C.navy }}>{statsAtivo.n} cotação(ões) registrada(s)</span>
+                  <span>Média: <b style={{ color: C.navy }}>{brl(statsAtivo.media)}</b></span>
+                  <span>Mediana: <b style={{ color: C.navy }}>{brl(statsAtivo.mediana)}</b></span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase" style={{ background: "rgba(166,131,46,0.15)", color: C.brass }}>
+                    metodologia: {labelMetodologia}
+                  </span>
+                </div>
               )}
+
+              <div className="mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Cotações registradas</span>
+              </div>
+              {quotesAtivo.length === 0 ? (
+                <p className="text-sm mb-4" style={{ color: C.inkMuted }}>Nenhuma cotação registrada ainda — adicione a primeira abaixo.</p>
+              ) : (
+                <div className="space-y-2 mb-4">
+                  {quotesAtivo.map(q => {
+                    const flagged = forDoPadrao(q.valor, statsAtivo.mediana);
+                    return (
+                      <div key={q.id} className="flex items-center gap-3 p-2.5 rounded-lg border" style={{ borderColor: flagged ? C.red : C.border, background: flagged ? "rgba(166,64,61,0.05)" : "white" }}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: C.navy }}>
+                            {q.fonte}{q.empresa ? ` — ${q.empresa}` : ""}
+                          </p>
+                          {flagged && (
+                            <p className="text-[10px] mt-0.5 flex items-center gap-1" style={{ color: C.red }}>
+                              <AlertCircle size={11} className="shrink-0" />
+                              Fora da margem de {margem}% em torno da mediana — considere revisar ou excluir.
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-sm font-semibold shrink-0" style={{ color: C.navy }}>{brl(num(q.valor))}</span>
+                        <button onClick={() => removeQuote(itemAtivo.id, q.id)} title="Remover cotação" className="shrink-0" style={{ color: C.red }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="p-3.5 rounded-lg border-2 border-dashed mb-4" style={{ borderColor: C.border }}>
+                <span className="text-xs font-semibold uppercase tracking-wide mb-2 block" style={{ color: C.inkMuted }}>Nova cotação</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input list="fontes-cotacao-datalist" value={novaFonte} onChange={e => setNovaFonte(e.target.value)}
+                    placeholder="Fonte" className="px-2 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, width: "150px" }} />
+                  <input value={novaEmpresa} onChange={e => setNovaEmpresa(e.target.value)}
+                    placeholder="Fornecedor (opcional)" className="px-2 py-2 rounded-lg border text-sm flex-1 min-w-[130px]" style={{ borderColor: C.border }} />
+                  <input value={novoValor} onChange={e => setNovoValor(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && salvarNovaCotacao()}
+                    placeholder="Valor (R$)" className="px-2 py-2 rounded-lg border text-sm w-28" style={{ borderColor: C.border }} />
+                  <button onClick={salvarNovaCotacao} disabled={!novoValor.trim()}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                    style={{ background: C.navy, color: C.paper }}>
+                    <Check size={14} /> Salvar cotação
+                  </button>
+                </div>
+              </div>
+              <datalist id="fontes-cotacao-datalist">
+                {fontesConhecidas.map(f => <option key={f} value={f} />)}
+              </datalist>
+
+              <div className="flex items-center gap-2 flex-wrap mb-3 p-2.5 rounded-lg text-xs" style={{ background: C.paperDark, color: C.inkMuted }}>
+                <Info size={13} className="shrink-0" style={{ color: C.brass }} />
+                <span>Margem de aceitação em torno da mediana:</span>
+                <input type="number" min="0" value={margem}
+                  onChange={e => setMargem(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-14 px-1.5 py-1 rounded border text-xs text-center bg-white" style={{ borderColor: C.border }} />
+                <span>%. Cotações fora dessa faixa ficam sinalizadas — a exclusão é sempre uma escolha sua.</span>
+              </div>
+
+              <div className="flex items-center gap-2 pt-3 border-t flex-wrap" style={{ borderColor: C.border }}>
+                <span className="text-xs font-medium" style={{ color: C.inkMuted }}>Valor unitário adotado:</span>
+                <input value={adotadoAtivo} onChange={e => setAdotado(itemAtivo.id, e.target.value)}
+                  placeholder="0,00" className="w-28 px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                {statsAtivo.n > 0 && (
+                  <button onClick={() => setAdotado(itemAtivo.id, valorMetodologia(statsAtivo).toFixed(2))}
+                    className="text-xs font-medium" style={{ color: C.brass }}>usar {labelMetodologia}</button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -2335,7 +2509,7 @@ function PreviewView({ etp, onBack }) {
     t += `Objeto: ${objetoCompleto(etp) || "-"}\n`;
     t += `Órgão/Secretaria: ${etp.meta.orgao || "-"}\n`;
     t += `Setor requisitante: ${etp.meta.setor || "-"}\n`;
-    t += `Responsável técnico: ${etp.meta.responsavel || "-"}\n`;
+    t += `Responsável técnico: ${etp.meta.responsavel || "-"}${etp.meta.cargo ? ` (${etp.meta.cargo})` : ""}\n`;
     t += `Processo nº: ${etp.meta.processo || "-"}\n`;
     t += `Tipo de objeto: ${etp.meta.tipo}\n\n`;
     if (etp.meta.introducao?.trim()) t += `INTRODUÇÃO\n${etp.meta.introducao.trim()}\n\n`;
@@ -2375,6 +2549,16 @@ function PreviewView({ etp, onBack }) {
           }
         });
         t += `Valor total estimado: ${brl(totalGeral)}\n`;
+
+        const temCotacoes = etp.itens.some(it => (etp.cotacoes?.[it.id] || []).length > 0);
+        if (temCotacoes) {
+          t += `\nQuadro detalhado de cotações por item e fonte:\n`;
+          etp.itens.forEach(it => {
+            (etp.cotacoes?.[it.id] || []).forEach(q => {
+              t += `• ${it.descricao || "-"} — ${q.fonte || "-"}${q.empresa ? ` (${q.empresa})` : ""}: ${brl(num(q.valor))}\n`;
+            });
+          });
+        }
       }
       t += `\n`;
     });
@@ -2464,7 +2648,7 @@ function PreviewView({ etp, onBack }) {
           <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm mb-8">
             <p><b style={{ color: C.inkMuted }}>Órgão:</b> {etp.meta.orgao || "-"}</p>
             <p><b style={{ color: C.inkMuted }}>Setor:</b> {etp.meta.setor || "-"}</p>
-            <p><b style={{ color: C.inkMuted }}>Responsável:</b> {etp.meta.responsavel || "-"}</p>
+            <p><b style={{ color: C.inkMuted }}>Responsável:</b> {etp.meta.responsavel || "-"}{etp.meta.cargo ? ` — ${etp.meta.cargo}` : ""}</p>
             <p><b style={{ color: C.inkMuted }}>Processo:</b> {etp.meta.processo || "-"}</p>
             <p><b style={{ color: C.inkMuted }}>Tipo:</b> {etp.meta.tipo}</p>
             <p><b style={{ color: C.inkMuted }}>Data:</b> {fmtDateISO(etp.meta.data) || fmtDate(etp.updatedAt)}</p>
@@ -2472,25 +2656,25 @@ function PreviewView({ etp, onBack }) {
 
           {etp.meta.introducao?.trim() && (
             <div className="mb-6">
-              <h3 className="serif text-base font-bold mb-1.5" style={{ color: C.navy }}>Introdução</h3>
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">{etp.meta.introducao}</p>
+              <h3 className="serif text-base font-bold mb-1.5 text-center" style={{ color: C.navy }}>Introdução</h3>
+              <p className="text-sm whitespace-pre-wrap leading-relaxed text-justify">{etp.meta.introducao}</p>
             </div>
           )}
 
           {SECOES.map(s => (
             <div key={s.id} className="mb-6">
-              <h3 className="serif text-base font-bold mb-1.5" style={{ color: C.navy }}>
+              <h3 className="serif text-base font-bold mb-1.5 text-center" style={{ color: C.navy }}>
                 {s.id} — {s.titulo}{s.obrig && <span style={{ color: C.brass }}> *</span>}
               </h3>
               {isRichSection(s.id) ? (
                 etp.sections[s.id]?.trim() ? (
-                  <div className="text-sm leading-relaxed rich-content" style={{ color: C.ink }}
+                  <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
                     dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
                 ) : (
                   <p className="text-sm" style={{ color: C.inkMuted }}>Não preenchido.</p>
                 )
               ) : (
-                <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: etp.sections[s.id]?.trim() ? C.ink : C.inkMuted }}>
+                <p className="text-sm whitespace-pre-wrap leading-relaxed text-justify" style={{ color: etp.sections[s.id]?.trim() ? C.ink : C.inkMuted }}>
                   {etp.sections[s.id]?.trim() || "Não preenchido."}
                 </p>
               )}
@@ -2604,13 +2788,44 @@ function PreviewView({ etp, onBack }) {
                   </table>
                 </div>
               )}
+              {s.id === "VI" && etp.itens?.some(it => (etp.cotacoes?.[it.id] || []).length > 0) && (
+                <div className="mt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
+                    Quadro detalhado de cotações por item e fonte
+                  </p>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr style={{ background: C.paperDark }}>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Fonte</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Fornecedor</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Valor Cotado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {etp.itens.flatMap(it => (etp.cotacoes?.[it.id] || []).map(q => (
+                        <tr key={q.id}>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{q.fonte || "-"}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{q.empresa || "—"}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{brl(num(q.valor))}</td>
+                        </tr>
+                      )))}
+                    </tbody>
+                  </table>
+                  <p className="text-[10px] mt-1" style={{ color: C.inkMuted }}>
+                    Cotações detalhadas por item, conforme documentos anexos ao processo.
+                  </p>
+                </div>
+              )}
             </div>
           ))}
 
-          <div className="mt-12 text-sm text-center">
+          <div className="mt-12 text-sm text-center" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
             <p>{linhaAssinaturaData(etp)}</p>
             <p className="mt-10">_______________________________________</p>
-            <p className="mt-1">{etp.meta.responsavel || "[Responsável técnico]"}</p>
+            <p className="mt-1 font-semibold">{etp.meta.responsavel || "[Responsável técnico]"}</p>
+            <p>{etp.meta.cargo || "[Cargo do responsável]"}</p>
           </div>
         </div>
       </div>
