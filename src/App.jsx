@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX } from "lucide-react";
 import { Settings, Key } from "lucide-react";
 import storage from "./storage";
 import { callClaude, getApiKey, setApiKey } from "./lib/anthropic";
@@ -142,6 +142,18 @@ function baixarModeloPlanilha() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Itens");
   XLSX.writeFile(wb, "modelo_planilha_itens.xlsx");
+}
+
+// Gera a planilha, no mesmo formato de importação do Sistema Centi, com os itens que ainda não
+// constam no PCA — para ser importada no Centi como requerimento de inclusão desses itens no plano.
+function baixarPlanilhaInclusaoCenti(itensFaltantes) {
+  const header = ["Id Produto", "Nome do Produto", "Unidade Medida", "Quantidade", "Classificação"];
+  const rows = itensFaltantes.map(it => ["", it.descricao || "", it.unidade || "", it.quantidade || "", it.classificacao || ""]);
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  ws["!cols"] = [{ wch: 14 }, { wch: 55 }, { wch: 16 }, { wch: 12 }, { wch: 28 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Itens para inclusão no PCA");
+  XLSX.writeFile(wb, "itens_para_inclusao_no_pca.xlsx");
 }
 
 // Lê a planilha do PCA (Plano de Contratações Anual) exportada do painel/dashboard
@@ -1532,6 +1544,7 @@ function PCAForm({ etp, onPca }) {
   const fileRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [showFaltantes, setShowFaltantes] = useState(false);
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -1555,6 +1568,7 @@ function PCAForm({ etp, onPca }) {
 
   const matches = itens.map(it => ({ item: it, pcaRow: pca ? pcaMatchFor(it, pca.linhas) : null }));
   const encontrados = matches.filter(m => m.pcaRow).length;
+  const itensFaltantes = matches.filter(m => !m.pcaRow).map(m => m.item);
 
   return (
     <div>
@@ -1599,6 +1613,7 @@ function PCAForm({ etp, onPca }) {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: C.paperDark }}>
+                  <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Consta no PCA?</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Sequencial</th>
@@ -1608,6 +1623,7 @@ function PCAForm({ etp, onPca }) {
               <tbody>
                 {matches.map(({ item, pcaRow }, idx) => (
                   <tr key={item.id} className="border-t" style={{ borderColor: C.border }}>
+                    <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
                     <td className="px-3 py-2">
                       <p style={{ color: C.ink }}>{item.descricao || `Item ${idx + 1}`}</p>
                       {item.idProduto && <p className="text-[10px]" style={{ color: C.inkMuted }}>cód. {item.idProduto}</p>}
@@ -1638,6 +1654,58 @@ function PCAForm({ etp, onPca }) {
               {encontrados < itens.length && " Os itens não localizados podem precisar de inclusão/atualização do PCA, ou de DFD específico, antes da contratação."}
             </span>
           </div>
+
+          {itensFaltantes.length > 0 && (
+            <button onClick={() => setShowFaltantes(true)}
+              className="flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-md text-xs font-medium"
+              style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+              <ListX size={13} /> Ver itens sem previsão no PCA ({itensFaltantes.length})
+            </button>
+          )}
+
+          {showFaltantes && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+              onClick={() => setShowFaltantes(false)}>
+              <div onClick={e => e.stopPropagation()}
+                className="w-full max-w-xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
+                <div className="flex items-start justify-between mb-1">
+                  <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
+                  <button onClick={() => setShowFaltantes(false)} style={{ color: C.inkMuted }}><X size={18} /></button>
+                </div>
+                <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+                  Estes {itensFaltantes.length} item(ns) não foram localizados na planilha do PCA importada. Baixe a
+                  planilha abaixo e importe no Sistema Centi para formalizar o requerimento de inclusão deles no plano.
+                </p>
+                <div className="rounded-lg border overflow-hidden mb-4" style={{ borderColor: C.border }}>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{ background: C.paperDark }}>
+                        <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
+                        <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
+                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Unid.</th>
+                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itensFaltantes.map((it, idx) => (
+                        <tr key={it.id} className="border-t" style={{ borderColor: C.border }}>
+                          <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
+                          <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
+                          <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.unidade}</td>
+                          <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: C.navy, color: C.paper }}>
+                  <Download size={14} /> Baixar planilha para inclusão no Centi
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -2113,6 +2181,7 @@ function PreviewView({ etp, onBack }) {
                     <thead>
                       <tr style={{ background: C.paperDark }}>
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
+                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Consta no PCA?</th>
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Sequencial</th>
                       </tr>
@@ -2122,6 +2191,7 @@ function PreviewView({ etp, onBack }) {
                         const pcaRow = pcaMatchFor(it, etp.pca.linhas);
                         return (
                           <tr key={it.id}>
+                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || `Item ${idx + 1}`}</td>
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border, color: pcaRow ? C.green : C.red }}>{pcaRow ? "Sim" : "Não"}</td>
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{pcaRow?.sequencial || "—"}</td>
