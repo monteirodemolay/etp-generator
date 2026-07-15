@@ -1727,7 +1727,7 @@ function PCAForm({ etp, onPca }) {
 }
 
 
-const FONTES_COTACAO = ["Banco de Preços", "Painel de Preços (Gov)", "Fornecedor", "Ata de Registro de Preços", "Outro"];
+const FONTES_COTACAO = ["Banco de Preços", "Internet", "Outro"];
 
 function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
   const itens = etp.itens || [];
@@ -1735,7 +1735,8 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
   const valoresAdotados = etp.valoresAdotados || {};
   const totalGeral = itens.reduce((sum, it) => sum + num(it.quantidade) * num(valoresAdotados[it.id]), 0);
 
-  const [expandedId, setExpandedId] = useState(null);
+  const [activeItemId, setActiveItemId] = useState(null);
+  const [margem, setMargem] = useState(25);
   const [showExportForm, setShowExportForm] = useState(false);
   const [exportNome, setExportNome] = useState("");
   const [exportCnpj, setExportCnpj] = useState("");
@@ -1744,6 +1745,18 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [importMsg, setImportMsg] = useState("");
+
+  // Fontes já usadas neste ETP + as sugestões padrão — cresce conforme o servidor digita novas
+  const fontesConhecidas = [...new Set([
+    ...FONTES_COTACAO,
+    ...Object.values(cotacoes).flat().map(q => q.fonte).filter(Boolean),
+  ])];
+
+  function forDoPadrao(valor, mediana) {
+    const v = num(valor);
+    if (!v || !mediana) return false;
+    return Math.abs(v - mediana) / mediana > margem / 100;
+  }
 
   function addQuote(itemId) {
     const list = cotacoes[itemId] || [];
@@ -1807,11 +1820,16 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
     e.target.value = "";
   }
 
+  const itemAtivo = activeItemId ? itens.find(i => i.id === activeItemId) : null;
+  const quotesAtivo = itemAtivo ? (cotacoes[itemAtivo.id] || []) : [];
+  const statsAtivo = statsFor(quotesAtivo);
+  const adotadoAtivo = itemAtivo ? (valoresAdotados[itemAtivo.id] || "") : "";
+
   return (
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>4. Levantamento de Preços</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Registre as cotações por item (Banco de Preços, Painel de Preços, fornecedores) para compor a estimativa de
+        Registre as cotações por item (Banco de Preços, Internet, fornecedores) para compor a estimativa de
         valor exigida pelo art. 23, §1º, da Lei nº 14.133/2021.
       </p>
 
@@ -1864,10 +1882,9 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: C.paperDark }}>
-                  <th className="w-8"></th>
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Qtd.</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-44" style={{ color: C.inkMuted }}>Cotações</th>
+                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-48" style={{ color: C.inkMuted }}>Cotações</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-32" style={{ color: C.inkMuted }}>Valor Adotado</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Total do Item</th>
                 </tr>
@@ -1877,78 +1894,45 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                   const quotes = cotacoes[it.id] || [];
                   const s = statsFor(quotes);
                   const adotado = valoresAdotados[it.id] || "";
-                  const expanded = expandedId === it.id;
+                  const temForaDoPadrao = quotes.some(q => forDoPadrao(q.valor, s.mediana));
                   return (
-                    <Fragment key={it.id}>
-                      <tr className="border-t align-top" style={{ borderColor: C.border, background: expanded ? C.paperDark : "transparent" }}>
-                        <td className="px-2 py-2 text-center">
-                          <button onClick={() => setExpandedId(expanded ? null : it.id)} style={{ color: C.inkMuted }}>
-                            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                          </button>
-                        </td>
-                        <td className="px-2 py-2">
-                          <p className="text-sm" style={{ color: C.navy }}>{it.descricao || `Item ${idx + 1}`}</p>
-                          {it.classificacao && <p className="text-[10px]" style={{ color: C.inkMuted }}>{it.classificacao}</p>}
-                        </td>
-                        <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "?"} {it.unidade}</td>
-                        <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>
+                    <tr key={it.id} className="border-t align-top" style={{ borderColor: C.border }}>
+                      <td className="px-3 py-2">
+                        <p className="text-sm" style={{ color: C.navy }}>{it.descricao || `Item ${idx + 1}`}</p>
+                        {it.classificacao && <p className="text-[10px]" style={{ color: C.inkMuted }}>{it.classificacao}</p>}
+                      </td>
+                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "?"} {it.unidade}</td>
+                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>
+                        <button onClick={() => setActiveItemId(it.id)}
+                          className="text-left px-2 py-1.5 rounded-md border w-full" style={{ borderColor: C.border }}>
                           {s.n > 0 ? (
-                            <button onClick={() => setExpandedId(it.id)} className="text-left">
-                              {s.n} cotação(ões) <br />
-                              Média <b style={{ color: C.navy }}>{brl(s.media)}</b>
-                              {s.n > 1 && (s.max - s.min) / s.mediana > 0.5 && (
+                            <>
+                              {s.n} cotação(ões) · Média <b style={{ color: C.navy }}>{brl(s.media)}</b>
+                              {temForaDoPadrao && (
                                 <span className="flex items-center gap-1 mt-0.5" style={{ color: C.red }}>
-                                  <AlertCircle size={11} /> variação grande
+                                  <AlertCircle size={11} /> valor fora do padrão
                                 </span>
                               )}
-                            </button>
+                            </>
                           ) : (
-                            <button onClick={() => setExpandedId(it.id)} style={{ color: C.brass }}>+ adicionar cotação</button>
+                            <span style={{ color: C.brass }}>+ adicionar cotação</span>
                           )}
-                        </td>
-                        <td className="px-2 py-2">
-                          <div className="flex items-center gap-1">
-                            <input value={adotado} onChange={e => setAdotado(it.id, e.target.value)}
-                              placeholder="0,00" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
-                          </div>
-                          {s.n > 0 && (
-                            <button onClick={() => setAdotado(it.id, s.media.toFixed(2))}
-                              className="text-[10px] mt-1" style={{ color: C.brass }}>usar média</button>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-xs font-medium" style={{ color: C.navy }}>
-                          {adotado ? brl(num(it.quantidade) * num(adotado)) : "—"}
-                        </td>
-                      </tr>
-                      {expanded && (
-                        <tr style={{ background: C.paperDark }}>
-                          <td></td>
-                          <td colSpan={5} className="px-2 pb-3">
-                            <div className="rounded-lg border p-3" style={{ borderColor: C.border, background: "white" }}>
-                              {quotes.map(q => (
-                                <div key={q.id} className="flex items-center gap-2 mb-2 flex-wrap">
-                                  <select value={q.fonte} onChange={e => updateQuote(it.id, q.id, "fonte", e.target.value)}
-                                    className="px-2 py-1.5 rounded border text-xs bg-white" style={{ borderColor: C.border, width: "170px" }}>
-                                    {FONTES_COTACAO.map(f => <option key={f} value={f}>{f}</option>)}
-                                  </select>
-                                  {q.fonte === "Fornecedor" && (
-                                    <input value={q.empresa || ""} onChange={e => updateQuote(it.id, q.id, "empresa", e.target.value)}
-                                      placeholder="Nome da empresa" title={q.cnpj ? `CNPJ: ${q.cnpj}` : ""}
-                                      className="px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border, width: "170px" }} />
-                                  )}
-                                  <input value={q.valor} onChange={e => updateQuote(it.id, q.id, "valor", e.target.value)}
-                                    placeholder="Valor cotado (R$)" className="flex-1 min-w-[120px] px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
-                                  <button onClick={() => removeQuote(it.id, q.id)} style={{ color: C.red }}><Trash2 size={13} /></button>
-                                </div>
-                              ))}
-                              <button onClick={() => addQuote(it.id)} className="flex items-center gap-1.5 text-xs font-medium mt-1" style={{ color: C.navy }}>
-                                <Plus size={12} /> Adicionar cotação
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
+                        </button>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex items-center gap-1">
+                          <input value={adotado} onChange={e => setAdotado(it.id, e.target.value)}
+                            placeholder="0,00" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                        </div>
+                        {s.n > 0 && (
+                          <button onClick={() => setAdotado(it.id, s.media.toFixed(2))}
+                            className="text-[10px] mt-1" style={{ color: C.brass }}>usar média</button>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-xs font-medium" style={{ color: C.navy }}>
+                        {adotado ? brl(num(it.quantidade) * num(adotado)) : "—"}
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -1960,6 +1944,91 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
             <span className="serif text-lg font-bold" style={{ color: C.brassLight }}>{brl(totalGeral)}</span>
           </div>
         </>
+      )}
+
+      {itemAtivo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+          onClick={() => setActiveItemId(null)}>
+          <div onClick={e => e.stopPropagation()}
+            className="w-full max-w-xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between mb-1">
+              <div>
+                <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Cotações do item</h3>
+                <p className="text-sm" style={{ color: C.inkMuted }}>
+                  {itemAtivo.descricao} · {itemAtivo.quantidade || "?"} {itemAtivo.unidade}
+                </p>
+              </div>
+              <button onClick={() => setActiveItemId(null)} style={{ color: C.inkMuted }}><X size={18} /></button>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap my-3 p-2.5 rounded-lg text-xs" style={{ background: C.paperDark, color: C.inkMuted }}>
+              <Info size={13} className="shrink-0" style={{ color: C.brass }} />
+              <span>Margem de aceitação em torno da mediana:</span>
+              <input type="number" min="0" value={margem}
+                onChange={e => setMargem(Math.max(0, Number(e.target.value) || 0))}
+                className="w-14 px-1.5 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
+              <span>%. Cotações fora dessa faixa ficam sinalizadas — a exclusão é sempre uma escolha sua.</span>
+            </div>
+
+            <div className="space-y-2 mb-2">
+              {quotesAtivo.length === 0 && (
+                <p className="text-sm" style={{ color: C.inkMuted }}>Nenhuma cotação registrada ainda.</p>
+              )}
+              {quotesAtivo.map(q => {
+                const flagged = forDoPadrao(q.valor, statsAtivo.mediana);
+                return (
+                  <div key={q.id} className="p-2 rounded-lg border" style={{ borderColor: flagged ? C.red : C.border, background: flagged ? "rgba(166,64,61,0.05)" : "white" }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input list="fontes-cotacao-datalist" value={q.fonte}
+                        onChange={e => updateQuote(itemAtivo.id, q.id, "fonte", e.target.value)}
+                        placeholder="Fonte" className="px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border, width: "150px" }} />
+                      <input value={q.empresa || ""} onChange={e => updateQuote(itemAtivo.id, q.id, "empresa", e.target.value)}
+                        placeholder="Fornecedor (opcional)" className="px-2 py-1.5 rounded border text-xs flex-1 min-w-[130px]" style={{ borderColor: C.border }} />
+                      <input value={q.valor} onChange={e => updateQuote(itemAtivo.id, q.id, "valor", e.target.value)}
+                        placeholder="Valor (R$)" className="px-2 py-1.5 rounded border text-sm w-28" style={{ borderColor: C.border }} />
+                      <button onClick={() => removeQuote(itemAtivo.id, q.id)} title="Remover cotação" style={{ color: C.red }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {flagged && (
+                      <p className="text-[10px] mt-1.5 flex items-center gap-1" style={{ color: C.red }}>
+                        <AlertCircle size={11} className="shrink-0" />
+                        Fora da margem de {margem}% em torno da mediana ({brl(statsAtivo.mediana)}) — considere revisar
+                        ou excluir esta cotação.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <datalist id="fontes-cotacao-datalist">
+              {fontesConhecidas.map(f => <option key={f} value={f} />)}
+            </datalist>
+
+            <button onClick={() => addQuote(itemAtivo.id)}
+              className="flex items-center gap-1.5 text-xs font-medium mb-4" style={{ color: C.navy }}>
+              <Plus size={12} /> Adicionar cotação
+            </button>
+
+            {statsAtivo.n > 0 && (
+              <div className="flex items-center gap-4 text-xs mb-3 p-2.5 rounded-lg flex-wrap" style={{ background: C.paperDark, color: C.inkMuted }}>
+                <span>{statsAtivo.n} cotação(ões)</span>
+                <span>Média: <b style={{ color: C.navy }}>{brl(statsAtivo.media)}</b></span>
+                <span>Mediana: <b style={{ color: C.navy }}>{brl(statsAtivo.mediana)}</b></span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-3 border-t flex-wrap" style={{ borderColor: C.border }}>
+              <span className="text-xs font-medium" style={{ color: C.inkMuted }}>Valor unitário adotado:</span>
+              <input value={adotadoAtivo} onChange={e => setAdotado(itemAtivo.id, e.target.value)}
+                placeholder="0,00" className="w-28 px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+              {statsAtivo.n > 0 && (
+                <button onClick={() => setAdotado(itemAtivo.id, statsAtivo.media.toFixed(2))}
+                  className="text-xs font-medium" style={{ color: C.brass }}>usar média</button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
