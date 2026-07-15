@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Settings, Key } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit } from "lucide-react";
+import { Settings, Key } from "lucide-react";
 import storage from "./storage";
 import { callClaude, getApiKey, setApiKey } from "./lib/anthropic";
 
@@ -55,12 +56,19 @@ const SECOES = [
 
 const REQUIRED_IDS = SECOES.filter(s => s.obrig).map(s => s.id);
 
+// Incisos V e VI usam editor com formatação (negrito, listas, tabelas) em vez de texto simples,
+// pois costumam incluir tabelas de quantitativos e valores.
+const RICH_SECTION_IDS = ["V", "VI"];
+function isRichSection(id) {
+  return RICH_SECTION_IDS.includes(id);
+}
+
 function emptyEtp() {
   const sections = {};
   SECOES.forEach(s => (sections[s.id] = ""));
   return {
     id: "etp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-    meta: { titulo: "", orgao: "", setor: "", responsavel: "", processo: "", tipo: TIPOS_OBJETO[0], local: "", introducao: "", data: todayISO() },
+    meta: { titulo: "", orgao: "", setor: "", responsavel: "", processo: "", tipo: TIPOS_OBJETO[0], local: "", introducao: "", fonteRecurso: "", data: todayISO() },
     itens: [],
     cotacoes: {}, // { [itemId]: [{id, fonte, valor}] }
     valoresAdotados: {}, // { [itemId]: "12.34" } — valor unitário adotado após o levantamento de preços
@@ -281,6 +289,22 @@ function fmtDateISO(iso) {
   return `${d}/${m}/${y}`;
 }
 
+const MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+// Converte uma data ISO (yyyy-mm-dd) para "dia de mês de ano" (ex.: 15 de julho de 2026)
+function fmtDateExtenso(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} de ${MESES_PT[m - 1]} de ${y}`;
+}
+
+// Linha de fechamento "Cidade - Estado, dia de mês de ano." usada na assinatura do ETP
+function linhaAssinaturaData(etp) {
+  const local = etp.meta.local?.trim() || "[Cidade] - [Estado]";
+  const data = fmtDateExtenso(etp.meta.data) || fmtDateExtenso(todayISO());
+  return `${local}, ${data}.`;
+}
+
 // Objeto completo do ETP: título resumido + órgão solicitante, usado no documento final
 function objetoCompleto(etp) {
   const titulo = etp.meta.titulo?.trim();
@@ -330,13 +354,20 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
 
   const linhasPca = pca ? itens.map((it, idx) => {
     const m = pcaMatchFor(it, pca.linhas);
-    return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${m ? "Sim" : "Não"}</td><td>${escapeHtml(m?.sequencial || "—")}</td><td>${escapeHtml(m?.dataContratacao || "—")}</td></tr>`;
+    return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${m ? "Sim" : "Não"}</td><td>${escapeHtml(m?.sequencial || "—")}</td></tr>`;
   }).join("") : "";
+
+  const listaItensNecessidade = itens.length > 0
+    ? `<h3>Relação de itens objeto desta aquisição</h3><ul>${itens.map(it => `<li>${escapeHtml(it.descricao || "-")}${it.quantidade ? ` — ${escapeHtml(String(it.quantidade))} ${escapeHtml(it.unidade || "")}` : ""}</li>`).join("")}</ul>`
+    : "";
 
   const secoesHtml = SECOES.map(s => `
     <h2>${s.id} — ${escapeHtml(s.titulo)}${s.obrig ? " *" : ""}</h2>
-    <p>${escapeHtml(etp.sections[s.id]?.trim() || "Não preenchido.").replace(/\n/g, "<br/>")}</p>
-    ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th><th>Data Prevista</th></tr>${linhasPca}</table>` : ""}
+    ${isRichSection(s.id)
+      ? (etp.sections[s.id]?.trim() || "<p><em>Não preenchido.</em></p>")
+      : `<p>${escapeHtml(etp.sections[s.id]?.trim() || "Não preenchido.").replace(/\n/g, "<br/>")}</p>`}
+    ${s.id === "I" ? listaItensNecessidade : ""}
+    ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
   `).join("");
 
   const html = `<!DOCTYPE html>
@@ -373,11 +404,10 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   ${temValores ? `<h2>Estimativa de Valores</h2><table><tr><th>Item</th><th>Descrição</th><th>Qtd.</th><th>Vlr. Unit.</th><th>Vlr. Total</th></tr>${linhasValores}<tr><td colspan="4" style="text-align:right"><b>Total estimado</b></td><td><b>${brl(totalGeral)}</b></td></tr></table>` : ""}
   ${secoesHtml}
   <div class="assinatura">
-    <p>${escapeHtml(etp.meta.local || "[Local]")}, ${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}.</p>
-    <p style="margin-top: 40pt">_______________________________________</p>
-    <p>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</p>
+    <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
+  <p style="margin-top: 40pt">_______________________________________</p>
+  <p>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</p>
   </div>
-  <p class="rodape">* Elementos obrigatórios nos termos do art. 18, §2º, da Lei nº 14.133/2021. Documento gerado como minuta de trabalho — revisão técnica e jurídica antes da formalização é indispensável.</p>
 </body>
 </html>`;
 
@@ -432,8 +462,15 @@ Escreva em português formal, redação de documento administrativo, de forma ob
 
   const text = (await callClaude(contexto, 1000)).trim();
   if (!text) throw new Error("Resposta vazia da IA");
+
+  // Nas seções V/VI o conteúdo é HTML (editor com formatação) — converte os parágrafos em <p>
+  if (isRichSection(section.id)) {
+    return text.split(/\n{2,}/).map(par => `<p>${escapeHtml(par.trim()).replace(/\n/g, "<br/>")}</p>`).join("\n");
+  }
   return text;
 }
+
+// Gera um título de objeto resumido a partir da planilha de itens já cadastrada
 async function gerarObjetoIA({ etp }) {
   const itens = etp.itens || [];
   if (itens.length === 0) throw new Error("Cadastre os itens antes de gerar o objeto.");
@@ -463,6 +500,32 @@ Responda APENAS com a frase do objeto (começando com "${verbo} de"), sem aspas,
   const text = (await callClaude(contexto, 300)).trim().replace(/^["']|["']$/g, "");
   if (!text) throw new Error("Resposta vazia da IA");
   return text;
+}
+
+// Modelo padrão do inciso VI (metodologia de levantamento de preços), sem chamada de IA —
+// texto fixo com lacunas preenchidas automaticamente a partir dos dados já cadastrados no ETP.
+// Pode ser reaproveitado em qualquer aquisição; o servidor ajusta manualmente o que for específico do caso.
+function gerarTextoPadraoVI(etp) {
+  const bemOuServico = etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI" ? "serviços" : "bens";
+  const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
+  const fonte = etp.meta.fonteRecurso?.trim();
+  const paragrafoFonte = fonte
+    ? `<p>Foram consideradas ainda as exigências constantes de ${escapeHtml(fonte)}, cujos recursos estão destinados exclusivamente à aquisição dos ${bemOuServico} descritos neste Estudo Técnico Preliminar.</p>`
+    : "";
+
+  return `
+<p>Para garantir a seleção da solução mais apropriada para a aquisição dos ${bemOuServico}, foi adotada uma metodologia criteriosa de levantamento mercadológico, baseada na análise de preços praticados por fornecedores especializados, em pesquisas em plataformas públicas e na avaliação de experiências anteriores de entidades similares. A pesquisa de mercado teve como objetivo identificar as opções mais vantajosas para a Administração, assegurando que os itens adquiridos atendam aos padrões de qualidade exigidos, com especificações técnicas adequadas e compatíveis com o uso institucional pretendido.</p>
+${paragrafoFonte}
+<p>No processo de avaliação, as alternativas abaixo foram analisadas, porém não foram consideradas adequadas frente à necessidade concreta de ${escapeHtml(entidade)}:</p>
+<ul>
+<li>Locação de equipamentos: opção descartada em razão da natureza da fonte de recurso — quando voltada exclusivamente para aquisição definitiva — e da ausência de economicidade a longo prazo, considerando que a locação demandaria custos recorrentes, sem incorporação patrimonial para a entidade executora das ações;</li>
+<li>Aproveitamento de equipamentos existentes: os poucos equipamentos atualmente disponíveis se encontram em estado de obsolescência ou com desempenho insuficiente, sendo incompatíveis com as demandas operacionais e com os parâmetros de eficiência e segurança exigidos para os serviços prestados;</li>
+<li>Aquisição de itens com menor capacidade técnica ou de uso residencial: descartada por não atenderem às exigências institucionais de uso contínuo, coletivo e intensivo, o que comprometeria a durabilidade e a eficácia dos serviços prestados.</li>
+</ul>
+<p>A escolha pela aquisição de itens novos, com especificações institucionais e garantia técnica, representa a solução mais eficiente e vantajosa. Os materiais listados foram selecionados com base na compatibilidade com as atividades desenvolvidas, na capacidade técnica dos produtos e na viabilidade de manutenção e reposição de peças.</p>
+<p>A aquisição na forma aqui estabelecida promove não apenas a modernização e a funcionalidade das instalações, mas também reforça a transparência, a padronização e a economicidade no uso dos recursos públicos. Além disso, os bens adquiridos passarão a compor o patrimônio vinculado às ações desenvolvidas, garantindo a continuidade dos serviços.</p>
+<p>Portanto, a escolha dos itens e das especificações técnicas constantes neste Estudo Técnico Preliminar está embasada em levantamento realista, comparativo e fundamentado de mercado, considerando aspectos técnicos, econômicos e operacionais, culminando em uma solução segura, duradoura e alinhada ao interesse público.</p>
+`.trim();
 }
 
 // ---------- App ----------
@@ -603,6 +666,12 @@ export default function App() {
         .etp-scroll::-webkit-scrollbar { width: 8px; }
         .etp-scroll::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
         textarea:focus, input:focus, select:focus { outline: 2px solid ${C.brass}; outline-offset: 1px; }
+        [contenteditable]:focus { outline: 2px solid ${C.brass}; outline-offset: -2px; }
+        .rich-content table, [contenteditable] table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+        .rich-content td, .rich-content th, [contenteditable] td, [contenteditable] th { border: 1px solid ${C.border}; padding: 6px 8px; }
+        .rich-content ul, [contenteditable] ul { list-style: disc; padding-left: 1.4em; }
+        .rich-content ol, [contenteditable] ol { list-style: decimal; padding-left: 1.4em; }
+        .rich-content p, [contenteditable] p { margin: 0 0 8px; }
         @media print {
           .no-print { display: none !important; }
           .print-area { box-shadow: none !important; margin: 0 !important; }
@@ -1037,6 +1106,15 @@ function MetaForm({ etp, onMeta }) {
           className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm leading-relaxed resize-y"
           style={{ borderColor: C.border, background: "white" }} />
       </label>
+      <label className="block mb-4">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Fonte de recurso (opcional)</span>
+        <input value={etp.meta.fonteRecurso || ""} onChange={e => onMeta("fonteRecurso", e.target.value)}
+          placeholder="Ex.: Emenda Parlamentar nº ... / Programação nº ... – GND 4 – Investimento"
+          className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+        <span className="text-xs mt-1 block" style={{ color: C.inkMuted }}>
+          Se preenchido, entra automaticamente no modelo padrão do inciso VI (Estimativa do Valor).
+        </span>
+      </label>
       <div className="mt-6 p-4 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
         Os incisos marcados com <b style={{ color: C.brass }}>*</b> na barra lateral (I, IV, VI, VIII e XIII) são de
         preenchimento obrigatório conforme o art. 18, §2º da Lei nº 14.133/2021 — os demais podem ser
@@ -1046,11 +1124,83 @@ function MetaForm({ etp, onMeta }) {
   );
 }
 
+// ---------- Editor com formatação (negrito, listas, tabela) ----------
+// Usa contentEditable + document.execCommand — simples, sem dependências externas.
+// O conteúdo é guardado como HTML dentro de etp.sections[id].
+function RichTextEditor({ value, onChange }) {
+  const ref = useRef(null);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    // Só sincroniza o DOM quando o valor muda de fora (ex.: "Usar modelo padrão"),
+    // para não atropelar o cursor enquanto o usuário digita.
+    if (ref.current && ref.current.innerHTML !== (value || "")) {
+      ref.current.innerHTML = value || "";
+    }
+  }, [value]);
+
+  function exec(cmd, arg = null) {
+    ref.current?.focus();
+    document.execCommand(cmd, false, arg);
+    onChange(ref.current?.innerHTML || "");
+  }
+
+  function inserirTabela() {
+    ref.current?.focus();
+    const linhas = 3, colunas = 3;
+    let html = '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><tbody>';
+    for (let r = 0; r < linhas; r++) {
+      html += "<tr>";
+      for (let c = 0; c < colunas; c++) {
+        html += `<td style="border:1px solid #999;padding:6px 8px;min-width:60px;">${r === 0 ? "&nbsp;" : "&nbsp;"}</td>`;
+      }
+      html += "</tr>";
+    }
+    html += "</tbody></table><p><br/></p>";
+    document.execCommand("insertHTML", false, html);
+    onChange(ref.current?.innerHTML || "");
+  }
+
+  const btn = (label, onClick, title) => (
+    <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClick} title={title}
+      className="px-2.5 py-1.5 rounded text-xs font-medium hover:bg-black/5" style={{ color: C.navy }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b flex-wrap" style={{ borderColor: C.border, background: C.paperDark }}>
+        {btn(<b>N</b>, () => exec("bold"), "Negrito")}
+        {btn(<i>I</i>, () => exec("italic"), "Itálico")}
+        {btn(<u>S</u>, () => exec("underline"), "Sublinhado")}
+        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+        {btn("• Lista", () => exec("insertUnorderedList"), "Lista com marcadores")}
+        {btn("1. Lista", () => exec("insertOrderedList"), "Lista numerada")}
+        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+        {btn(<span className="flex items-center gap-1"><TableIcon size={13} /> Tabela</span>, inserirTabela, "Inserir tabela 3×3")}
+        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+        {btn("↶ Desfazer", () => exec("undo"), "Desfazer")}
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={() => onChange(ref.current?.innerHTML || "")}
+        onBlur={() => onChange(ref.current?.innerHTML || "")}
+        className="px-4 py-3 text-sm leading-relaxed"
+        style={{ minHeight: "280px", background: "white", outline: "none" }}
+      />
+    </div>
+  );
+}
+
 function SectionForm({ etp, section, value, onChange }) {
   const [loading, setLoading] = useState(false);
   const [instrucoes, setInstrucoes] = useState("");
   const [showInstr, setShowInstr] = useState(false);
   const [error, setError] = useState("");
+  const rich = isRichSection(section.id);
 
   async function handleGerar() {
     setLoading(true);
@@ -1066,6 +1216,12 @@ function SectionForm({ etp, section, value, onChange }) {
     setLoading(false);
   }
 
+  function handleModeloPadrao() {
+    onChange(gerarTextoPadraoVI(etp));
+  }
+
+  const textoPlano = rich ? (value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : (value || "").trim();
+
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-1 flex-wrap">
@@ -1079,11 +1235,18 @@ function SectionForm({ etp, section, value, onChange }) {
       <p className="text-sm mb-3" style={{ color: C.inkMuted }}>{section.ajuda}</p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {section.id === "VI" && (
+          <button onClick={handleModeloPadrao}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+            style={{ background: C.brass, color: C.navyDark }} title="Preenche com o texto-modelo salvo no app, sem usar IA">
+            <FileEdit size={13} /> Usar modelo padrão (sem IA)
+          </button>
+        )}
         <button onClick={() => (showInstr ? handleGerar() : setShowInstr(true))} disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
           style={{ background: C.navy, color: C.paper }}>
           {loading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-          {loading ? "Gerando rascunho..." : value?.trim() ? "Gerar novo rascunho com IA" : "Gerar rascunho com IA"}
+          {loading ? "Gerando rascunho..." : value?.trim?.() ? "Gerar novo rascunho com IA" : "Gerar rascunho com IA"}
         </button>
         {showInstr && !loading && (
           <span className="text-xs" style={{ color: C.inkMuted }}>Descreva abaixo o que personalizar, depois clique de novo.</span>
@@ -1097,12 +1260,17 @@ function SectionForm({ etp, section, value, onChange }) {
       )}
       {error && <p className="text-xs mb-2" style={{ color: C.red }}>{error}</p>}
 
-      <textarea value={value} onChange={e => onChange(e.target.value)} rows={16}
-        placeholder="Escreva o conteúdo deste item, ou gere um rascunho com IA acima..."
-        className="w-full px-4 py-3 rounded-lg border text-sm leading-relaxed resize-y"
-        style={{ borderColor: C.border, background: "white", minHeight: "320px" }} />
+      {rich ? (
+        <RichTextEditor value={value} onChange={onChange} />
+      ) : (
+        <textarea value={value} onChange={e => onChange(e.target.value)} rows={16}
+          placeholder="Escreva o conteúdo deste item, ou gere um rascunho com IA acima..."
+          className="w-full px-4 py-3 rounded-lg border text-sm leading-relaxed resize-y"
+          style={{ borderColor: C.border, background: "white", minHeight: "320px" }} />
+      )}
       <p className="text-xs mt-2" style={{ color: C.inkMuted }}>
-        {value?.trim().length || 0} caracteres · Rascunhos de IA são ponto de partida — revise antes de formalizar.
+        {textoPlano.length} caracteres
+        {rich ? " · Use a barra de formatação para negrito, listas e tabelas." : " · Rascunhos de IA são ponto de partida — revise antes de formalizar."}
       </p>
     </div>
   );
@@ -1399,7 +1567,6 @@ function PCAForm({ etp, onPca }) {
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Consta no PCA?</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Sequencial</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Data Prevista</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Prioridade</th>
                 </tr>
               </thead>
@@ -1422,7 +1589,6 @@ function PCAForm({ etp, onPca }) {
                       )}
                     </td>
                     <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.sequencial || "—"}</td>
-                    <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.dataContratacao || "—"}</td>
                     <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.prioridade || "—"}</td>
                   </tr>
                 ))}
@@ -1742,9 +1908,19 @@ function PreviewView({ etp, onBack }) {
     t += `Tipo de objeto: ${etp.meta.tipo}\n\n`;
     if (etp.meta.introducao?.trim()) t += `INTRODUÇÃO\n${etp.meta.introducao.trim()}\n\n`;
     SECOES.forEach(s => {
-      t += `${s.id} — ${s.titulo.toUpperCase()}\n${etp.sections[s.id]?.trim() || "(não preenchido)"}\n\n`;
+      const conteudo = isRichSection(s.id)
+        ? (etp.sections[s.id] || "").replace(/<li[^>]*>/g, "\n• ").replace(/<[^>]+>/g, " ").replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").trim()
+        : etp.sections[s.id]?.trim();
+      t += `${s.id} — ${s.titulo.toUpperCase()}\n${conteudo || "(não preenchido)"}\n`;
+      if (s.id === "I" && etp.itens?.length > 0) {
+        t += `\nRelação de itens objeto desta aquisição:\n`;
+        etp.itens.forEach(it => {
+          t += `• ${it.descricao || "-"}${it.quantidade ? ` — ${it.quantidade} ${it.unidade || ""}` : ""}\n`;
+        });
+      }
+      t += `\n`;
     });
-    if (etp.meta.local?.trim()) t += `${etp.meta.local}, ${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}.\n`;
+    t += `${linhaAssinaturaData(etp)}\n`;
     return t;
   }
 
@@ -1906,9 +2082,30 @@ function PreviewView({ etp, onBack }) {
               <h3 className="serif text-base font-bold mb-1.5" style={{ color: C.navy }}>
                 {s.id} — {s.titulo}{s.obrig && <span style={{ color: C.brass }}> *</span>}
               </h3>
-              <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: etp.sections[s.id]?.trim() ? C.ink : C.inkMuted }}>
-                {etp.sections[s.id]?.trim() || "Não preenchido."}
-              </p>
+              {isRichSection(s.id) ? (
+                etp.sections[s.id]?.trim() ? (
+                  <div className="text-sm leading-relaxed rich-content" style={{ color: C.ink }}
+                    dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
+                ) : (
+                  <p className="text-sm" style={{ color: C.inkMuted }}>Não preenchido.</p>
+                )
+              ) : (
+                <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: etp.sections[s.id]?.trim() ? C.ink : C.inkMuted }}>
+                  {etp.sections[s.id]?.trim() || "Não preenchido."}
+                </p>
+              )}
+              {s.id === "I" && etp.itens?.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
+                    Relação de itens objeto desta aquisição
+                  </p>
+                  <ul className="text-sm leading-relaxed pl-5" style={{ color: C.ink, listStyleType: "disc" }}>
+                    {etp.itens.map(it => (
+                      <li key={it.id}>{it.descricao || "-"}{it.quantidade ? ` — ${it.quantidade} ${it.unidade || ""}` : ""}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {s.id === "II" && etp.pca && etp.itens?.length > 0 && (
                 <div className="mt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
@@ -1920,7 +2117,6 @@ function PreviewView({ etp, onBack }) {
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Consta no PCA?</th>
                         <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Sequencial</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Data Prevista</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1931,7 +2127,6 @@ function PreviewView({ etp, onBack }) {
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || `Item ${idx + 1}`}</td>
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border, color: pcaRow ? C.green : C.red }}>{pcaRow ? "Sim" : "Não"}</td>
                             <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{pcaRow?.sequencial || "—"}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{pcaRow?.dataContratacao || "—"}</td>
                           </tr>
                         );
                       })}
@@ -1946,15 +2141,10 @@ function PreviewView({ etp, onBack }) {
           ))}
 
           <div className="mt-12 text-sm text-center">
-            <p>{etp.meta.local || "[Local]"}, {fmtDateISO(etp.meta.data) || fmtDate(Date.now())}.</p>
+            <p>{linhaAssinaturaData(etp)}</p>
             <p className="mt-10">_______________________________________</p>
             <p className="mt-1">{etp.meta.responsavel || "[Responsável técnico]"}</p>
           </div>
-
-          <p className="text-[10px] mt-10 pt-4 border-t" style={{ borderColor: C.border, color: C.inkMuted }}>
-            * Elementos obrigatórios nos termos do art. 18, §2º, da Lei nº 14.133/2021. Documento gerado como
-            minuta de trabalho — revisão técnica e jurídica antes da formalização é indispensável.
-          </p>
         </div>
       </div>
     </div>
