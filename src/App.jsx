@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
 import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX } from "lucide-react";
 import { Settings, Key } from "lucide-react";
@@ -148,7 +148,7 @@ function baixarModeloPlanilha() {
 // constam no PCA — para ser importada no Centi como requerimento de inclusão desses itens no plano.
 function baixarPlanilhaInclusaoCenti(itensFaltantes) {
   const header = ["Id Produto", "Nome do Produto", "Unidade Medida", "Quantidade", "Classificação"];
-  const rows = itensFaltantes.map(it => ["", it.descricao || "", it.unidade || "", it.quantidade || "", it.classificacao || ""]);
+  const rows = itensFaltantes.map(it => [it.idProduto || "", it.descricao || "", it.unidade || "", it.quantidade || "", it.classificacao || ""]);
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   ws["!cols"] = [{ wch: 14 }, { wch: 55 }, { wch: 16 }, { wch: 12 }, { wch: 28 }];
   const wb = XLSX.utils.book_new();
@@ -1676,12 +1676,23 @@ function PCAForm({ etp, onPca }) {
                   Estes {itensFaltantes.length} item(ns) não foram localizados na planilha do PCA importada. Baixe a
                   planilha abaixo e importe no Sistema Centi para formalizar o requerimento de inclusão deles no plano.
                 </p>
+                {itensFaltantes.some(it => !it.idProduto) && (
+                  <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                    <span>
+                      Algum(ns) item(ns) está(ão) sem código/ID (provavelmente adicionado manualmente, e não pela
+                      importação do Sistema Centi). A planilha sairá com essa célula em branco — complete o código
+                      manualmente antes de importar, se o Centi exigir.
+                    </span>
+                  </div>
+                )}
                 <div className="rounded-lg border overflow-hidden mb-4" style={{ borderColor: C.border }}>
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ background: C.paperDark }}>
                         <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
                         <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
+                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Código/ID</th>
                         <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Unid.</th>
                         <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
                       </tr>
@@ -1691,6 +1702,9 @@ function PCAForm({ etp, onPca }) {
                         <tr key={it.id} className="border-t" style={{ borderColor: C.border }}>
                           <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
                           <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
+                          <td className="px-2 py-2 text-xs" style={{ color: it.idProduto ? C.ink : C.red }}>
+                            {it.idProduto || "sem código"}
+                          </td>
                           <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.unidade}</td>
                           <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "-"}</td>
                         </tr>
@@ -1865,7 +1879,7 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                   const adotado = valoresAdotados[it.id] || "";
                   const expanded = expandedId === it.id;
                   return (
-                    <React.Fragment key={it.id}>
+                    <Fragment key={it.id}>
                       <tr className="border-t align-top" style={{ borderColor: C.border, background: expanded ? C.paperDark : "transparent" }}>
                         <td className="px-2 py-2 text-center">
                           <button onClick={() => setExpandedId(expanded ? null : it.id)} style={{ color: C.inkMuted }}>
@@ -1934,7 +1948,7 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados }) {
                           </td>
                         </tr>
                       )}
-                    </React.Fragment>
+                    </Fragment>
                   );
                 })}
               </tbody>
