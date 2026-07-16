@@ -349,8 +349,12 @@ function linhaAssinaturaData(etp) {
 function objetoCompleto(etp) {
   const titulo = etp.meta.titulo?.trim();
   const orgao = etp.meta.orgao?.trim();
+  const setor = etp.meta.setor?.trim();
   if (!titulo) return "";
-  return orgao ? `${titulo} para atender às necessidades da ${orgao}` : titulo;
+  const partes = [];
+  if (setor) partes.push(`do(a) ${setor}`);
+  if (orgao) partes.push(`da ${orgao}`);
+  return partes.length > 0 ? `${titulo} para atender às necessidades ${partes.join(", ")}` : titulo;
 }
 
 // Redimensiona uma imagem (data URL) para uma largura máxima, para não pesar no armazenamento
@@ -2036,10 +2040,10 @@ function MetaForm({ etp, onMeta }) {
       {error && <p className="text-xs mb-4" style={{ color: C.red }}>{error}</p>}
 
       <div className="grid sm:grid-cols-2 gap-x-4">
-        <Field label="Órgão / Secretaria" value={etp.meta.orgao} onChange={v => onMeta("orgao", v)}
-          placeholder="Ex.: Secretaria Municipal de Assistência Social" />
         <Field label="Setor requisitante" value={etp.meta.setor} onChange={v => onMeta("setor", v)}
           placeholder="Ex.: Divisão de Proteção Social Básica" />
+        <Field label="Órgão / Secretaria" value={etp.meta.orgao} onChange={v => onMeta("orgao", v)}
+          placeholder="Ex.: Secretaria Municipal de Assistência Social" />
         <Field label="Responsável técnico" value={etp.meta.responsavel} onChange={v => onMeta("responsavel", v)}
           placeholder="Nome do(a) elaborador(a)" />
         <Field label="Cargo do responsável" value={etp.meta.cargo} onChange={v => onMeta("cargo", v)}
@@ -2117,29 +2121,17 @@ function MetaForm({ etp, onMeta }) {
         </label>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-x-4">
-        <label className="block mb-4">
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-            Parcelamento (inciso VIII)
-          </span>
-          <select value={etp.meta.parcelamento || ""} onChange={e => onMeta("parcelamento", e.target.value)}
-            className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
-            <option value="">Não definido</option>
-            <option value="nao">Não será parcelada (lote único)</option>
-            <option value="sim">Será parcelada em itens/lotes</option>
-          </select>
-        </label>
-        <label className="block mb-4">
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-            Metodologia de cálculo do valor (inciso VI)
-          </span>
-          <select value={etp.meta.metodologiaCalculo || "mediana"} onChange={e => onMeta("metodologiaCalculo", e.target.value)}
-            className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
-            <option value="mediana">Mediana</option>
-            <option value="media">Média aritmética simples</option>
-          </select>
-        </label>
-      </div>
+      <label className="block mb-4">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+          Parcelamento (inciso VIII)
+        </span>
+        <select value={etp.meta.parcelamento || ""} onChange={e => onMeta("parcelamento", e.target.value)}
+          className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border, maxWidth: "360px" }}>
+          <option value="">Não definido</option>
+          <option value="nao">Não será parcelada (lote único)</option>
+          <option value="sim">Será parcelada em itens/lotes</option>
+        </select>
+      </label>
 
       <label className="flex items-start gap-2 mb-3 cursor-pointer">
         <input type="checkbox" checked={!!etp.meta.manutencaoContinuada}
