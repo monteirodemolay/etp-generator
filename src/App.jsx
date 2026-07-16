@@ -83,6 +83,7 @@ function emptyEtp() {
     id: "etp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
     meta: {
       titulo: "", orgao: "", setor: "", responsavel: "", cargo: "", processo: "", tipo: TIPOS_OBJETO[0], local: "",
+      responsaveis: [], // [{id, nome, cargo}] — múltiplos responsáveis técnicos; responsavel/cargo acima ficam como fallback de ETPs antigos
       introducao: "", fonteRecurso: "", data: todayISO(),
       // Campos estruturados — alimentam automaticamente os modelos padrão dos incisos III, VI, VII, VIII, XI e XII
       parcelamento: "", // "" | "nao" | "sim"
@@ -346,6 +347,14 @@ function linhaAssinaturaData(etp) {
 }
 
 // Objeto completo do ETP: título resumido + órgão solicitante, usado no documento final
+// Lista de responsáveis a exibir/assinar — usa o novo campo de múltiplos responsáveis;
+// se estiver vazio, cai no campo antigo (responsavel/cargo), para ETPs criados antes desta mudança.
+function listaResponsaveis(etp) {
+  if (etp.meta.responsaveis?.length > 0) return etp.meta.responsaveis;
+  if (etp.meta.responsavel?.trim()) return [{ id: "legado", nome: etp.meta.responsavel, cargo: etp.meta.cargo || "" }];
+  return [];
+}
+
 function objetoCompleto(etp) {
   const titulo = etp.meta.titulo?.trim();
   const orgao = etp.meta.orgao?.trim();
@@ -952,6 +961,10 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   const itens = etp.itens || [];
   const valoresAdotados = etp.valoresAdotados || {};
   const pca = etp.pca;
+  const responsaveis = listaResponsaveis(etp);
+  const resumoResponsaveis = responsaveis.length > 0
+    ? responsaveis.map(r => r.nome + (r.cargo ? ` (${r.cargo})` : "")).join("; ")
+    : "-";
 
   const linhasItens = itens.map((it, idx) =>
     `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(it.unidade || "")}</td><td>${escapeHtml(String(it.quantidade || "-"))}</td></tr>`
@@ -1031,7 +1044,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     <tr><td width="140"><b>Objeto:</b></td><td>${escapeHtml(objetoCompleto(etp) || "-")}</td></tr>
     <tr><td><b>Órgão:</b></td><td>${escapeHtml(etp.meta.orgao || "-")}</td></tr>
     <tr><td><b>Setor:</b></td><td>${escapeHtml(etp.meta.setor || "-")}</td></tr>
-    <tr><td><b>Responsável:</b></td><td>${escapeHtml(etp.meta.responsavel || "-")}${etp.meta.cargo ? ` — ${escapeHtml(etp.meta.cargo)}` : ""}</td></tr>
+    <tr><td><b>Responsável:</b></td><td>${escapeHtml(resumoResponsaveis)}</td></tr>
     <tr><td><b>Processo:</b></td><td>${escapeHtml(etp.meta.processo || "-")}</td></tr>
     <tr><td><b>Data:</b></td><td>${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}</td></tr>
   </table>
@@ -1039,9 +1052,9 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   ${secoesHtml}
   <div class="assinatura">
     <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
-  <p style="margin-top: 40pt">_______________________________________</p>
-  <p><b>${escapeHtml(etp.meta.responsavel || "[Responsável técnico]")}</b></p>
-  <p>${escapeHtml(etp.meta.cargo || "[Cargo do responsável]")}</p>
+    ${responsaveis.length > 0
+      ? responsaveis.map(r => `<p style="margin-top: 40pt">_______________________________________</p><p><b>${escapeHtml(r.nome)}</b></p><p>${escapeHtml(r.cargo || "")}</p>`).join("")
+      : `<p style="margin-top: 40pt">_______________________________________</p><p><b>[Responsável técnico]</b></p>`}
   </div>
   </div>
 </body>
@@ -1518,9 +1531,11 @@ export default function App() {
     setView("list");
   }
 
-  const filteredEtps = etps.filter(e =>
-    (e.meta.titulo + " " + e.meta.orgao + " " + e.meta.processo).toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredEtps = etps.filter(e => {
+    const nomesResponsaveis = listaResponsaveis(e).map(r => r.nome).join(" ");
+    return (e.meta.titulo + " " + e.meta.orgao + " " + e.meta.processo + " " + nomesResponsaveis)
+      .toLowerCase().includes(search.toLowerCase());
+  });
 
   return (
     <div style={{ background: C.paperDark, minHeight: "100%", fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
@@ -1705,7 +1720,7 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
         <input
           value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar por título, órgão ou nº de processo..."
+          placeholder="Buscar por título, órgão, nº de processo ou responsável..."
           className="w-full pl-9 pr-3 py-2.5 rounded-lg text-sm border"
           style={{ borderColor: C.border, background: "white" }}
         />
@@ -2044,13 +2059,12 @@ function MetaForm({ etp, onMeta }) {
           placeholder="Ex.: Divisão de Proteção Social Básica" />
         <Field label="Órgão / Secretaria" value={etp.meta.orgao} onChange={v => onMeta("orgao", v)}
           placeholder="Ex.: Secretaria Municipal de Assistência Social" />
-        <Field label="Responsável técnico" value={etp.meta.responsavel} onChange={v => onMeta("responsavel", v)}
-          placeholder="Nome do(a) elaborador(a)" />
-        <Field label="Cargo do responsável" value={etp.meta.cargo} onChange={v => onMeta("cargo", v)}
-          placeholder="Ex.: Administrador(a) / Pregoeiro(a) / Chefe do Setor de Compras" />
         <Field label="Nº do processo" value={etp.meta.processo} onChange={v => onMeta("processo", v)}
           placeholder="Ex.: 2026.001.000123" />
       </div>
+
+      <ResponsaveisManager responsaveis={etp.meta.responsaveis} onChange={v => onMeta("responsaveis", v)} />
+
       <div className="grid sm:grid-cols-3 gap-x-4">
         <label className="block mb-4">
           <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Tipo de objeto</span>
@@ -2327,6 +2341,94 @@ function RichTextEditor({ value, onChange }) {
         className="px-4 py-3 text-sm leading-relaxed"
         style={{ minHeight: "280px", background: "white", outline: "none" }}
       />
+    </div>
+  );
+}
+
+// ---------- Responsáveis técnicos (múltiplos, com diretório salvo entre ETPs) ----------
+function ResponsaveisManager({ responsaveis, onChange }) {
+  const [diretorio, setDiretorio] = useState([]); // [{nome, cargo}] — pessoas já usadas em qualquer ETP
+  const [novoNome, setNovoNome] = useState("");
+  const [novoCargo, setNovoCargo] = useState("");
+
+  useEffect(() => {
+    storage.get("diretorio:responsaveis", false)
+      .then(r => setDiretorio(r?.value ? JSON.parse(r.value) : []))
+      .catch(() => setDiretorio([]));
+  }, []);
+
+  function salvarNoDiretorio(nome, cargo) {
+    setDiretorio(prev => {
+      const semDuplicata = prev.filter(p => p.nome.toLowerCase() !== nome.toLowerCase());
+      const atualizado = [...semDuplicata, { nome, cargo }];
+      storage.set("diretorio:responsaveis", JSON.stringify(atualizado), false).catch(() => {});
+      return atualizado;
+    });
+  }
+
+  function preencherPeloDiretorio(nome) {
+    const encontrado = diretorio.find(p => p.nome === nome);
+    if (encontrado) setNovoCargo(encontrado.cargo || "");
+  }
+
+  function adicionar() {
+    if (!novoNome.trim()) return;
+    const novo = { id: "resp_" + Math.random().toString(36).slice(2, 8), nome: novoNome.trim(), cargo: novoCargo.trim() };
+    onChange([...(responsaveis || []), novo]);
+    salvarNoDiretorio(novo.nome, novo.cargo);
+    setNovoNome("");
+    setNovoCargo("");
+  }
+
+  function remover(id) {
+    onChange((responsaveis || []).filter(r => r.id !== id));
+  }
+
+  return (
+    <div className="mb-4 p-3.5 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
+      <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
+        Responsáveis técnicos (assinatura)
+      </span>
+
+      {(!responsaveis || responsaveis.length === 0) ? (
+        <p className="text-xs mb-2" style={{ color: C.inkMuted }}>
+          Nenhum responsável adicionado ainda. Pode incluir mais de um — todos assinam o documento final.
+        </p>
+      ) : (
+        <div className="space-y-1.5 mb-3">
+          {responsaveis.map(r => (
+            <div key={r.id} className="flex items-center gap-2 p-2 rounded-lg border" style={{ borderColor: C.border, background: "white" }}>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate" style={{ color: C.navy }}>{r.nome}</p>
+                {r.cargo && <p className="text-xs truncate" style={{ color: C.inkMuted }}>{r.cargo}</p>}
+              </div>
+              <button onClick={() => remover(r.id)} className="shrink-0" style={{ color: C.red }}><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <input list="diretorio-nomes" value={novoNome}
+          onChange={e => { setNovoNome(e.target.value); preencherPeloDiretorio(e.target.value); }}
+          placeholder="Nome do responsável" className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
+        <input list="diretorio-cargos" value={novoCargo} onChange={e => setNovoCargo(e.target.value)}
+          placeholder="Cargo (opcional)" className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
+        <button onClick={adicionar} disabled={!novoNome.trim()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+          style={{ background: C.navy, color: C.paper }}>
+          <Plus size={13} /> Adicionar
+        </button>
+      </div>
+      <datalist id="diretorio-nomes">
+        {diretorio.map(p => <option key={p.nome} value={p.nome} />)}
+      </datalist>
+      <datalist id="diretorio-cargos">
+        {[...new Set(diretorio.map(p => p.cargo).filter(Boolean))].map(c => <option key={c} value={c} />)}
+      </datalist>
+      <p className="text-[10px] mt-2" style={{ color: C.inkMuted }}>
+        Nomes já usados em qualquer ETP aparecem como sugestão automática — fica salvo neste navegador, entre ETPs.
+      </p>
     </div>
   );
 }
@@ -3349,7 +3451,8 @@ function PreviewView({ etp, onBack }) {
     t += `Objeto: ${objetoCompleto(etp) || "-"}\n`;
     t += `Órgão/Secretaria: ${etp.meta.orgao || "-"}\n`;
     t += `Setor requisitante: ${etp.meta.setor || "-"}\n`;
-    t += `Responsável técnico: ${etp.meta.responsavel || "-"}${etp.meta.cargo ? ` (${etp.meta.cargo})` : ""}\n`;
+    const responsaveis = listaResponsaveis(etp);
+    t += `Responsável técnico: ${responsaveis.length > 0 ? responsaveis.map(r => r.nome + (r.cargo ? ` (${r.cargo})` : "")).join("; ") : "-"}\n`;
     t += `Processo nº: ${etp.meta.processo || "-"}\n`;
     t += `Tipo de objeto: ${etp.meta.tipo}\n\n`;
     if (etp.meta.introducao?.trim()) t += `INTRODUÇÃO\n${etp.meta.introducao.trim()}\n\n`;
@@ -3395,6 +3498,12 @@ function PreviewView({ etp, onBack }) {
       t += `\n`;
     });
     t += `${linhaAssinaturaData(etp)}\n`;
+    const responsaveisAssinatura = listaResponsaveis(etp);
+    if (responsaveisAssinatura.length > 0) {
+      responsaveisAssinatura.forEach(r => {
+        t += `\n_______________________________________\n${r.nome}\n${r.cargo || ""}\n`;
+      });
+    }
     return t;
   }
 
@@ -3480,7 +3589,7 @@ function PreviewView({ etp, onBack }) {
           <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm mb-8">
             <p><b style={{ color: C.inkMuted }}>Órgão:</b> {etp.meta.orgao || "-"}</p>
             <p><b style={{ color: C.inkMuted }}>Setor:</b> {etp.meta.setor || "-"}</p>
-            <p><b style={{ color: C.inkMuted }}>Responsável:</b> {etp.meta.responsavel || "-"}{etp.meta.cargo ? ` — ${etp.meta.cargo}` : ""}</p>
+            <p><b style={{ color: C.inkMuted }}>Responsável:</b> {listaResponsaveis(etp).length > 0 ? listaResponsaveis(etp).map(r => r.nome + (r.cargo ? ` — ${r.cargo}` : "")).join("; ") : "-"}</p>
             <p><b style={{ color: C.inkMuted }}>Processo:</b> {etp.meta.processo || "-"}</p>
             <p><b style={{ color: C.inkMuted }}>Tipo:</b> {etp.meta.tipo}</p>
             <p><b style={{ color: C.inkMuted }}>Data:</b> {fmtDateISO(etp.meta.data) || fmtDate(etp.updatedAt)}</p>
@@ -3633,9 +3742,20 @@ function PreviewView({ etp, onBack }) {
 
           <div className="mt-12 text-sm text-center" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
             <p>{linhaAssinaturaData(etp)}</p>
-            <p className="mt-10">_______________________________________</p>
-            <p className="mt-1 font-semibold">{etp.meta.responsavel || "[Responsável técnico]"}</p>
-            <p>{etp.meta.cargo || "[Cargo do responsável]"}</p>
+            {listaResponsaveis(etp).length > 0 ? (
+              listaResponsaveis(etp).map(r => (
+                <div key={r.id} className="mt-10">
+                  <p>_______________________________________</p>
+                  <p className="mt-1 font-semibold">{r.nome}</p>
+                  {r.cargo && <p>{r.cargo}</p>}
+                </div>
+              ))
+            ) : (
+              <div className="mt-10">
+                <p>_______________________________________</p>
+                <p className="mt-1 font-semibold">[Responsável técnico]</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
