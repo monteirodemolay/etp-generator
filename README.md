@@ -72,4 +72,4 @@ Lei nº 14.133/2021, art. 18 e correlatos (planejamento das contratações, Estu
 
 ## Autoria
 
-Desenvolvido por **Luís Eduardo Monteiro Lima**, Analista Administrativo da Prefeitura Municipal de Rio Verde/GO, para uso no Setor de Compras da Secretaria Municipal de Assistência Social.
+Desenvolvido por **Luís Eduardo Monteiro Lima**, Administrative Analyst da Prefeitura Municipal de Rio Verde/GO, para uso no setor de compras da Secretaria Municipal de Assistência Social.

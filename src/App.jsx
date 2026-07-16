@@ -58,7 +58,7 @@ const REQUIRED_IDS = SECOES.filter(s => s.obrig).map(s => s.id);
 
 // Incisos V e VI usam editor com formatação (negrito, listas, tabelas) em vez de texto simples,
 // pois costumam incluir tabelas de quantitativos e valores.
-const RICH_SECTION_IDS = ["V", "VI"];
+const RICH_SECTION_IDS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII"];
 function isRichSection(id) {
   return RICH_SECTION_IDS.includes(id);
 }
@@ -360,6 +360,22 @@ function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Converte o texto simples devolvido pelos modelos padrão (parágrafos separados por linha em
+// branco, marcadores com "•") em HTML compatível com o editor formatado. Se o texto já vier em
+// HTML (como os modelos que já geram <p>/<ul> diretamente), devolve sem alterações.
+function textoParaHtml(texto) {
+  if (!texto) return "";
+  if (/^\s*<(p|ul|ol|h[1-6]|table|div)/i.test(texto)) return texto;
+  const blocos = texto.split(/\n{2,}/);
+  return blocos.map(bloco => {
+    const linhas = bloco.split("\n").map(l => l.trim()).filter(Boolean);
+    if (linhas.length > 0 && linhas.every(l => l.startsWith("•"))) {
+      return "<ul>" + linhas.map(l => `<li>${escapeHtml(l.replace(/^•\s*/, ""))}</li>`).join("") + "</ul>";
+    }
+    return `<p>${escapeHtml(bloco.trim()).replace(/\n/g, "<br/>")}</p>`;
+  }).join("\n");
+}
+
 // Gera um documento .doc (HTML compatível com o Word) editável, com o timbre no cabeçalho
 function gerarDocumentoWord(etp, timbreDataUrl) {
   const itens = etp.itens || [];
@@ -382,10 +398,6 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${m ? "Sim" : "Não"}</td><td>${escapeHtml(m?.sequencial || "—")}</td></tr>`;
   }).join("") : "";
 
-  const listaItensNecessidade = itens.length > 0
-    ? `<h3>Relação de itens objeto desta aquisição</h3><ul>${itens.map(it => `<li>${escapeHtml(it.descricao || "-")}${it.quantidade ? ` — ${escapeHtml(String(it.quantidade))} ${escapeHtml(it.unidade || "")}` : ""}</li>`).join("")}</ul>`
-    : "";
-
   const quadroQuantitativos = itens.length > 0
     ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
     : "";
@@ -397,15 +409,12 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     `<tr><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(q.fonte || "-")}</td><td>${escapeHtml(q.empresa || "—")}</td><td>${brl(num(q.valor))}</td></tr>`
   )).join("");
   const quadroCotacoes = linhasCotacoes
-    ? `<h3>Quadro detalhado de cotações por item e fonte</h3><table><tr><th>Item</th><th>Fonte</th><th>Fornecedor</th><th>Valor Cotado</th></tr>${linhasCotacoes}</table><p style="font-size:9pt;color:#666;">Cotações detalhadas por item, conforme documentos anexos ao processo.</p>`
+    ? `<h3>Quadro detalhado de cotações por item e fonte</h3><table><tr><th>Item</th><th>Fonte</th><th>Fornecedor</th><th>Valor Cotado</th></tr>${linhasCotacoes}</table><p style="font-size:9pt;">Cotações detalhadas por item, conforme documentos anexos ao processo.</p>`
     : "";
 
   const secoesHtml = SECOES.map(s => `
-    <h2>${s.id} — ${escapeHtml(s.titulo)}${s.obrig ? " *" : ""}</h2>
-    ${isRichSection(s.id)
-      ? (etp.sections[s.id]?.trim() || "<p><em>Não preenchido.</em></p>")
-      : `<p>${escapeHtml(etp.sections[s.id]?.trim() || "Não preenchido.").replace(/\n/g, "<br/>")}</p>`}
-    ${s.id === "I" ? listaItensNecessidade : ""}
+    <h2>${s.id} — ${escapeHtml(s.titulo)}</h2>
+    ${etp.sections[s.id]?.trim() || "<p><em>Não preenchido.</em></p>"}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
     ${s.id === "V" ? quadroQuantitativos : ""}
     ${s.id === "VI" ? quadroValores + quadroCotacoes : ""}
@@ -422,23 +431,28 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     mso-header: h1;
   }
   div.Section1 { page: Section1; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1a1a1a; line-height: 1.5; }
-  h1 { font-size: 15pt; text-align: center; margin-bottom: 2pt; }
-  .subtitulo { text-align: center; font-size: 10.5pt; color: #555; margin-bottom: 18pt; }
-  h2 { font-size: 12.5pt; text-align: center; margin-top: 18pt; margin-bottom: 8pt; color: #1C2E4A; }
-  h3 { font-size: 11pt; margin-top: 10pt; margin-bottom: 4pt; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
+  h1 { font-size: 16pt; text-align: center; margin-bottom: 2pt; letter-spacing: 0.3pt; }
+  .subtitulo { text-align: center; font-size: 10.5pt; font-style: italic; margin-bottom: 20pt; }
+  h2 { font-size: 12.5pt; text-align: center; margin-top: 20pt; margin-bottom: 8pt; text-transform: uppercase; letter-spacing: 0.3pt; }
+  h3 { font-size: 11pt; margin-top: 10pt; margin-bottom: 4pt; font-weight: bold; }
   p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
   .assinatura p { text-align: center; margin: 3pt 0; }
-  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 10pt; }
-  td, th { border: 1px solid #999; padding: 4px 6px; text-align: left; }
-  .meta-table td { border: none; padding: 2px 0; font-size: 10.5pt; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 12pt; }
+  td, th { border: 1px solid #000; padding: 5px 7px; text-align: left; }
+  th { background: #ececec; font-weight: bold; }
+  .meta-table td { border: none; padding: 2.5px 0; font-size: 10.5pt; }
+  h4 { font-size: 11.5pt; font-weight: bold; margin: 10pt 0 4pt; }
+  h5 { font-size: 11pt; font-weight: bold; font-style: italic; margin: 8pt 0 4pt; }
+  h6 { font-size: 10.5pt; font-weight: bold; text-transform: uppercase; margin: 8pt 0 4pt; }
+  blockquote { margin: 8pt 20pt; padding-left: 10pt; border-left: 2pt solid #000; font-style: italic; }
+  hr { border: none; border-top: 1pt solid #000; margin: 10pt 0; }
   .timbre { display: block; margin: 0 auto; max-height: 80px; }
   .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; mso-pagination: widow-orphan; }
-  .rodape { font-size: 8pt; color: #777; margin-top: 24pt; border-top: 1px solid #ccc; padding-top: 8pt; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" align="center" style="text-align:center; margin:0; border-bottom:1px solid #ccc; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
+  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
   <div class="Section1">
   <h1>ESTUDO TÉCNICO PRELIMINAR</h1>
   <p class="subtitulo">Lei nº 14.133/2021 · art. 18</p>
@@ -941,9 +955,19 @@ export default function App() {
         .rich-content ul, [contenteditable] ul { list-style: disc; padding-left: 1.4em; }
         .rich-content ol, [contenteditable] ol { list-style: decimal; padding-left: 1.4em; }
         .rich-content p, [contenteditable] p { margin: 0 0 8px; }
+        .rich-content h4, [contenteditable] h4 { font-size: 1.05em; font-weight: 700; margin: 10px 0 4px; }
+        .rich-content h5, [contenteditable] h5 { font-size: 1em; font-weight: 700; font-style: italic; margin: 8px 0 4px; }
+        .rich-content h6, [contenteditable] h6 { font-size: 0.95em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; margin: 8px 0 4px; }
+        .rich-content blockquote, [contenteditable] blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid ${C.brass}; font-style: italic; color: ${C.inkMuted}; }
+        .rich-content hr, [contenteditable] hr { border: none; border-top: 1px solid ${C.border}; margin: 12px 0; }
         @media print {
           .no-print { display: none !important; }
           .print-area { box-shadow: none !important; margin: 0 !important; }
+          .print-area, .print-area * { color: #000 !important; }
+          .print-area blockquote { border-left-color: #000 !important; }
+          .print-area table, .print-area td, .print-area th { border-color: #000 !important; }
+          .print-area th { background: #eeeeee !important; }
+          .print-area tr:nth-child(even) td { background: transparent !important; }
           .timbre-inline-print { display: none !important; }
           .timbre-fixed-print {
             display: block !important;
@@ -955,7 +979,8 @@ export default function App() {
             padding: 6px 0 10px;
             background: white;
           }
-          .print-area { padding-top: 110px !important; }
+          .print-area { padding-top: 110px !important; line-height: 1.5; }
+          .print-area .titulo-inciso { text-transform: uppercase; letter-spacing: 0.3px; }
         }
         .timbre-fixed-print { display: none; }
       `}</style>
@@ -1525,7 +1550,9 @@ function MetaForm({ etp, onMeta }) {
 // O conteúdo é guardado como HTML dentro de etp.sections[id].
 function RichTextEditor({ value, onChange }) {
   const ref = useRef(null);
-  const isFirstRender = useRef(true);
+  const [linhasTabela, setLinhasTabela] = useState(3);
+  const [colunasTabela, setColunasTabela] = useState(3);
+  const [showTabelaConfig, setShowTabelaConfig] = useState(false);
 
   useEffect(() => {
     // Só sincroniza o DOM quando o valor muda de fora (ex.: "Usar modelo padrão"),
@@ -1543,23 +1570,26 @@ function RichTextEditor({ value, onChange }) {
 
   function inserirTabela() {
     ref.current?.focus();
-    const linhas = 3, colunas = 3;
+    const linhas = Math.min(30, Math.max(1, Number(linhasTabela) || 3));
+    const colunas = Math.min(12, Math.max(1, Number(colunasTabela) || 3));
     let html = '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><tbody>';
     for (let r = 0; r < linhas; r++) {
       html += "<tr>";
       for (let c = 0; c < colunas; c++) {
-        html += `<td style="border:1px solid #999;padding:6px 8px;min-width:60px;">${r === 0 ? "&nbsp;" : "&nbsp;"}</td>`;
+        html += `<td style="border:1px solid #999;padding:6px 8px;min-width:50px;">&nbsp;</td>`;
       }
       html += "</tr>";
     }
     html += "</tbody></table><p><br/></p>";
     document.execCommand("insertHTML", false, html);
     onChange(ref.current?.innerHTML || "");
+    setShowTabelaConfig(false);
   }
 
-  const btn = (label, onClick, title) => (
+  const btn = (label, onClick, title, active) => (
     <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClick} title={title}
-      className="px-2.5 py-1.5 rounded text-xs font-medium hover:bg-black/5" style={{ color: C.navy }}>
+      className="px-2.5 py-1.5 rounded text-xs font-medium hover:bg-black/5"
+      style={{ color: C.navy, background: active ? "rgba(166,131,46,0.15)" : "transparent" }}>
       {label}
     </button>
   );
@@ -1567,16 +1597,58 @@ function RichTextEditor({ value, onChange }) {
   return (
     <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
       <div className="flex items-center gap-0.5 px-2 py-1.5 border-b flex-wrap" style={{ borderColor: C.border, background: C.paperDark }}>
+        <select onMouseDown={e => e.stopPropagation()} onChange={e => { exec("formatBlock", e.target.value); e.target.value = ""; }}
+          defaultValue="" className="px-2 py-1.5 rounded text-xs font-medium bg-white border mr-0.5" style={{ borderColor: C.border, color: C.navy }}
+          title="Estilo do parágrafo">
+          <option value="" disabled>Estilo</option>
+          <option value="<p>">Parágrafo normal</option>
+          <option value="<h4>">Título 1</option>
+          <option value="<h5>">Título 2</option>
+          <option value="<h6>">Título 3</option>
+          <option value="<blockquote>">Citação</option>
+        </select>
+        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
         {btn(<b>N</b>, () => exec("bold"), "Negrito")}
         {btn(<i>I</i>, () => exec("italic"), "Itálico")}
         {btn(<u>S</u>, () => exec("underline"), "Sublinhado")}
+        {btn(<span style={{ textDecoration: "line-through" }}>T</span>, () => exec("strikeThrough"), "Tachado")}
+        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+        {btn("⯇", () => exec("justifyLeft"), "Alinhar à esquerda")}
+        {btn("☰", () => exec("justifyCenter"), "Centralizar")}
+        {btn("⯈", () => exec("justifyRight"), "Alinhar à direita")}
+        {btn("☰☰", () => exec("justifyFull"), "Justificar")}
         <span className="w-px h-4 mx-1" style={{ background: C.border }} />
         {btn("• Lista", () => exec("insertUnorderedList"), "Lista com marcadores")}
         {btn("1. Lista", () => exec("insertOrderedList"), "Lista numerada")}
+        {btn("⇥", () => exec("indent"), "Aumentar recuo")}
+        {btn("⇤", () => exec("outdent"), "Diminuir recuo")}
         <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn(<span className="flex items-center gap-1"><TableIcon size={13} /> Tabela</span>, inserirTabela, "Inserir tabela 3×3")}
+        <div className="relative">
+          {btn(<span className="flex items-center gap-1"><TableIcon size={13} /> Tabela</span>, () => setShowTabelaConfig(v => !v), "Inserir tabela (tamanho configurável)")}
+          {showTabelaConfig && (
+            <div className="absolute top-full left-0 mt-1 z-20 flex items-center gap-2 p-2.5 rounded-lg border shadow-lg" style={{ background: "white", borderColor: C.border }}>
+              <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
+                Linhas
+                <input type="number" min="1" max="30" value={linhasTabela} onChange={e => setLinhasTabela(e.target.value)}
+                  className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
+              </label>
+              <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
+                Colunas
+                <input type="number" min="1" max="12" value={colunasTabela} onChange={e => setColunasTabela(e.target.value)}
+                  className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
+              </label>
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={inserirTabela}
+                className="px-2.5 py-1 rounded text-xs font-medium" style={{ background: C.navy, color: C.paper }}>
+                Inserir
+              </button>
+            </div>
+          )}
+        </div>
+        {btn("— Linha", () => exec("insertHorizontalRule"), "Inserir linha horizontal")}
         <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn("↶ Desfazer", () => exec("undo"), "Desfazer")}
+        {btn("⌫ Limpar", () => exec("removeFormat"), "Limpar formatação")}
+        {btn("↶", () => exec("undo"), "Desfazer")}
+        {btn("↷", () => exec("redo"), "Refazer")}
       </div>
       <div
         ref={ref}
@@ -1679,7 +1751,7 @@ function SectionForm({ etp, section, value, onChange, onSolucoesMercado }) {
 
   function handleModeloPadrao() {
     const gerar = MODELOS_PADRAO[section.id];
-    if (gerar) onChange(gerar(etp));
+    if (gerar) onChange(textoParaHtml(gerar(etp)));
   }
 
   const temModeloPadrao = !!MODELOS_PADRAO[section.id];
@@ -2570,16 +2642,8 @@ function PreviewView({ etp, onBack }) {
     t += `Tipo de objeto: ${etp.meta.tipo}\n\n`;
     if (etp.meta.introducao?.trim()) t += `INTRODUÇÃO\n${etp.meta.introducao.trim()}\n\n`;
     SECOES.forEach(s => {
-      const conteudo = isRichSection(s.id)
-        ? (etp.sections[s.id] || "").replace(/<li[^>]*>/g, "\n• ").replace(/<[^>]+>/g, " ").replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").trim()
-        : etp.sections[s.id]?.trim();
+      const conteudo = (etp.sections[s.id] || "").replace(/<li[^>]*>/g, "\n• ").replace(/<[^>]+>/g, " ").replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").trim();
       t += `${s.id} — ${s.titulo.toUpperCase()}\n${conteudo || "(não preenchido)"}\n`;
-      if (s.id === "I" && etp.itens?.length > 0) {
-        t += `\nRelação de itens objeto desta aquisição:\n`;
-        etp.itens.forEach(it => {
-          t += `• ${it.descricao || "-"}${it.quantidade ? ` — ${it.quantidade} ${it.unidade || ""}` : ""}\n`;
-        });
-      }
       if (s.id === "II" && etp.pca && etp.itens?.length > 0) {
         t += `\nQuadro de alinhamento ao PCA:\n`;
         etp.itens.forEach(it => {
@@ -2719,32 +2783,14 @@ function PreviewView({ etp, onBack }) {
 
           {SECOES.map(s => (
             <div key={s.id} className="mb-6">
-              <h3 className="serif text-base font-bold mb-1.5 text-center" style={{ color: C.navy }}>
-                {s.id} — {s.titulo}{s.obrig && <span style={{ color: C.brass }}> *</span>}
+              <h3 className="serif text-base font-bold mb-1.5 text-center titulo-inciso" style={{ color: C.navy }}>
+                {s.id} — {s.titulo}
               </h3>
-              {isRichSection(s.id) ? (
-                etp.sections[s.id]?.trim() ? (
-                  <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
-                    dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
-                ) : (
-                  <p className="text-sm" style={{ color: C.inkMuted }}>Não preenchido.</p>
-                )
+              {etp.sections[s.id]?.trim() ? (
+                <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
+                  dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
               ) : (
-                <p className="text-sm whitespace-pre-wrap leading-relaxed text-justify" style={{ color: etp.sections[s.id]?.trim() ? C.ink : C.inkMuted }}>
-                  {etp.sections[s.id]?.trim() || "Não preenchido."}
-                </p>
-              )}
-              {s.id === "I" && etp.itens?.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
-                    Relação de itens objeto desta aquisição
-                  </p>
-                  <ul className="text-sm leading-relaxed pl-5" style={{ color: C.ink, listStyleType: "disc" }}>
-                    {etp.itens.map(it => (
-                      <li key={it.id}>{it.descricao || "-"}{it.quantidade ? ` — ${it.quantidade} ${it.unidade || ""}` : ""}</li>
-                    ))}
-                  </ul>
-                </div>
+                <p className="text-sm" style={{ color: C.inkMuted }}>Não preenchido.</p>
               )}
               {s.id === "II" && etp.pca && etp.itens?.length > 0 && (
                 <div className="mt-3">
