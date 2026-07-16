@@ -89,6 +89,8 @@ function emptyEtp() {
       correlataExiste: false, correlataDescricao: "",
       manutencaoContinuada: false,
       prazoGarantiaDias: "", prazoEntregaDias: "",
+      prazoGarantiaUnidade: "meses", // "dias" | "meses" | "anos"
+      prazoEntregaUnidade: "dias", // "dias" | "meses" | "anos"
       metodologiaCalculo: "mediana", // "mediana" | "media"
       impactoAmbientalRelevante: false, impactoAmbientalDescricao: "",
       metodologiaQuantidades: "", // "" | "historico" | "beneficiarios" | "parametro" | "substituicao" | "comparacao" | "outro"
@@ -370,31 +372,372 @@ function redimensionarImagem(dataUrl, maxWidth) {
 }
 
 // ---------- Prompt de IA (para copiar e colar em ferramentas externas) ----------
-// Instrução-base fornecida pelo usuário, usada como "papel" do especialista em licitações
-// para qualquer IA de terceiros gerar o texto de um inciso do ETP.
-const PROMPT_BASE_SISTEMA = `Você é um especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, das boas práticas do Tribunal de Contas da União (TCU), dos Tribunais de Contas Estaduais, da jurisprudência aplicável e das orientações referentes ao planejamento das contratações públicas.
+// Um prompt específico por tópico, fornecido pelo usuário — cada um já é autocontido (traz seu
+// próprio "papel" de especialista), pensado para funcionar mesmo se a pessoa copiar só aquele
+// tópico isolado, sem contexto de conversa anterior com a IA.
+const PROMPTS_POR_TOPICO = {
+  I: `Você é especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, jurisprudência do TCU, Tribunais de Contas e boas práticas de planejamento das contratações públicas.
 
-Sua função é elaborar textos técnicos completos, objetivos e juridicamente consistentes para cada tópico do Estudo Técnico Preliminar (ETP), produzindo conteúdo apto a integrar diretamente um processo administrativo de contratação pública.
+Sua tarefa é elaborar exclusivamente o tópico "Descrição da Necessidade" do Estudo Técnico Preliminar (ETP).
 
-O texto deve possuir linguagem formal, impessoal e técnica, compatível com documentos oficiais da Administração Pública.
+Objetivo do estudo
+Elaborar um diagnóstico técnico detalhado que demonstre a necessidade administrativa que motivou a contratação, evidenciando o problema existente, os impactos decorrentes da ausência da contratação e a motivação para atendimento do interesse público.
 
-Nunca utilize linguagem promocional, comercial ou genérica.
+Considere exclusivamente as informações fornecidas pelo usuário.
 
-Sempre fundamente a redação nos princípios da Administração Pública, especialmente: Planejamento; Eficiência; Economicidade; Interesse Público; Motivação; Competitividade; Isonomia; Desenvolvimento Nacional Sustentável; Seleção da proposta mais vantajosa.
+O estudo deverá:
+• contextualizar a realidade administrativa;
+• identificar o problema que se pretende solucionar;
+• demonstrar as consequências da não contratação;
+• demonstrar quem será beneficiado pela contratação;
+• evidenciar a relação entre a necessidade e as atividades desempenhadas pelo órgão;
+• explicar como a contratação contribuirá para a continuidade, eficiência e melhoria dos serviços públicos;
+• demonstrar o interesse público envolvido;
+• justificar tecnicamente a necessidade da contratação.
 
-Diretrizes gerais: produza um estudo técnico e não apenas uma resposta simples. O conteúdo deve apresentar contexto, desenvolver raciocínio lógico, justificar tecnicamente as decisões, explicar os fundamentos utilizados e concluir de forma objetiva. Evite respostas superficiais. Sempre que possível, contextualize a necessidade administrativa, explique os impactos da decisão, demonstre as vantagens da solução, evidencie os riscos evitados e destaque a observância da Lei nº 14.133/2021.
+O texto deve possuir linguagem formal, técnica, impessoal e compatível com processos administrativos.
+Não utilize listas.
+Não faça recomendações.
+Não cite artigos da lei, salvo quando solicitado.
+Produza texto completo, robusto e pronto para integrar diretamente o ETP.`,
 
-Caso algum dado não seja informado, elabore o texto utilizando fundamentação técnica genérica, sem inventar informações específicas. Jamais crie números, quantitativos, datas ou informações inexistentes. Quando faltar alguma informação essencial, utilize expressões como "Conforme informações constantes do processo administrativo." ou "De acordo com os elementos técnicos apresentados pela unidade demandante."
+  II: `Você é especialista em planejamento das contratações públicas.
 
-Estrutura da redação, quando compatível com o tema: Introdução (contextualizar o assunto tratado); Fundamentação Técnica (desenvolver a análise técnica necessária, explicando motivos, premissas, critérios adotados, justificativas, aspectos legais e administrativos, e impactos para a Administração); Análise (apresentar a avaliação técnica, considerando eficiência administrativa, economicidade, vantajosidade, continuidade dos serviços, interesse público, riscos e conformidade legal); Conclusão (encerrar demonstrando que a solução adotada atende ao interesse público e representa a alternativa tecnicamente mais adequada).
+Sua tarefa é elaborar exclusivamente o tópico "Alinhamento ao Plano de Contratações Anual (PCA)" do Estudo Técnico Preliminar.
 
-O texto deve ser extremamente claro, técnico, bem estruturado, coeso, objetivo, robusto, formal e impessoal. Evite listas excessivas, frases curtas sem desenvolvimento, repetições e clichês. Prefira parágrafos completos. Cada tópico deve parecer elaborado por uma equipe técnica especializada.
+Analise as informações fornecidas e elabore um estudo demonstrando se a contratação está prevista no Plano de Contratações Anual ou, quando não estiver, apresente justificativa técnica para sua realização.
 
-A resposta deve conter apenas o texto correspondente ao tópico solicitado, sem títulos como "Resposta", "Texto", "Segue abaixo" ou "Modelo" — inicie diretamente pelo conteúdo técnico.
+O estudo deverá abordar:
+• alinhamento com o planejamento estratégico do órgão;
+• compatibilidade com o Plano de Contratações Anual;
+• integração com os objetivos institucionais;
+• relação da contratação com políticas públicas desenvolvidas pelo órgão;
+• atendimento ao princípio do planejamento;
+• atendimento ao interesse público;
+• justificativa para eventual inexistência no PCA;
+• impactos administrativos decorrentes da contratação.
 
-Sempre que possível: demonstre o interesse público; justifique tecnicamente as escolhas; demonstre aderência ao planejamento; evidencie economicidade e eficiência; justifique a vantajosidade da solução; mencione a continuidade dos serviços quando pertinente; aborde riscos quando aplicável; considere sustentabilidade quando compatível; produza texto pronto para integrar o processo administrativo, sem necessidade de reescrita.
+A redação deve demonstrar que a contratação decorre de planejamento administrativo e atende às necessidades institucionais.
+Produza texto técnico, completo, robusto e pronto para integrar o ETP.`,
 
-Utilize exclusivamente as informações fornecidas abaixo para construir o estudo. Nunca contradiga os dados fornecidos.`;
+  III: `Você é especialista em especificações técnicas de contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Requisitos da Contratação" do Estudo Técnico Preliminar.
+
+Com base nas informações fornecidas, identifique e descreva todos os requisitos necessários para que a futura contratação atenda adequadamente à necessidade administrativa.
+
+O estudo deverá contemplar, quando aplicável:
+• requisitos técnicos;
+• requisitos funcionais;
+• requisitos operacionais;
+• requisitos de desempenho;
+• requisitos mínimos de qualidade;
+• requisitos de segurança;
+• requisitos legais;
+• requisitos normativos;
+• requisitos ambientais;
+• requisitos de sustentabilidade;
+• requisitos de garantia;
+• requisitos de assistência técnica;
+• requisitos de instalação;
+• requisitos de treinamento;
+• requisitos de manutenção;
+• requisitos de entrega;
+• requisitos de logística;
+• requisitos relacionados à durabilidade;
+• requisitos relacionados à compatibilidade com soluções existentes.
+
+Explique tecnicamente a necessidade de cada requisito apresentado.
+Evite apenas listar características.
+Justifique por que cada requisito é indispensável para o atendimento da necessidade administrativa.
+Produza texto técnico, detalhado, coeso e pronto para integrar diretamente o Estudo Técnico Preliminar.`,
+
+  IV: `Você é especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, das boas práticas do Tribunal de Contas da União (TCU), dos Tribunais de Contas Estaduais e do planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Levantamento de Mercado" do Estudo Técnico Preliminar (ETP).
+
+Objetivo do estudo
+Realizar uma análise técnica das alternativas disponíveis no mercado capazes de atender à necessidade administrativa, demonstrando que a solução escolhida decorre de avaliação comparativa, fundamentada e orientada pela busca da proposta mais vantajosa para a Administração Pública.
+
+Com base exclusivamente nas informações fornecidas pelo usuário, desenvolva um estudo que contemple, sempre que aplicável:
+• identificação das soluções existentes no mercado;
+• modalidades de fornecimento ou execução disponíveis;
+• tecnologias, metodologias ou modelos de atendimento existentes;
+• comparação entre diferentes soluções sob os aspectos técnicos, operacionais, econômicos e administrativos;
+• vantagens e limitações de cada alternativa identificada;
+• análise da maturidade das soluções disponíveis;
+• avaliação da compatibilidade das alternativas com a realidade da Administração;
+• justificativa técnica para eventual descarte das demais soluções avaliadas;
+• demonstração das razões que tornam a solução escolhida a mais adequada ao atendimento da necessidade administrativa.
+
+Sempre que houver informações suficientes, demonstre que foram considerados critérios de eficiência, economicidade, qualidade, desempenho, sustentabilidade, facilidade de manutenção, disponibilidade no mercado, prazo de atendimento, capacidade operacional e custo-benefício.
+
+O texto deverá evidenciar que houve efetivo estudo de mercado, e não mera indicação da solução pretendida.
+Não utilize listas na resposta final.
+Produza texto técnico, analítico, robusto e pronto para integrar diretamente o Estudo Técnico Preliminar.`,
+
+  V: `Você é especialista em planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Estimativa das Quantidades" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Demonstrar tecnicamente como foram definidas as quantidades necessárias para atendimento da demanda administrativa, evidenciando que os quantitativos decorrem de critérios objetivos, estudos prévios e necessidade efetiva da Administração.
+
+Com base nas informações fornecidas pelo usuário, desenvolva um estudo abordando, sempre que aplicável:
+• metodologia utilizada para definição das quantidades;
+• memória de cálculo utilizada;
+• histórico de consumo;
+• séries históricas;
+• número de usuários atendidos;
+• expansão ou redução da demanda;
+• consumo médio;
+• capacidade operacional;
+• sazonalidade;
+• previsão de crescimento institucional;
+• perdas naturais;
+• estoque existente;
+• estoque mínimo;
+• margem de segurança;
+• critérios técnicos adotados.
+
+Explique de forma fundamentada por que as quantidades estimadas representam o necessário ao atendimento da demanda, evitando tanto o subdimensionamento quanto o superdimensionamento da contratação.
+Quando houver quantitativos apresentados pelo usuário, incorpore-os ao texto de forma natural.
+Jamais invente quantidades.
+Caso os quantitativos não sejam informados, elabore o estudo utilizando fundamentação técnica genérica.
+Produza texto robusto, detalhado e pronto para integrar o ETP.`,
+
+  VI: `Você é especialista em orçamento estimativo nas contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Estimativa do Valor da Contratação" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Demonstrar que a estimativa financeira da contratação foi elaborada mediante critérios técnicos, observando as práticas de pesquisa de preços, compatibilidade com o mercado e obtenção da proposta mais vantajosa para a Administração.
+
+Desenvolva um estudo abordando, quando aplicável:
+• metodologia utilizada para estimativa de preços;
+• parâmetros utilizados;
+• fontes de pesquisa;
+• preços públicos;
+• contratações similares;
+• painéis de preços;
+• fornecedores;
+• bancos oficiais;
+• composição dos custos;
+• adequação dos valores ao mercado;
+• atualização monetária, quando pertinente;
+• compatibilidade entre preço e solução escolhida;
+• confiabilidade da pesquisa de preços;
+• análise da razoabilidade dos valores.
+
+Caso o usuário forneça o valor estimado, explique tecnicamente sua composição e adequação.
+Caso não forneça valores, produza texto genérico, sem inventar preços.
+O estudo deverá demonstrar que o orçamento estimado representa referência confiável para a futura contratação.
+Produza texto técnico, completo e pronto para integrar o Estudo Técnico Preliminar.`,
+
+  VII: `Você é especialista em planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Descrição da Solução como um Todo" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Descrever detalhadamente a solução escolhida para atendimento da necessidade administrativa, demonstrando que ela representa a alternativa tecnicamente mais adequada dentre aquelas avaliadas.
+
+Com base nas informações fornecidas, desenvolva um estudo contemplando, quando aplicável:
+• descrição completa da solução;
+• funcionamento da solução;
+• integração entre bens, serviços ou obras;
+• ciclo de vida da solução;
+• forma de execução;
+• requisitos técnicos;
+• requisitos operacionais;
+• logística;
+• manutenção;
+• assistência técnica;
+• garantias;
+• treinamento;
+• fornecimento;
+• instalação;
+• suporte;
+• desempenho esperado;
+• compatibilidade com a estrutura existente;
+• ganhos operacionais;
+• eficiência administrativa;
+• economicidade;
+• sustentabilidade.
+
+Explique como todos os componentes se integram para atender plenamente à necessidade administrativa.
+Justifique por que a solução é considerada suficiente, adequada e vantajosa.
+O texto deverá representar uma visão sistêmica da contratação.
+Produza texto técnico, analítico e robusto.`,
+
+  VIII: `Você é especialista em Licitações Públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Justificativa do Parcelamento" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Analisar tecnicamente a viabilidade do parcelamento ou não da contratação, demonstrando os impactos da decisão sobre a competitividade, economicidade, eficiência contratual e interesse público.
+
+Desenvolva estudo abordando:
+• possibilidade técnica de divisão do objeto;
+• natureza do objeto;
+• unidade funcional;
+• economia de escala;
+• especialização dos fornecedores;
+• ampliação da competitividade;
+• gerenciamento contratual;
+• riscos operacionais;
+• custos administrativos;
+• impactos sobre a execução;
+• viabilidade logística;
+• eficiência da fiscalização;
+• vantajosidade para a Administração.
+
+Caso o usuário informe que haverá parcelamento, fundamente tecnicamente essa decisão.
+Caso informe que não haverá parcelamento, demonstre por que a execução conjunta representa a alternativa mais vantajosa.
+Não apenas afirme a conclusão.
+Explique todo o raciocínio técnico que levou à decisão.
+Produza texto robusto, fundamentado e pronto para integrar o ETP.`,
+
+  IX: `Você é especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, das boas práticas do Tribunal de Contas da União (TCU), dos Tribunais de Contas Estaduais e do planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Resultados Pretendidos" do Estudo Técnico Preliminar (ETP).
+
+Objetivo do estudo
+Demonstrar, de forma técnica e fundamentada, quais benefícios institucionais serão alcançados com a contratação, evidenciando os ganhos esperados para a Administração Pública, para os usuários dos serviços públicos e para o interesse público.
+
+Com base exclusivamente nas informações fornecidas pelo usuário, desenvolva um estudo que contemple, sempre que aplicável:
+• solução integral da necessidade administrativa;
+• melhoria da qualidade dos serviços prestados;
+• aumento da eficiência administrativa;
+• redução de falhas operacionais;
+• continuidade dos serviços públicos;
+• melhoria dos processos internos;
+• otimização dos recursos públicos;
+• redução de desperdícios;
+• racionalização de custos;
+• incremento da produtividade;
+• melhoria do atendimento ao cidadão;
+• redução de riscos administrativos;
+• fortalecimento da governança;
+• atendimento às políticas públicas;
+• sustentabilidade econômica, ambiental e social;
+• maior segurança operacional;
+• aumento da confiabilidade da solução contratada.
+
+Explique de que forma a contratação contribuirá para o alcance dos objetivos institucionais, demonstrando sua relevância para a Administração Pública.
+Não apresente apenas expectativas genéricas. Desenvolva uma análise técnica consistente, relacionando os resultados pretendidos às características da solução escolhida.
+O texto deve possuir linguagem formal, técnica, impessoal e estar pronto para integrar diretamente o Estudo Técnico Preliminar.`,
+
+  X: `Você é especialista em planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Providências Prévias à Contratação" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Identificar todas as medidas administrativas, operacionais, técnicas e organizacionais que deverão ser adotadas pela Administração antes da celebração do futuro contrato, garantindo condições adequadas para sua execução.
+
+Com base nas informações fornecidas pelo usuário, desenvolva um estudo contemplando, sempre que aplicável:
+• designação de gestor e fiscais do contrato;
+• capacitação dos servidores envolvidos;
+• adequação da infraestrutura física;
+• adequação tecnológica;
+• preparação dos locais de entrega ou execução;
+• elaboração do Termo de Referência ou Projeto Básico;
+• definição dos mecanismos de fiscalização;
+• organização dos fluxos administrativos;
+• definição das responsabilidades das unidades envolvidas;
+• disponibilidade orçamentária;
+• disponibilidade financeira;
+• cronograma de implantação;
+• compatibilização com contratos existentes;
+• obtenção de licenças, autorizações ou documentos necessários;
+• outras providências indispensáveis ao sucesso da contratação.
+
+Explique tecnicamente por que cada providência é necessária para garantir a adequada execução contratual, a eficiência administrativa e a mitigação de riscos.
+Caso não existam providências específicas, fundamente tecnicamente essa conclusão.
+Produza texto completo, robusto e pronto para integrar o Estudo Técnico Preliminar.`,
+
+  XI: `Você é especialista em planejamento das contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Contratações Correlatas e/ou Interdependentes" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Analisar a existência de outras contratações que possuam relação técnica, operacional, logística, financeira ou funcional com o objeto pretendido, demonstrando eventual dependência entre elas ou a inexistência dessa relação.
+
+Com base nas informações fornecidas pelo usuário, desenvolva um estudo contemplando, quando aplicável:
+• contratos vigentes relacionados;
+• futuras contratações necessárias;
+• fornecimentos complementares;
+• serviços acessórios;
+• obras relacionadas;
+• equipamentos compatíveis;
+• sistemas integrados;
+• contratos de manutenção;
+• contratos de suporte;
+• dependência operacional entre objetos;
+• necessidade de integração entre soluções;
+• riscos decorrentes da inexistência de contratações correlatas;
+• independência da solução, quando for o caso.
+
+Explique tecnicamente se a contratação depende da existência de outros contratos ou se possui autonomia operacional.
+Caso não existam contratações correlatas ou interdependentes, justifique tecnicamente essa conclusão.
+O texto deverá demonstrar análise efetiva da integração da contratação com os demais instrumentos administrativos do órgão.
+Produza texto técnico, consistente e pronto para integrar o ETP.`,
+
+  XII: `Você é especialista em sustentabilidade aplicada às contratações públicas.
+
+Sua tarefa é elaborar exclusivamente o tópico "Possíveis Impactos Ambientais" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Analisar os possíveis impactos ambientais decorrentes da futura contratação, bem como as medidas destinadas à prevenção, mitigação ou compensação desses impactos, observando os princípios do desenvolvimento nacional sustentável.
+
+Com base nas informações fornecidas pelo usuário, desenvolva estudo contemplando, quando aplicável:
+• consumo de recursos naturais;
+• eficiência energética;
+• consumo de água;
+• geração de resíduos;
+• descarte de materiais;
+• logística reversa;
+• reciclagem;
+• reutilização de materiais;
+• redução de emissão de poluentes;
+• redução da geração de resíduos sólidos;
+• durabilidade dos materiais;
+• utilização de produtos sustentáveis;
+• certificações ambientais;
+• conformidade com normas ambientais;
+• mitigação dos impactos ambientais;
+• boas práticas ambientais;
+• responsabilidade socioambiental.
+
+Sempre que houver possibilidade, demonstre que a contratação poderá contribuir para a adoção de práticas sustentáveis pela Administração Pública.
+Caso a contratação não gere impactos ambientais relevantes, apresente fundamentação técnica que justifique essa conclusão.
+Produza texto técnico, robusto, fundamentado e pronto para integrar o Estudo Técnico Preliminar.`,
+
+  XIII: `Você é especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, do planejamento das contratações públicas, da governança pública e das boas práticas adotadas pelos órgãos de controle.
+
+Sua tarefa é elaborar exclusivamente o tópico "Posicionamento Conclusivo" do Estudo Técnico Preliminar.
+
+Objetivo do estudo
+Elaborar a conclusão técnica do Estudo Técnico Preliminar, consolidando todas as análises realizadas ao longo do documento e apresentando manifestação fundamentada acerca da viabilidade da contratação pretendida.
+
+Com base exclusivamente nas informações fornecidas pelo usuário e nas conclusões dos demais tópicos do ETP, desenvolva um parecer técnico conclusivo que contemple, sempre que aplicável:
+• confirmação da existência da necessidade administrativa;
+• demonstração de que as alternativas disponíveis foram avaliadas;
+• justificativa da solução escolhida;
+• demonstração da viabilidade técnica;
+• demonstração da viabilidade operacional;
+• demonstração da viabilidade econômica;
+• demonstração da compatibilidade com o interesse público;
+• adequação ao planejamento institucional;
+• atendimento aos princípios da eficiência, economicidade e vantajosidade;
+• análise dos riscos remanescentes;
+• confirmação de que os requisitos da contratação foram devidamente definidos;
+• conclusão quanto à conveniência e oportunidade administrativa da contratação.
+
+O texto deverá possuir estrutura semelhante a um parecer técnico, apresentando raciocínio lógico, linguagem formal, fundamentação consistente e conclusão objetiva.
+Evite reproduzir literalmente os demais tópicos do ETP. Em vez disso, sintetize as conclusões alcançadas, demonstrando que os estudos realizados evidenciam a viabilidade da contratação.
+Finalize com manifestação técnica clara indicando que, diante dos estudos desenvolvidos, conclui-se pela viabilidade da contratação pretendida, ressalvadas eventuais adequações decorrentes das fases subsequentes do planejamento e da instrução processual.
+Produza texto completo, robusto, juridicamente consistente e pronto para integrar diretamente o Estudo Técnico Preliminar.`,
+};
 
 // Monta o bloco de dados do processo a partir do que já está cadastrado no ETP
 function montarContextoParaPrompt(etp) {
@@ -426,8 +769,8 @@ function montarContextoParaPrompt(etp) {
     partes.push(`Estimativa de valor: ${brl(totalEstimado)} (metodologia de cálculo: ${metodologia} por item).`);
   }
 
-  if (etp.meta.prazoGarantiaDias?.trim()) partes.push(`Prazo de garantia exigido: ${etp.meta.prazoGarantiaDias} dias.`);
-  if (etp.meta.prazoEntregaDias?.trim()) partes.push(`Prazo de entrega/execução exigido: ${etp.meta.prazoEntregaDias} dias.`);
+  if (etp.meta.prazoGarantiaDias?.trim()) partes.push(`Prazo de garantia exigido: ${formatarPrazo(etp.meta.prazoGarantiaDias, etp.meta.prazoGarantiaUnidade)}.`);
+  if (etp.meta.prazoEntregaDias?.trim()) partes.push(`Prazo de entrega/execução exigido: ${formatarPrazo(etp.meta.prazoEntregaDias, etp.meta.prazoEntregaUnidade)}.`);
 
   if (etp.meta.parcelamento === "sim") partes.push("Parcelamento: a contratação será parcelada em itens/lotes.");
   else if (etp.meta.parcelamento === "nao") partes.push("Parcelamento: a contratação não será parcelada (lote único).");
@@ -510,8 +853,8 @@ function montarContextoPorTopico(etp, sectionId) {
   }
 
   if (sectionId === "III") {
-    if (etp.meta.prazoGarantiaDias?.trim()) linhas.push(`Prazo de garantia exigido: ${etp.meta.prazoGarantiaDias} dias.`);
-    if (etp.meta.prazoEntregaDias?.trim()) linhas.push(`Prazo de entrega/execução exigido: ${etp.meta.prazoEntregaDias} dias.`);
+    if (etp.meta.prazoGarantiaDias?.trim()) linhas.push(`Prazo de garantia exigido: ${formatarPrazo(etp.meta.prazoGarantiaDias, etp.meta.prazoGarantiaUnidade)}.`);
+    if (etp.meta.prazoEntregaDias?.trim()) linhas.push(`Prazo de entrega/execução exigido: ${formatarPrazo(etp.meta.prazoEntregaDias, etp.meta.prazoEntregaUnidade)}.`);
   }
 
   if (sectionId === "VII" && etp.meta.manutencaoContinuada) {
@@ -556,28 +899,28 @@ function montarContextoPorTopico(etp, sectionId) {
 }
 
 // Gera o prompt completo (instrução + dados do processo + tópico solicitado) pronto para copiar
+// Gera o prompt de um único tópico — autocontido, com o "papel" específico daquele tópico e só
+// os dados do processo relevantes a ele, para funcionar mesmo se copiado isoladamente, sem
+// contexto de conversa anterior com a IA.
 function gerarPromptIA(etp, sectionId) {
-  const section = SECOES.find(s => s.id === sectionId);
+  const base = PROMPTS_POR_TOPICO[sectionId];
   const contexto = montarContextoPorTopico(etp, sectionId);
-  return `${PROMPT_BASE_SISTEMA}
+  return `${base}
 
-DADOS DO PROCESSO (relevantes para este tópico)
-${contexto}
-
-TÓPICO SOLICITADO: ${sectionId} — ${section.titulo}`;
+DADOS DO PROCESSO (utilize exclusivamente estas informações; não invente dados que não constem aqui)
+${contexto}`;
 }
 
-// Gera um único prompt pedindo os 13 tópicos de uma vez, sem repetir a instrução-base 13 vezes
+// Gera um único prompt pedindo os 13 tópicos de uma vez, cada um com sua instrução específica
 function gerarPromptGeralIA(etp) {
   const contexto = montarContextoParaPrompt(etp);
-  const listaTopicos = SECOES.map(s => `${s.id} — ${s.titulo}`).join("\n");
-  return `${PROMPT_BASE_SISTEMA}
+  const blocos = SECOES.map(s => `### ${s.id} — ${s.titulo}\n${PROMPTS_POR_TOPICO[s.id]}`).join("\n\n");
+  return `Elabore o Estudo Técnico Preliminar (ETP) completo, respondendo TODOS os 13 tópicos a seguir, na ordem apresentada. Para cada tópico, inicie a resposta exatamente com uma linha no formato "### [algarismo romano] — [título do tópico]" e, em seguida, escreva o texto correspondente, seguindo rigorosamente a instrução específica daquele tópico. Não pule nenhum tópico.
 
-DADOS DO PROCESSO
-${contexto}
+${blocos}
 
-TÓPICOS SOLICITADOS: responda TODOS os tópicos abaixo, nesta ordem, cada um iniciado exatamente por uma linha no formato "### [algarismo romano] — [título do tópico]", seguida pelo texto correspondente. Não pule nenhum tópico e não altere os títulos.
-${listaTopicos}`;
+DADOS DO PROCESSO (utilize exclusivamente estas informações; não invente dados que não constem aqui)
+${contexto}`;
 }
 
 function escapeHtml(str) {
@@ -834,6 +1177,16 @@ function gerarTextoPadraoVI(etp) {
 }
 
 // Helper comum: "bens" ou "serviços", conforme o tipo de objeto do ETP
+// Formata um prazo com a unidade escolhida (dias/meses/anos), com plural correto — ex.: "1 mês", "12 meses"
+function formatarPrazo(valor, unidade) {
+  const v = String(valor ?? "").trim();
+  if (!v) return "";
+  const n = num(v);
+  const singular = { dias: "dia", meses: "mês", anos: "ano" }[unidade] || "dia";
+  const plural = { dias: "dias", meses: "meses", anos: "anos" }[unidade] || "dias";
+  return `${v} ${n === 1 ? singular : plural}`;
+}
+
 function bemOuServicoDe(etp) {
   return etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI" ? "serviços" : "bens";
 }
@@ -857,8 +1210,8 @@ A não realização desta ${verboDe(etp)} comprometeria a regularidade e a quali
 
 function gerarTextoPadraoIII(etp) {
   const bem = bemOuServicoDe(etp);
-  const garantia = etp.meta.prazoGarantiaDias?.trim() ? `${etp.meta.prazoGarantiaDias} dias` : "12 (doze) meses, ou a estipulada no próprio item";
-  const entrega = etp.meta.prazoEntregaDias?.trim() ? `${etp.meta.prazoEntregaDias} dias` : "90 (noventa) dias";
+  const garantia = etp.meta.prazoGarantiaDias?.trim() ? formatarPrazo(etp.meta.prazoGarantiaDias, etp.meta.prazoGarantiaUnidade) : "12 (doze) meses, ou a estipulada no próprio item";
+  const entrega = etp.meta.prazoEntregaDias?.trim() ? formatarPrazo(etp.meta.prazoEntregaDias, etp.meta.prazoEntregaUnidade) : "90 (noventa) dias";
   const local = etp.meta.local?.trim() || "[cidade/região da execução do contrato]";
   const entidade = etp.meta.orgao?.trim() || "[órgão/entidade beneficiária]";
   const condicaoEntrega = etp.meta.parcelamento === "sim"
@@ -1269,8 +1622,8 @@ function SettingsView({ onBack }) {
       </button>
       <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Configurações</h1>
       <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
-        Necessário só para os botões de geração por IA ("Gerar rascunho com IA" e "Gerar objeto com IA").
-        O resto do app funciona normalmente sem isso.
+        Necessário só para o botão "Gerar com IA" do título do objeto, em Dados do Processo. Os 13 incisos do ETP
+        não usam mais chamada de API — usam prompts prontos pra copiar em ferramentas gratuitas.
       </p>
 
       <div className="p-5 rounded-xl border bg-white" style={{ borderColor: C.border }}>
@@ -1298,9 +1651,7 @@ function SettingsView({ onBack }) {
 
         <p className="text-xs mt-4 leading-relaxed" style={{ color: C.inkMuted }}>
           Crie uma chave em <b>console.anthropic.com</b> → API Keys. Ela fica salva só neste navegador
-          (localStorage), nunca é enviada a nenhum servidor além da própria Anthropic — mas qualquer pessoa com
-          acesso a este computador e às ferramentas de desenvolvedor do navegador poderia lê-la. Se este app for
-          usado por várias pessoas no mesmo dispositivo, prefira não deixar a chave salva.
+          (localStorage), nunca é enviada a nenhum servidor além da própria Anthropic.
         </p>
       </div>
     </div>
@@ -1423,24 +1774,12 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
 // ---------- Editor View ----------
 // ---------- Prompt de IA ----------
 function PromptIAView({ etp }) {
-  const [modo, setModo] = useState("topico"); // "topico" | "geral"
-  const [sectionId, setSectionId] = useState("I");
   const [promptGerado, setPromptGerado] = useState("");
   const [copied, setCopied] = useState(false);
-
-  function mudarModo(novoModo) {
-    setModo(novoModo);
-    setPromptGerado("");
-    setCopied(false);
-  }
-  function escolherSecao(id) {
-    setSectionId(id);
-    setPromptGerado("");
-    setCopied(false);
-  }
+  const totalPreenchidos = SECOES.filter(s => etp.sections[s.id]?.trim()).length;
 
   function gerar() {
-    setPromptGerado(modo === "topico" ? gerarPromptIA(etp, sectionId) : gerarPromptGeralIA(etp));
+    setPromptGerado(gerarPromptGeralIA(etp));
     setCopied(false);
   }
 
@@ -1453,73 +1792,36 @@ function PromptIAView({ etp }) {
     } catch (e) { console.error(e); }
   }
 
-  const secaoAtual = SECOES.find(s => s.id === sectionId);
-  const totalPreenchidos = SECOES.filter(s => etp.sections[s.id]?.trim()).length;
-
   return (
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>5. Prompt de IA</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Monta um prompt pronto — instrução de especialista em licitações + todos os dados já cadastrados neste ETP
-        — para colar em qualquer IA de sua preferência (ChatGPT, Gemini, Claude, ou outra ferramenta gratuita).
-        Depois é só colar a resposta de volta no campo de texto do inciso correspondente.
+        Monta um único prompt pedindo os 13 tópicos do ETP de uma vez — cada um com sua instrução técnica
+        específica, mais os dados já cadastrados neste processo — para colar em qualquer IA gratuita (ChatGPT,
+        Gemini, Claude etc.) e trazer as respostas de volta pro campo de texto de cada inciso.
       </p>
 
-      <div className="inline-flex p-1 rounded-lg mb-4" style={{ background: C.paperDark }}>
-        <button onClick={() => mudarModo("topico")}
-          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
-          style={{ background: modo === "topico" ? "white" : "transparent", color: modo === "topico" ? C.navy : C.inkMuted, boxShadow: modo === "topico" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-          Por tópico
-        </button>
-        <button onClick={() => mudarModo("geral")}
-          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
-          style={{ background: modo === "geral" ? "white" : "transparent", color: modo === "geral" ? C.navy : C.inkMuted, boxShadow: modo === "geral" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-          Todos de uma vez
-        </button>
+      <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
+        <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+        Prefere gerar um tópico de cada vez? Cada inciso (I a XIII) já tem seu próprio botão
+        "Gerar prompt deste tópico" — mais rápido quando você só precisa de um.
       </div>
 
-      {modo === "topico" ? (
-        <>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Escolha o inciso</span>
-            <span className="text-xs" style={{ color: C.inkMuted }}>{totalPreenchidos}/13 já preenchidos</span>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-2 mb-4">
-            {SECOES.map(s => {
-              const preenchido = etp.sections[s.id]?.trim().length > 0;
-              const active = sectionId === s.id;
-              return (
-                <button key={s.id} onClick={() => escolherSecao(s.id)}
-                  className="text-left px-3 py-2.5 rounded-lg border flex items-center gap-2"
-                  style={{ borderColor: active ? C.brass : C.border, background: active ? "rgba(166,131,46,0.08)" : "white" }}>
-                  <span className="serif text-sm font-bold w-7 shrink-0" style={{ color: active ? C.brass : C.inkMuted }}>{s.id}</span>
-                  <span className="text-xs flex-1 leading-snug" style={{ color: C.ink }}>{s.titulo}</span>
-                  {preenchido && <Check size={13} className="shrink-0" style={{ color: C.green }} />}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : (
-        <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
-          <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
-          Gera um único prompt pedindo o texto dos 13 incisos de uma vez só, com instrução para a IA responder cada
-          um separadamente. Prático para colar de uma vez em ferramentas que aceitam respostas longas.
-        </div>
-      )}
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-xs" style={{ color: C.inkMuted }}>{totalPreenchidos}/13 incisos já preenchidos</span>
+      </div>
 
       <button onClick={gerar}
         className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
         style={{ background: C.navy, color: C.paper }}>
-        <Sparkles size={15} />
-        {modo === "topico" ? `Gerar prompt do inciso ${sectionId}` : "Gerar prompt com os 13 incisos"}
+        <Sparkles size={15} /> Gerar prompt com os 13 tópicos
       </button>
 
       {promptGerado && (
         <div className="mt-5 rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
           <div className="flex items-center justify-between px-4 py-2.5 border-b flex-wrap gap-2" style={{ borderColor: C.border, background: C.paperDark }}>
             <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-              Prompt gerado {modo === "topico" ? `— ${sectionId} · ${secaoAtual?.titulo}` : "— todos os incisos"}
+              Prompt gerado — todos os incisos
             </span>
             <button onClick={copiar}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
@@ -1659,7 +1961,8 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
               <PromptIAView etp={etp} />
             ) : (
               <SectionForm etp={etp} section={SECOES.find(s => s.id === activeSection)} value={etp.sections[activeSection]}
-                onChange={v => onSection(activeSection, v)} onSolucoesMercado={onSolucoesMercado} />
+                onChange={v => onSection(activeSection, v)} onSolucoesMercado={onSolucoesMercado}
+                setActiveSection={setActiveSection} />
             )}
           </div>
         </main>
@@ -1786,10 +2089,32 @@ function MetaForm({ etp, onMeta }) {
       </div>
 
       <div className="grid sm:grid-cols-2 gap-x-4">
-        <Field label="Prazo de garantia (dias)" value={etp.meta.prazoGarantiaDias} onChange={v => onMeta("prazoGarantiaDias", v)}
-          placeholder="Ex.: 365" />
-        <Field label="Prazo de entrega/execução (dias)" value={etp.meta.prazoEntregaDias} onChange={v => onMeta("prazoEntregaDias", v)}
-          placeholder="Ex.: 30" />
+        <label className="block mb-4">
+          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Prazo de garantia</span>
+          <div className="mt-1.5 flex gap-2">
+            <input value={etp.meta.prazoGarantiaDias} onChange={e => onMeta("prazoGarantiaDias", e.target.value)}
+              placeholder="Ex.: 12" className="flex-1 px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+            <select value={etp.meta.prazoGarantiaUnidade || "meses"} onChange={e => onMeta("prazoGarantiaUnidade", e.target.value)}
+              className="px-2 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+              <option value="dias">dias</option>
+              <option value="meses">meses</option>
+              <option value="anos">anos</option>
+            </select>
+          </div>
+        </label>
+        <label className="block mb-4">
+          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Prazo de entrega/execução</span>
+          <div className="mt-1.5 flex gap-2">
+            <input value={etp.meta.prazoEntregaDias} onChange={e => onMeta("prazoEntregaDias", e.target.value)}
+              placeholder="Ex.: 30" className="flex-1 px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
+            <select value={etp.meta.prazoEntregaUnidade || "dias"} onChange={e => onMeta("prazoEntregaUnidade", e.target.value)}
+              className="px-2 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+              <option value="dias">dias</option>
+              <option value="meses">meses</option>
+              <option value="anos">anos</option>
+            </select>
+          </div>
+        </label>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-x-4">
@@ -2079,31 +2404,35 @@ function SolucoesMercadoManager({ solucoes, onChange }) {
   );
 }
 
-function SectionForm({ etp, section, value, onChange, onSolucoesMercado }) {
-  const [loading, setLoading] = useState(false);
-  const [instrucoes, setInstrucoes] = useState("");
-  const [showInstr, setShowInstr] = useState(false);
-  const [error, setError] = useState("");
+function SectionForm({ etp, section, value, onChange, onSolucoesMercado, setActiveSection }) {
+  const [promptGerado, setPromptGerado] = useState("");
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const rich = isRichSection(section.id);
-
-  async function handleGerar() {
-    setLoading(true);
-    setError("");
-    try {
-      const texto = await gerarRascunhoIA({ etp, section, instrucoes });
-      onChange(texto);
-      setShowInstr(false);
-    } catch (e) {
-      console.error(e);
-      setError("Não foi possível gerar o rascunho agora. Tente novamente.");
-    }
-    setLoading(false);
-  }
 
   function handleModeloPadrao() {
     const gerar = MODELOS_PADRAO[section.id];
     if (gerar) onChange(textoParaHtml(gerar(etp)));
   }
+
+  function gerarPromptTopico() {
+    setPromptGerado(gerarPromptIA(etp, section.id));
+    setCopiedPrompt(false);
+    setShowPromptModal(true);
+  }
+
+  async function copiarPromptTopico() {
+    if (!promptGerado) return;
+    try {
+      await navigator.clipboard.writeText(promptGerado);
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 2000);
+    } catch (e) { console.error(e); }
+  }
+
+  const indiceAtual = SECOES.findIndex(s => s.id === section.id);
+  const anterior = indiceAtual > 0 ? SECOES[indiceAtual - 1] : null;
+  const proximo = indiceAtual < SECOES.length - 1 ? SECOES[indiceAtual + 1] : null;
 
   const temModeloPadrao = !!MODELOS_PADRAO[section.id];
   const bloqueadoPorPca = section.id === "II" && !(etp.pca && etp.itens?.length > 0);
@@ -2136,36 +2465,76 @@ function SectionForm({ etp, section, value, onChange, onSolucoesMercado }) {
             <FileEdit size={13} /> Usar modelo padrão (sem IA)
           </button>
         )}
-        <button onClick={() => (showInstr ? handleGerar() : setShowInstr(true))} disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
-          style={{ background: C.navy, color: C.paper }}>
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-          {loading ? "Gerando rascunho..." : value?.trim?.() ? "Gerar novo rascunho com IA" : "Gerar rascunho com IA"}
+        <button onClick={gerarPromptTopico}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+          style={{ background: C.navy, color: C.paper }}
+          title="Monta um prompt pronto pra colar em qualquer IA gratuita — sem custo de API">
+          <Sparkles size={13} /> Gerar prompt deste tópico
         </button>
-        {showInstr && !loading && (
-          <span className="text-xs" style={{ color: C.inkMuted }}>Descreva abaixo o que personalizar, depois clique de novo.</span>
-        )}
       </div>
-
-      {showInstr && (
-        <input value={instrucoes} onChange={e => setInstrucoes(e.target.value)}
-          placeholder="Ex.: mencionar que a demanda vem da campanha do Natal Solidário 2026..."
-          className="w-full mb-3 px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
-      )}
-      {error && <p className="text-xs mb-2" style={{ color: C.red }}>{error}</p>}
 
       {rich ? (
         <RichTextEditor value={value} onChange={onChange} />
       ) : (
         <textarea value={value} onChange={e => onChange(e.target.value)} rows={16}
-          placeholder="Escreva o conteúdo deste item, ou gere um rascunho com IA acima..."
+          placeholder="Escreva o conteúdo deste item, use o modelo padrão, ou gere o prompt e cole a resposta de uma IA..."
           className="w-full px-4 py-3 rounded-lg border text-sm leading-relaxed resize-y"
           style={{ borderColor: C.border, background: "white", minHeight: "320px" }} />
       )}
       <p className="text-xs mt-2" style={{ color: C.inkMuted }}>
         {textoPlano.length} caracteres
-        {rich ? " · Use a barra de formatação para negrito, listas e tabelas." : " · Rascunhos de IA são ponto de partida — revise antes de formalizar."}
+        {rich ? " · Use a barra de formatação para negrito, listas e tabelas." : " · Revise sempre antes de formalizar."}
       </p>
+
+      <div className="flex items-center justify-between mt-6 pt-4 border-t" style={{ borderColor: C.border }}>
+        <button onClick={() => anterior && setActiveSection(anterior.id)} disabled={!anterior}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-30"
+          style={{ background: C.paperDark, color: C.navy }}>
+          <ArrowLeft size={15} />
+          {anterior ? `${anterior.id} — ${anterior.titulo}` : "Início"}
+        </button>
+        <button onClick={() => proximo && setActiveSection(proximo.id)} disabled={!proximo}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-30"
+          style={{ background: C.navy, color: C.paper }}>
+          {proximo ? `${proximo.id} — ${proximo.titulo}` : "Fim"}
+          <span style={{ transform: "scaleX(-1)", display: "inline-block" }}><ArrowLeft size={15} /></span>
+        </button>
+      </div>
+
+      {showPromptModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+          onClick={() => setShowPromptModal(false)}>
+          <div onClick={e => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl" style={{ borderColor: C.border }}>
+              <div>
+                <h3 className="serif text-lg font-semibold" style={{ color: C.navy }}>Prompt do inciso {section.id}</h3>
+                <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>
+                  Copie e cole numa IA gratuita (ChatGPT, Gemini, Claude etc.). Depois traga a resposta de volta e
+                  cole no campo de texto do inciso — feche este pop-up antes de colar, pra não misturar as duas telas.
+                </p>
+              </div>
+              <button onClick={() => setShowPromptModal(false)} className="shrink-0" style={{ color: C.inkMuted }}><X size={18} /></button>
+            </div>
+            <div className="p-5">
+              <textarea readOnly value={promptGerado} rows={16}
+                className="w-full px-3 py-2.5 rounded-lg border text-xs font-mono leading-relaxed resize-y"
+                style={{ borderColor: C.border, background: C.paperDark, color: C.ink }} />
+              <div className="flex items-center justify-end gap-2 mt-3">
+                <button onClick={() => setShowPromptModal(false)}
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                  Fechar
+                </button>
+                <button onClick={copiarPromptTopico}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: C.navy, color: C.paper }}>
+                  <Copy size={14} /> {copiedPrompt ? "Copiado!" : "Copiar prompt"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
