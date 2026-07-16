@@ -459,16 +459,125 @@ function montarContextoParaPrompt(etp) {
   return partes.join("\n");
 }
 
+// Monta o contexto SÓ com os dados relevantes para o tópico solicitado — usado no modo "Por tópico",
+// para não repetir a lista completa de itens e demais dados em todo prompt individual.
+function montarContextoPorTopico(etp, sectionId) {
+  const itens = etp.itens || [];
+  const valoresAdotados = etp.valoresAdotados || {};
+  const linhas = [];
+
+  linhas.push(`Objeto da contratação: ${objetoCompleto(etp) || "(não informado)"}`);
+  linhas.push(`Órgão/Secretaria: ${etp.meta.orgao || "(não informado)"}`);
+  linhas.push(`Unidade/setor demandante: ${etp.meta.setor || "(não informado)"}`);
+  linhas.push(`Tipo de objeto: ${etp.meta.tipo}`);
+
+  const precisaListaItens = ["III", "IV", "V", "VI", "VII"].includes(sectionId);
+  if (precisaListaItens && itens.length > 0) {
+    const linhasItens = itens.slice(0, 60).map(i => `- ${i.descricao}${i.quantidade ? ` (quantidade: ${i.quantidade} ${i.unidade || ""})` : ""}`).join("\n");
+    linhas.push(`Itens e quantidades levantados:\n${linhasItens}`);
+  } else if (itens.length > 0) {
+    linhas.push(`Quantidade de itens que compõem esta contratação: ${itens.length}.`);
+  }
+
+  if (sectionId === "II" && etp.pca) {
+    const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+    linhas.push(`Alinhamento ao Plano de Contratações Anual: ${encontrados} de ${itens.length} itens já constam previstos no PCA vigente (planilha "${etp.pca.nomeArquivo}").`);
+  }
+
+  if (["IV", "VI"].includes(sectionId)) {
+    const fontesUsadas = [...new Set(Object.values(etp.cotacoes || {}).flat().map(q => q.fonte).filter(Boolean))];
+    if (fontesUsadas.length > 0) linhas.push(`Levantamento de mercado: cotações coletadas junto a ${fontesUsadas.join(", ")}.`);
+  }
+
+  if (sectionId === "IV") {
+    const solucoes = etp.solucoesMercado || [];
+    if (solucoes.length > 0) {
+      const escolhida = solucoes.find(s => s.selecionada);
+      linhas.push(`Soluções de mercado pesquisadas: ${solucoes.map(s => s.nome).join("; ")}.${escolhida ? ` Solução escolhida: ${escolhida.nome}.` : ""}`);
+    }
+  }
+
+  if (sectionId === "V" && etp.meta.metodologiaQuantidades) {
+    linhas.push(`Metodologia de levantamento das quantidades: ${etp.meta.detalhamentoQuantidades?.trim() || etp.meta.metodologiaQuantidades}.`);
+  }
+
+  if (sectionId === "VI") {
+    const totalEstimado = itens.reduce((s, i) => s + num(i.quantidade) * num(valoresAdotados[i.id] || 0), 0);
+    if (totalEstimado > 0) {
+      const metodologia = etp.meta.metodologiaCalculo === "media" ? "média aritmética simples" : "mediana";
+      linhas.push(`Estimativa de valor: ${brl(totalEstimado)} (metodologia de cálculo: ${metodologia} por item).`);
+    }
+  }
+
+  if (sectionId === "III") {
+    if (etp.meta.prazoGarantiaDias?.trim()) linhas.push(`Prazo de garantia exigido: ${etp.meta.prazoGarantiaDias} dias.`);
+    if (etp.meta.prazoEntregaDias?.trim()) linhas.push(`Prazo de entrega/execução exigido: ${etp.meta.prazoEntregaDias} dias.`);
+  }
+
+  if (sectionId === "VII" && etp.meta.manutencaoContinuada) {
+    linhas.push("Esta contratação exige manutenção, assistência técnica ou fornecimento continuado de peças.");
+  }
+
+  if (sectionId === "VIII") {
+    if (etp.meta.parcelamento === "sim") linhas.push("Parcelamento: a contratação será parcelada em itens/lotes.");
+    else if (etp.meta.parcelamento === "nao") linhas.push("Parcelamento: a contratação não será parcelada (lote único).");
+  }
+
+  if (sectionId === "X" && etp.meta.fonteRecurso?.trim()) {
+    linhas.push(`Fonte de recurso: ${etp.meta.fonteRecurso.trim()}.`);
+  }
+
+  if (sectionId === "XI") {
+    linhas.push(etp.meta.correlataExiste
+      ? `Contratações correlatas/interdependentes: ${etp.meta.correlataDescricao?.trim() || "há contratação relacionada, sem detalhamento adicional informado."}`
+      : "Contratações correlatas/interdependentes: não foram identificadas.");
+  }
+
+  if (sectionId === "XII") {
+    linhas.push(etp.meta.impactoAmbientalRelevante
+      ? `Impactos ambientais: ${etp.meta.impactoAmbientalDescricao?.trim() || "há impacto relevante identificado, sem detalhamento adicional informado."}`
+      : "Impactos ambientais: não são esperados impactos ambientais significativos.");
+  }
+
+  if (sectionId === "XIII") {
+    // Síntese breve do processo para embasar a conclusão, sem repetir listas completas
+    const sintese = [];
+    if (itens.length > 0) sintese.push(`${itens.length} item(ns) levantado(s)`);
+    if (etp.pca) {
+      const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+      sintese.push(`${encontrados}/${itens.length} alinhados ao PCA`);
+    }
+    const totalEstimado = itens.reduce((s, i) => s + num(i.quantidade) * num(valoresAdotados[i.id] || 0), 0);
+    if (totalEstimado > 0) sintese.push(`valor estimado de ${brl(totalEstimado)}`);
+    if (sintese.length > 0) linhas.push(`Síntese do processo: ${sintese.join("; ")}.`);
+  }
+
+  return linhas.join("\n");
+}
+
 // Gera o prompt completo (instrução + dados do processo + tópico solicitado) pronto para copiar
 function gerarPromptIA(etp, sectionId) {
   const section = SECOES.find(s => s.id === sectionId);
+  const contexto = montarContextoPorTopico(etp, sectionId);
+  return `${PROMPT_BASE_SISTEMA}
+
+DADOS DO PROCESSO (relevantes para este tópico)
+${contexto}
+
+TÓPICO SOLICITADO: ${sectionId} — ${section.titulo}`;
+}
+
+// Gera um único prompt pedindo os 13 tópicos de uma vez, sem repetir a instrução-base 13 vezes
+function gerarPromptGeralIA(etp) {
   const contexto = montarContextoParaPrompt(etp);
+  const listaTopicos = SECOES.map(s => `${s.id} — ${s.titulo}`).join("\n");
   return `${PROMPT_BASE_SISTEMA}
 
 DADOS DO PROCESSO
 ${contexto}
 
-TÓPICO SOLICITADO: ${sectionId} — ${section.titulo}`;
+TÓPICOS SOLICITADOS: responda TODOS os tópicos abaixo, nesta ordem, cada um iniciado exatamente por uma linha no formato "### [algarismo romano] — [título do tópico]", seguida pelo texto correspondente. Não pule nenhum tópico e não altere os títulos.
+${listaTopicos}`;
 }
 
 function escapeHtml(str) {
@@ -1314,65 +1423,115 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
 // ---------- Editor View ----------
 // ---------- Prompt de IA ----------
 function PromptIAView({ etp }) {
+  const [modo, setModo] = useState("topico"); // "topico" | "geral"
   const [sectionId, setSectionId] = useState("I");
+  const [promptGerado, setPromptGerado] = useState("");
   const [copied, setCopied] = useState(false);
-  const [copiedTodos, setCopiedTodos] = useState(false);
-  const prompt = gerarPromptIA(etp, sectionId);
+
+  function mudarModo(novoModo) {
+    setModo(novoModo);
+    setPromptGerado("");
+    setCopied(false);
+  }
+  function escolherSecao(id) {
+    setSectionId(id);
+    setPromptGerado("");
+    setCopied(false);
+  }
+
+  function gerar() {
+    setPromptGerado(modo === "topico" ? gerarPromptIA(etp, sectionId) : gerarPromptGeralIA(etp));
+    setCopied(false);
+  }
 
   async function copiar() {
+    if (!promptGerado) return;
     try {
-      await navigator.clipboard.writeText(prompt);
+      await navigator.clipboard.writeText(promptGerado);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (e) { console.error(e); }
   }
 
-  async function copiarTodos() {
-    const texto = SECOES.map(s => gerarPromptIA(etp, s.id)).join("\n\n" + "=".repeat(60) + "\n\n");
-    try {
-      await navigator.clipboard.writeText(texto);
-      setCopiedTodos(true);
-      setTimeout(() => setCopiedTodos(false), 2000);
-    } catch (e) { console.error(e); }
-  }
+  const secaoAtual = SECOES.find(s => s.id === sectionId);
+  const totalPreenchidos = SECOES.filter(s => etp.sections[s.id]?.trim()).length;
 
   return (
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>5. Prompt de IA</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Gera um prompt pronto — com a instrução de especialista em licitações e todos os dados que você já
-        cadastrou neste ETP — para colar em qualquer IA de sua preferência (ChatGPT, Gemini, Claude, ou outra
-        ferramenta gratuita). Depois é só copiar a resposta da IA e colar de volta no campo de texto do inciso
-        correspondente.
+        Monta um prompt pronto — instrução de especialista em licitações + todos os dados já cadastrados neste ETP
+        — para colar em qualquer IA de sua preferência (ChatGPT, Gemini, Claude, ou outra ferramenta gratuita).
+        Depois é só colar a resposta de volta no campo de texto do inciso correspondente.
       </p>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Inciso:</span>
-        <select value={sectionId} onChange={e => setSectionId(e.target.value)}
-          className="px-3 py-2 rounded-lg border text-sm bg-white flex-1 min-w-[220px]" style={{ borderColor: C.border }}>
-          {SECOES.map(s => <option key={s.id} value={s.id}>{s.id} — {s.titulo}</option>)}
-        </select>
-        <button onClick={copiar}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
-          style={{ background: C.navy, color: C.paper }}>
-          <Copy size={14} /> {copied ? "Copiado!" : "Copiar este prompt"}
+      <div className="inline-flex p-1 rounded-lg mb-4" style={{ background: C.paperDark }}>
+        <button onClick={() => mudarModo("topico")}
+          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
+          style={{ background: modo === "topico" ? "white" : "transparent", color: modo === "topico" ? C.navy : C.inkMuted, boxShadow: modo === "topico" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Por tópico
+        </button>
+        <button onClick={() => mudarModo("geral")}
+          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
+          style={{ background: modo === "geral" ? "white" : "transparent", color: modo === "geral" ? C.navy : C.inkMuted, boxShadow: modo === "geral" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Todos de uma vez
         </button>
       </div>
 
-      <textarea readOnly value={prompt} rows={18}
-        className="w-full px-4 py-3 rounded-lg border text-xs font-mono leading-relaxed resize-y"
-        style={{ borderColor: C.border, background: C.paperDark, color: C.ink }} />
+      {modo === "topico" ? (
+        <>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Escolha o inciso</span>
+            <span className="text-xs" style={{ color: C.inkMuted }}>{totalPreenchidos}/13 já preenchidos</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2 mb-4">
+            {SECOES.map(s => {
+              const preenchido = etp.sections[s.id]?.trim().length > 0;
+              const active = sectionId === s.id;
+              return (
+                <button key={s.id} onClick={() => escolherSecao(s.id)}
+                  className="text-left px-3 py-2.5 rounded-lg border flex items-center gap-2"
+                  style={{ borderColor: active ? C.brass : C.border, background: active ? "rgba(166,131,46,0.08)" : "white" }}>
+                  <span className="serif text-sm font-bold w-7 shrink-0" style={{ color: active ? C.brass : C.inkMuted }}>{s.id}</span>
+                  <span className="text-xs flex-1 leading-snug" style={{ color: C.ink }}>{s.titulo}</span>
+                  {preenchido && <Check size={13} className="shrink-0" style={{ color: C.green }} />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
+          <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+          Gera um único prompt pedindo o texto dos 13 incisos de uma vez só, com instrução para a IA responder cada
+          um separadamente. Prático para colar de uma vez em ferramentas que aceitam respostas longas.
+        </div>
+      )}
 
-      <div className="flex items-center gap-3 mt-4 p-3 rounded-lg flex-wrap" style={{ background: C.paperDark }}>
-        <button onClick={copiarTodos}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-          style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
-          <Copy size={13} /> {copiedTodos ? "Copiado!" : "Copiar os 13 prompts de uma vez"}
-        </button>
-        <span className="text-xs" style={{ color: C.inkMuted }}>
-          Os 13 prompts saem separados por uma linha divisória — cole um de cada vez na IA, tópico por tópico.
-        </span>
-      </div>
+      <button onClick={gerar}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
+        style={{ background: C.navy, color: C.paper }}>
+        <Sparkles size={15} />
+        {modo === "topico" ? `Gerar prompt do inciso ${sectionId}` : "Gerar prompt com os 13 incisos"}
+      </button>
+
+      {promptGerado && (
+        <div className="mt-5 rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b flex-wrap gap-2" style={{ borderColor: C.border, background: C.paperDark }}>
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+              Prompt gerado {modo === "topico" ? `— ${sectionId} · ${secaoAtual?.titulo}` : "— todos os incisos"}
+            </span>
+            <button onClick={copiar}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+              style={{ background: C.navy, color: C.paper }}>
+              <Copy size={13} /> {copied ? "Copiado!" : "Copiar"}
+            </button>
+          </div>
+          <textarea readOnly value={promptGerado} rows={14}
+            className="w-full px-4 py-3 text-xs font-mono leading-relaxed resize-y"
+            style={{ border: "none", outline: "none", color: C.ink }} />
+        </div>
+      )}
     </div>
   );
 }
