@@ -56,6 +56,19 @@ const SECOES = [
 
 const REQUIRED_IDS = SECOES.filter(s => s.obrig).map(s => s.id);
 
+// Algarismos romanos usados para renumerar a sequência dos incisos no relatório final,
+// quando algum inciso vazio é suprimido (mantém a sequência sem "buracos").
+const ROMANOS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII"];
+
+// Lista, na ordem, só os incisos preenchidos, já com o número romano de exibição recalculado.
+// s.id continua sendo o identificador original (usado para lógica interna, como o quadro do PCA);
+// numero é o algarismo que efetivamente aparece no relatório.
+function secoesParaRelatorio(etp) {
+  return SECOES
+    .filter(s => etp.sections[s.id]?.trim())
+    .map((s, idx) => ({ ...s, numero: ROMANOS[idx] || String(idx + 1) }));
+}
+
 // Incisos V e VI usam editor com formatação (negrito, listas, tabelas) em vez de texto simples,
 // pois costumam incluir tabelas de quantitativos e valores.
 const RICH_SECTION_IDS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII"];
@@ -356,6 +369,108 @@ function redimensionarImagem(dataUrl, maxWidth) {
   });
 }
 
+// ---------- Prompt de IA (para copiar e colar em ferramentas externas) ----------
+// Instrução-base fornecida pelo usuário, usada como "papel" do especialista em licitações
+// para qualquer IA de terceiros gerar o texto de um inciso do ETP.
+const PROMPT_BASE_SISTEMA = `Você é um especialista em Licitações e Contratos Administrativos, com profundo conhecimento da Lei nº 14.133/2021, das boas práticas do Tribunal de Contas da União (TCU), dos Tribunais de Contas Estaduais, da jurisprudência aplicável e das orientações referentes ao planejamento das contratações públicas.
+
+Sua função é elaborar textos técnicos completos, objetivos e juridicamente consistentes para cada tópico do Estudo Técnico Preliminar (ETP), produzindo conteúdo apto a integrar diretamente um processo administrativo de contratação pública.
+
+O texto deve possuir linguagem formal, impessoal e técnica, compatível com documentos oficiais da Administração Pública.
+
+Nunca utilize linguagem promocional, comercial ou genérica.
+
+Sempre fundamente a redação nos princípios da Administração Pública, especialmente: Planejamento; Eficiência; Economicidade; Interesse Público; Motivação; Competitividade; Isonomia; Desenvolvimento Nacional Sustentável; Seleção da proposta mais vantajosa.
+
+Diretrizes gerais: produza um estudo técnico e não apenas uma resposta simples. O conteúdo deve apresentar contexto, desenvolver raciocínio lógico, justificar tecnicamente as decisões, explicar os fundamentos utilizados e concluir de forma objetiva. Evite respostas superficiais. Sempre que possível, contextualize a necessidade administrativa, explique os impactos da decisão, demonstre as vantagens da solução, evidencie os riscos evitados e destaque a observância da Lei nº 14.133/2021.
+
+Caso algum dado não seja informado, elabore o texto utilizando fundamentação técnica genérica, sem inventar informações específicas. Jamais crie números, quantitativos, datas ou informações inexistentes. Quando faltar alguma informação essencial, utilize expressões como "Conforme informações constantes do processo administrativo." ou "De acordo com os elementos técnicos apresentados pela unidade demandante."
+
+Estrutura da redação, quando compatível com o tema: Introdução (contextualizar o assunto tratado); Fundamentação Técnica (desenvolver a análise técnica necessária, explicando motivos, premissas, critérios adotados, justificativas, aspectos legais e administrativos, e impactos para a Administração); Análise (apresentar a avaliação técnica, considerando eficiência administrativa, economicidade, vantajosidade, continuidade dos serviços, interesse público, riscos e conformidade legal); Conclusão (encerrar demonstrando que a solução adotada atende ao interesse público e representa a alternativa tecnicamente mais adequada).
+
+O texto deve ser extremamente claro, técnico, bem estruturado, coeso, objetivo, robusto, formal e impessoal. Evite listas excessivas, frases curtas sem desenvolvimento, repetições e clichês. Prefira parágrafos completos. Cada tópico deve parecer elaborado por uma equipe técnica especializada.
+
+A resposta deve conter apenas o texto correspondente ao tópico solicitado, sem títulos como "Resposta", "Texto", "Segue abaixo" ou "Modelo" — inicie diretamente pelo conteúdo técnico.
+
+Sempre que possível: demonstre o interesse público; justifique tecnicamente as escolhas; demonstre aderência ao planejamento; evidencie economicidade e eficiência; justifique a vantajosidade da solução; mencione a continuidade dos serviços quando pertinente; aborde riscos quando aplicável; considere sustentabilidade quando compatível; produza texto pronto para integrar o processo administrativo, sem necessidade de reescrita.
+
+Utilize exclusivamente as informações fornecidas abaixo para construir o estudo. Nunca contradiga os dados fornecidos.`;
+
+// Monta o bloco de dados do processo a partir do que já está cadastrado no ETP
+function montarContextoParaPrompt(etp) {
+  const itens = etp.itens || [];
+  const valoresAdotados = etp.valoresAdotados || {};
+  const partes = [];
+
+  partes.push(`Objeto da contratação: ${objetoCompleto(etp) || "(não informado)"}`);
+  partes.push(`Órgão/Secretaria: ${etp.meta.orgao || "(não informado)"}`);
+  partes.push(`Unidade/setor demandante: ${etp.meta.setor || "(não informado)"}`);
+  partes.push(`Tipo de objeto: ${etp.meta.tipo}`);
+
+  if (itens.length > 0) {
+    const linhasItens = itens.slice(0, 60).map(i => `- ${i.descricao}${i.quantidade ? ` (quantidade: ${i.quantidade} ${i.unidade || ""})` : ""}`).join("\n");
+    partes.push(`Itens e quantidades levantados:\n${linhasItens}`);
+  }
+
+  if (etp.pca) {
+    const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+    partes.push(`Alinhamento ao Plano de Contratações Anual: ${encontrados} de ${itens.length} itens já constam previstos no PCA vigente.`);
+  }
+
+  const fontesUsadas = [...new Set(Object.values(etp.cotacoes || {}).flat().map(q => q.fonte).filter(Boolean))];
+  if (fontesUsadas.length > 0) partes.push(`Levantamento de mercado: cotações coletadas junto a ${fontesUsadas.join(", ")}.`);
+
+  const totalEstimado = itens.reduce((s, i) => s + num(i.quantidade) * num(valoresAdotados[i.id] || 0), 0);
+  if (totalEstimado > 0) {
+    const metodologia = etp.meta.metodologiaCalculo === "media" ? "média aritmética simples" : "mediana";
+    partes.push(`Estimativa de valor: ${brl(totalEstimado)} (metodologia de cálculo: ${metodologia} por item).`);
+  }
+
+  if (etp.meta.prazoGarantiaDias?.trim()) partes.push(`Prazo de garantia exigido: ${etp.meta.prazoGarantiaDias} dias.`);
+  if (etp.meta.prazoEntregaDias?.trim()) partes.push(`Prazo de entrega/execução exigido: ${etp.meta.prazoEntregaDias} dias.`);
+
+  if (etp.meta.parcelamento === "sim") partes.push("Parcelamento: a contratação será parcelada em itens/lotes.");
+  else if (etp.meta.parcelamento === "nao") partes.push("Parcelamento: a contratação não será parcelada (lote único).");
+
+  if (etp.meta.correlataExiste) {
+    partes.push(`Contratações correlatas/interdependentes: ${etp.meta.correlataDescricao?.trim() || "há contratação relacionada, sem detalhamento adicional informado."}`);
+  } else {
+    partes.push("Contratações correlatas/interdependentes: não foram identificadas.");
+  }
+
+  if (etp.meta.impactoAmbientalRelevante) {
+    partes.push(`Impactos ambientais: ${etp.meta.impactoAmbientalDescricao?.trim() || "há impacto relevante identificado, sem detalhamento adicional informado."}`);
+  } else {
+    partes.push("Impactos ambientais: não são esperados impactos ambientais significativos.");
+  }
+
+  if (etp.meta.metodologiaQuantidades) {
+    partes.push(`Metodologia de levantamento das quantidades: ${etp.meta.detalhamentoQuantidades?.trim() || etp.meta.metodologiaQuantidades}.`);
+  }
+
+  if (etp.meta.fonteRecurso?.trim()) partes.push(`Fonte de recurso: ${etp.meta.fonteRecurso.trim()}.`);
+
+  const solucoes = etp.solucoesMercado || [];
+  if (solucoes.length > 0) {
+    const escolhida = solucoes.find(s => s.selecionada);
+    partes.push(`Soluções de mercado pesquisadas: ${solucoes.map(s => s.nome).join("; ")}.${escolhida ? ` Solução escolhida: ${escolhida.nome}.` : ""}`);
+  }
+
+  return partes.join("\n");
+}
+
+// Gera o prompt completo (instrução + dados do processo + tópico solicitado) pronto para copiar
+function gerarPromptIA(etp, sectionId) {
+  const section = SECOES.find(s => s.id === sectionId);
+  const contexto = montarContextoParaPrompt(etp);
+  return `${PROMPT_BASE_SISTEMA}
+
+DADOS DO PROCESSO
+${contexto}
+
+TÓPICO SOLICITADO: ${sectionId} — ${section.titulo}`;
+}
+
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -412,9 +527,9 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     ? `<h3>Quadro detalhado de cotações por item e fonte</h3><table><tr><th>Item</th><th>Fonte</th><th>Fornecedor</th><th>Valor Cotado</th></tr>${linhasCotacoes}</table><p style="font-size:9pt;">Cotações detalhadas por item, conforme documentos anexos ao processo.</p>`
     : "";
 
-  const secoesHtml = SECOES.map(s => `
-    <h2>${s.id} — ${escapeHtml(s.titulo)}</h2>
-    ${etp.sections[s.id]?.trim() || "<p><em>Não preenchido.</em></p>"}
+  const secoesHtml = secoesParaRelatorio(etp).map(s => `
+    <h2>${s.numero} — ${escapeHtml(s.titulo)}</h2>
+    ${etp.sections[s.id]}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
     ${s.id === "V" ? quadroQuantitativos : ""}
     ${s.id === "VI" ? quadroValores + quadroCotacoes : ""}
@@ -1197,6 +1312,71 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
 }
 
 // ---------- Editor View ----------
+// ---------- Prompt de IA ----------
+function PromptIAView({ etp }) {
+  const [sectionId, setSectionId] = useState("I");
+  const [copied, setCopied] = useState(false);
+  const [copiedTodos, setCopiedTodos] = useState(false);
+  const prompt = gerarPromptIA(etp, sectionId);
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) { console.error(e); }
+  }
+
+  async function copiarTodos() {
+    const texto = SECOES.map(s => gerarPromptIA(etp, s.id)).join("\n\n" + "=".repeat(60) + "\n\n");
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiedTodos(true);
+      setTimeout(() => setCopiedTodos(false), 2000);
+    } catch (e) { console.error(e); }
+  }
+
+  return (
+    <div>
+      <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>5. Prompt de IA</h2>
+      <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+        Gera um prompt pronto — com a instrução de especialista em licitações e todos os dados que você já
+        cadastrou neste ETP — para colar em qualquer IA de sua preferência (ChatGPT, Gemini, Claude, ou outra
+        ferramenta gratuita). Depois é só copiar a resposta da IA e colar de volta no campo de texto do inciso
+        correspondente.
+      </p>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Inciso:</span>
+        <select value={sectionId} onChange={e => setSectionId(e.target.value)}
+          className="px-3 py-2 rounded-lg border text-sm bg-white flex-1 min-w-[220px]" style={{ borderColor: C.border }}>
+          {SECOES.map(s => <option key={s.id} value={s.id}>{s.id} — {s.titulo}</option>)}
+        </select>
+        <button onClick={copiar}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
+          style={{ background: C.navy, color: C.paper }}>
+          <Copy size={14} /> {copied ? "Copiado!" : "Copiar este prompt"}
+        </button>
+      </div>
+
+      <textarea readOnly value={prompt} rows={18}
+        className="w-full px-4 py-3 rounded-lg border text-xs font-mono leading-relaxed resize-y"
+        style={{ borderColor: C.border, background: C.paperDark, color: C.ink }} />
+
+      <div className="flex items-center gap-3 mt-4 p-3 rounded-lg flex-wrap" style={{ background: C.paperDark }}>
+        <button onClick={copiarTodos}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+          style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
+          <Copy size={13} /> {copiedTodos ? "Copiado!" : "Copiar os 13 prompts de uma vez"}
+        </button>
+        <span className="text-xs" style={{ color: C.inkMuted }}>
+          Os 13 prompts saem separados por uma linha divisória — cole um de cada vez na IA, tópico por tópico.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes, onValoresAdotados, onPca, onSolucoesMercado, saveState, onBack, onPreview }) {
   const p = progress(etp);
 
@@ -1269,6 +1449,16 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
             }}>
             4. Levantamento de Preços
           </button>
+          <button
+            onClick={() => setActiveSection("promptia")}
+            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4"
+            style={{
+              borderColor: activeSection === "promptia" ? C.brass : "transparent",
+              background: activeSection === "promptia" ? "rgba(166,131,46,0.15)" : "transparent",
+              color: activeSection === "promptia" ? C.brassLight : "#B7C0CC",
+            }}>
+            5. Prompt de IA
+          </button>
           <div className="h-px mx-4 my-2" style={{ background: "rgba(255,255,255,0.08)" }} />
           {SECOES.map(s => {
             const filled = etp.sections[s.id]?.trim().length > 0;
@@ -1306,6 +1496,8 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
               <PCAForm etp={etp} onPca={onPca} />
             ) : activeSection === "cotacoes" ? (
               <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
+            ) : activeSection === "promptia" ? (
+              <PromptIAView etp={etp} />
             ) : (
               <SectionForm etp={etp} section={SECOES.find(s => s.id === activeSection)} value={etp.sections[activeSection]}
                 onChange={v => onSection(activeSection, v)} onSolucoesMercado={onSolucoesMercado} />
@@ -2641,9 +2833,9 @@ function PreviewView({ etp, onBack }) {
     t += `Processo nº: ${etp.meta.processo || "-"}\n`;
     t += `Tipo de objeto: ${etp.meta.tipo}\n\n`;
     if (etp.meta.introducao?.trim()) t += `INTRODUÇÃO\n${etp.meta.introducao.trim()}\n\n`;
-    SECOES.forEach(s => {
+    secoesParaRelatorio(etp).forEach(s => {
       const conteudo = (etp.sections[s.id] || "").replace(/<li[^>]*>/g, "\n• ").replace(/<[^>]+>/g, " ").replace(/[ \t]+/g, " ").replace(/\n\s+/g, "\n").trim();
-      t += `${s.id} — ${s.titulo.toUpperCase()}\n${conteudo || "(não preenchido)"}\n`;
+      t += `${s.numero} — ${s.titulo.toUpperCase()}\n${conteudo}\n`;
       if (s.id === "II" && etp.pca && etp.itens?.length > 0) {
         t += `\nQuadro de alinhamento ao PCA:\n`;
         etp.itens.forEach(it => {
@@ -2781,17 +2973,13 @@ function PreviewView({ etp, onBack }) {
             </div>
           )}
 
-          {SECOES.map(s => (
+          {secoesParaRelatorio(etp).map(s => (
             <div key={s.id} className="mb-6">
               <h3 className="serif text-base font-bold mb-1.5 text-center titulo-inciso" style={{ color: C.navy }}>
-                {s.id} — {s.titulo}
+                {s.numero} — {s.titulo}
               </h3>
-              {etp.sections[s.id]?.trim() ? (
-                <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
-                  dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
-              ) : (
-                <p className="text-sm" style={{ color: C.inkMuted }}>Não preenchido.</p>
-              )}
+              <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
+                dangerouslySetInnerHTML={{ __html: etp.sections[s.id] }} />
               {s.id === "II" && etp.pca && etp.itens?.length > 0 && (
                 <div className="mt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
