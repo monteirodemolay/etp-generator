@@ -2128,7 +2128,8 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
     return { item: it, pcaRow, suplementar: suplementar || null };
   });
   const encontrados = matches.filter(m => m.pcaRow || m.suplementar).length;
-  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.suplementar).map(m => m.item);
+  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática (com ou sem código suplementar já preenchido)
+  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.suplementar).map(m => m.item); // realmente sem nenhuma previsão
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
@@ -2244,14 +2245,8 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                                 </span>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>
-                              {pcaRow ? (
-                                pcaRow.sequencial || "—"
-                              ) : (
-                                <input value={codigosSuplementares[item.id] || ""} onChange={e => atualizarCodigoSuplementar(item.id, e.target.value)}
-                                  placeholder="Código/justificativa"
-                                  className="w-full px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
-                              )}
+                            <td className="px-2 py-2 text-xs" style={{ color: pcaRow || suplementar ? C.ink : C.inkMuted }}>
+                              {pcaRow ? (pcaRow.sequencial || "—") : suplementar ? `${suplementar} (suplementar)` : "—"}
                             </td>
                           </tr>
                         ))}
@@ -2264,11 +2259,12 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                     <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA (incluindo códigos suplementares).</span>
                   </div>
 
-                  {itensFaltantes.length > 0 && (
+                  {semPcaMatch.length > 0 && (
                     <button onClick={() => setShowFaltantes(true)}
                       className="flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-md text-xs font-medium"
-                      style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
-                      <ListX size={13} /> Ver itens sem previsão no PCA ({itensFaltantes.length})
+                      style={{ background: itensFaltantes.length > 0 ? "rgba(166,64,61,0.1)" : "rgba(166,131,46,0.12)", color: itensFaltantes.length > 0 ? C.red : C.brass }}>
+                      <ListX size={13} /> Itens sem previsão no PCA ({semPcaMatch.length}
+                      {itensFaltantes.length !== semPcaMatch.length ? ` · ${itensFaltantes.length} pendente(s)` : ""})
                     </button>
                   )}
                 </div>
@@ -2319,14 +2315,16 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
           onClick={e => { e.stopPropagation(); setShowFaltantes(false); }}>
           <div onClick={e => e.stopPropagation()}
-            className="w-full max-w-xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
+            className="w-full max-w-2xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between mb-1">
               <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
               <button onClick={() => setShowFaltantes(false)} style={{ color: C.inkMuted }}><X size={18} /></button>
             </div>
             <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-              Estes {itensFaltantes.length} item(ns) não foram localizados na planilha do PCA importada. Baixe a
-              planilha abaixo e importe no Sistema Centi para formalizar o requerimento de inclusão deles no plano.
+              Estes {semPcaMatch.length} item(ns) não foram localizados automaticamente na planilha do PCA importada.
+              Se algum já estiver previsto de outra forma (outro código, outro processo), digite um código
+              suplementar abaixo — ele passa a contar como previsto. Os demais, baixe a planilha para formalizar o
+              requerimento de inclusão no Sistema Centi.
             </p>
             {itensFaltantes.some(it => !it.idProduto) && (
               <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
@@ -2343,29 +2341,33 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                   <tr style={{ background: C.paperDark }}>
                     <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
                     <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
-                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Código/ID</th>
-                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Unid.</th>
-                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
+                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Código/ID</th>
+                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-40" style={{ color: C.inkMuted }}>Código suplementar</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {itensFaltantes.map((it, idx) => (
-                    <tr key={it.id} className="border-t" style={{ borderColor: C.border }}>
+                  {semPcaMatch.map((it, idx) => (
+                    <tr key={it.id} className="border-t align-top" style={{ borderColor: C.border }}>
                       <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
                       <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
                       <td className="px-2 py-2 text-xs" style={{ color: it.idProduto ? C.ink : C.red }}>{it.idProduto || "sem código"}</td>
-                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.unidade}</td>
-                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "-"}</td>
+                      <td className="px-2 py-2">
+                        <input value={codigosSuplementares[it.id] || ""} onChange={e => atualizarCodigoSuplementar(it.id, e.target.value)}
+                          placeholder="Ex.: previsto no PCA sob outro código"
+                          className="w-full px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
-              style={{ background: C.navy, color: C.paper }}>
-              <Download size={14} /> Baixar planilha para inclusão no Centi
-            </button>
+            {itensFaltantes.length > 0 && (
+              <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: C.navy, color: C.paper }}>
+                <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} sem código)
+              </button>
+            )}
           </div>
         </div>
       )}
