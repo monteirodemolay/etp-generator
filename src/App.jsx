@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX, ListChecks } from "lucide-react";
 import { Settings, Key } from "lucide-react";
 import storage from "./storage";
 import { callClaude, getApiKey, setApiKey } from "./lib/anthropic";
@@ -957,6 +957,127 @@ function textoParaHtml(texto) {
 }
 
 // Gera um documento .doc (HTML compatível com o Word) editável, com o timbre no cabeçalho
+// Documento avulso "Demonstração da Previsão da Contratação no PCA" — usa o cruzamento de itens já
+// feito na ferramenta "Verificar PCA", independente de qualquer ETP específico.
+function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela }) {
+  const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Demonstração da Previsão no PCA</title>
+<style>
+  @page Section1 { size: 8.5in 11.0in; margin: 1.1in 1.0in 1.0in 1.0in; mso-header-margin: 0.4in; mso-header: h1; }
+  div.Section1 { page: Section1; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
+  h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
+  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 10pt 0; }
+  td, th { border: 1px solid #000; padding: 5px 7px; text-align: left; }
+  th { background: #ececec; font-weight: bold; }
+  .timbre { display: block; margin: 0 auto; max-height: 80px; }
+  .assinatura { text-align: center; margin-top: 40pt; font-style: italic; page-break-inside: avoid; }
+</style>
+</head>
+<body>
+  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
+  <div class="Section1">
+  <h1>Demonstração da Previsão da Contratação no Plano de Contratações Anual</h1>
+  <p>A presente contratação, que visa à "${escapeHtml(objeto)}", destinados a atender às demandas da ${escapeHtml(orgao)}, encontra-se devidamente alinhada aos objetivos estratégicos da Administração Municipal.</p>
+  <p>O fornecimento desses itens é essencial para o adequado funcionamento das unidades administrativas e operacionais do Município, garantindo suporte às atividades institucionais desenvolvidas no âmbito da Prefeitura, bem como assegurando a continuidade e a eficiência dos serviços públicos prestados.</p>
+  <p>A demanda encontra-se regularmente prevista no Plano de Contratações Anual (PCA), conforme os sequenciais e respectivos IDs constantes na tabela a seguir, os quais identificam precisamente os itens a serem contratados:</p>
+  <table>
+    <tr><th>Item</th><th>ID</th><th>Descrição</th><th>Sequencial do PCA</th></tr>
+    ${linhasTabela}
+  </table>
+  <p>Dessa forma, resta evidenciado que a contratação encontra-se compatível com o planejamento anual das contratações, atendendo ao disposto no artigo 12 da Lei nº 14.133/2021, assegurando a adequada vinculação entre a demanda identificada, o Plano de Contratações Anual e a futura contratação.</p>
+  <p class="assinatura">[DATADO E ASSINADO DIGITALMENTE]</p>
+  </div>
+</body>
+</html>`;
+
+  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `demonstracao_previsao_pca_${todayISO()}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
+// Gera o texto padrão (HTML), no mesmo espírito dos "Usar modelo padrão (sem IA)" dos incisos do
+// ETP — genérico, sem inventar dado que o servidor não informou, com lacuna em colchetes quando falta.
+function gerarTextoPadraoJustificativa(dados) {
+  const objeto = dados.objeto?.trim() || "[objeto da aquisição]";
+  const empresa = dados.empresa?.trim() || "[empresa fornecedora]";
+  const cnpj = dados.cnpj?.trim();
+  const unidadeBeneficiada = dados.unidadeBeneficiada?.trim() || "[unidade/programa beneficiado]";
+  const pregao = dados.pregao?.trim();
+  const processo = dados.processo?.trim();
+  const orgao = dados.orgao?.trim() || "[órgão/secretaria]";
+  const programas = (dados.programas || "").split("\n").map(p => p.trim()).filter(Boolean);
+  const localEntrega = dados.localEntrega?.trim() || `sede da ${orgao}`;
+  const horarioEntrega = dados.horarioEntrega?.trim() || "[horário de entrega]";
+  const prazoPagamentoDias = dados.prazoPagamentoDias?.trim();
+
+  const paragrafoAta = pregao
+    ? `<p>Pois bem, a presente aquisição se dá com base nos preços que foram registrados na Ata de Registro de Preço do Pregão Eletrônico nº. ${escapeHtml(pregao)}. É cediço que a Ata de Registro fixa o compromisso e a expectativa de direito ao fornecimento, tendo sua vigência de no máximo 12 meses e a sua contratação só é realizada quando melhor convier ao órgão que integra a ata.</p>`
+    : `<p>Pois bem, a presente aquisição se dá com base nos preços que foram registrados na respectiva Ata de Registro de Preço. É cediço que a Ata de Registro fixa o compromisso e a expectativa de direito ao fornecimento, tendo sua vigência de no máximo 12 meses e a sua contratação só é realizada quando melhor convier ao órgão que integra a ata.</p>`;
+
+  const listaProgramas = programas.length > 0
+    ? `<ul>${programas.map(p => `<li>${escapeHtml(p)}.</li>`).join("")}</ul>`
+    : "";
+
+  return `
+<p>Justifica-se a aquisição de ${escapeHtml(objeto)} com a empresa ${escapeHtml(empresa)}${cnpj ? `; CNPJ: ${escapeHtml(cnpj)}` : ""}, visando atender as necessidades da ${escapeHtml(unidadeBeneficiada)}${pregao || processo ? `; conforme ${pregao ? `Pregão Eletrônico nº. ${escapeHtml(pregao)}` : ""}${pregao && processo ? " e " : ""}${processo ? `Processo nº.${escapeHtml(processo)}` : ""}` : ""}.</p>
+${paragrafoAta}
+<p>A aquisição de ${escapeHtml(objeto)} atenderá as necessidades dos Programas vinculados à ${escapeHtml(orgao)};</p>
+${listaProgramas}
+<p>Os quantitativos foram baseados no levantamento das solicitações ocorridas nos últimos meses para suprir quaisquer outras necessidades que venham surgir.</p>
+<p>A entrega deverá ocorrer na ${escapeHtml(localEntrega)} nos horários compreendidos entre ${escapeHtml(horarioEntrega)}. É importante que se destaque que nossa Secretaria possui almoxarifado próprio, com capacidade para armazenar adequadamente as mercadorias estocáveis dessa licitação.</p>
+<p>O pagamento será efetuado em até ${prazoPagamentoDias ? escapeHtml(prazoPagamentoDias) : "[prazo]"} dias, após a emissão da nota fiscal de acordo com a autorização de entrega emitida pela ${escapeHtml(orgao)}.</p>
+<p>Diante da necessidade, vislumbrando em não acarretar prejuízos ao desempenho e qualidade das atividades prestadas e mantidas pela ${escapeHtml(orgao)}, é que a administração pública toma a iniciativa de realizar o processo de aquisição.</p>
+`.trim();
+}
+
+// Exporta a Justificativa como .doc, com timbre e assinatura, no mesmo padrão dos demais documentos
+function gerarDocumentoJustificativaWord({ conteudoHtml, timbreDataUrl }) {
+  const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Justificativa de Aquisição</title>
+<style>
+  @page Section1 { size: 8.5in 11.0in; margin: 1.1in 1.0in 1.0in 1.0in; mso-header-margin: 0.4in; mso-header: h1; }
+  div.Section1 { page: Section1; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
+  h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
+  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
+  ul { margin: 0 0 10pt 20pt; }
+  .timbre { display: block; margin: 0 auto; max-height: 80px; }
+  .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; }
+</style>
+</head>
+<body>
+  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
+  <div class="Section1">
+  <h1>Justificativa</h1>
+  ${conteudoHtml}
+  <p class="assinatura">Atenciosamente,</p>
+  <p class="assinatura" style="margin-top:60pt;">[DATADO E ASSINADO DIGITALMENTE]</p>
+  </div>
+</body>
+</html>`;
+
+  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `justificativa_aquisicao_${todayISO()}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function gerarDocumentoWord(etp, timbreDataUrl) {
   const itens = etp.itens || [];
   const valoresAdotados = etp.valoresAdotados || {};
@@ -970,38 +1091,23 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
     `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(it.unidade || "")}</td><td>${escapeHtml(String(it.quantidade || "-"))}</td></tr>`
   ).join("");
 
-  const temValores = Object.keys(valoresAdotados).length > 0;
-  const linhasValores = itens.map((it, idx) => {
-    const v = valoresAdotados[it.id];
-    return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(String(it.quantidade || "-"))}</td><td>${v ? brl(num(v)) : "—"}</td><td>${v ? brl(num(it.quantidade) * num(v)) : "—"}</td></tr>`;
-  }).join("");
-  const totalGeral = itens.reduce((s, i) => s + num(i.quantidade) * num(valoresAdotados[i.id]), 0);
+  const quadroQuantitativos = itens.length > 0
+    ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
+    : "";
 
   const linhasPca = pca ? itens.map((it, idx) => {
     const m = pcaMatchFor(it, pca.linhas);
     return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${m ? "Sim" : "Não"}</td><td>${escapeHtml(m?.sequencial || "—")}</td></tr>`;
   }).join("") : "";
 
-  const quadroQuantitativos = itens.length > 0
-    ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
-    : "";
-  const quadroValores = temValores
-    ? `<h3>Quadro de estimativa de valores</h3><table><tr><th>Item</th><th>Descrição</th><th>Qtd.</th><th>Vlr. Unit.</th><th>Vlr. Total</th></tr>${linhasValores}<tr><td colspan="4" style="text-align:right"><b>Total estimado</b></td><td><b>${brl(totalGeral)}</b></td></tr></table>`
-    : "";
-
-  const linhasCotacoes = itens.flatMap(it => (etp.cotacoes?.[it.id] || []).map(q =>
-    `<tr><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(q.fonte || "-")}</td><td>${escapeHtml(q.empresa || "—")}</td><td>${brl(num(q.valor))}</td></tr>`
-  )).join("");
-  const quadroCotacoes = linhasCotacoes
-    ? `<h3>Quadro detalhado de cotações por item e fonte</h3><table><tr><th>Item</th><th>Fonte</th><th>Fornecedor</th><th>Valor Cotado</th></tr>${linhasCotacoes}</table><p style="font-size:9pt;">Cotações detalhadas por item, conforme documentos anexos ao processo.</p>`
-    : "";
+  const relatorioEstimativa = gerarRelatorioEstimativaHtml(etp);
 
   const secoesHtml = secoesParaRelatorio(etp).map(s => `
     <h2>${s.numero} — ${escapeHtml(s.titulo)}</h2>
     ${etp.sections[s.id]}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
     ${s.id === "V" ? quadroQuantitativos : ""}
-    ${s.id === "VI" ? quadroValores + quadroCotacoes : ""}
+    ${s.id === "VI" ? relatorioEstimativa : ""}
   `).join("");
 
   const html = `<!DOCTYPE html>
@@ -1079,6 +1185,62 @@ function statsFor(quotes) {
   const mid = Math.floor(vals.length / 2);
   const mediana = vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
   return { media, mediana, min: vals[0], max: vals[vals.length - 1], n: vals.length };
+}
+
+// Quadro comprobatório da estimativa de valor: por item, reúne as cotações coletadas (fonte,
+// fornecedor, valor), a média e a mediana apuradas, e o valor unitário efetivamente adotado —
+// tudo num único quadro, para demonstrar de forma clara e completa como cada valor foi apurado.
+// HTML autocontido (estilos inline), usado tanto no Word quanto na Pré-visualização/impressão.
+function gerarRelatorioEstimativaHtml(etp) {
+  const itens = etp.itens || [];
+  const valoresAdotados = etp.valoresAdotados || {};
+  const cotacoes = etp.cotacoes || {};
+  const temAlgumDado = itens.some(it => (cotacoes[it.id] || []).length > 0 || valoresAdotados[it.id]);
+  if (!temAlgumDado) return "";
+
+  const th = 'style="border:1px solid #999;padding:5px 7px;background:#eee;text-align:left;font-size:9.5pt;"';
+  const td = 'style="border:1px solid #999;padding:5px 7px;text-align:left;font-size:9.5pt;vertical-align:top;"';
+  const usaMedia = etp.meta.metodologiaCalculo === "media";
+  const metodologia = usaMedia ? "média aritmética simples" : "mediana";
+  const labelReferencia = usaMedia ? "Média" : "Mediana";
+
+  const linhas = itens.map((it, idx) => {
+    const quotes = cotacoes[it.id] || [];
+    const stats = statsFor(quotes);
+    const valorReferencia = usaMedia ? stats.media : stats.mediana;
+    const cotacoesTexto = quotes.length > 0
+      ? quotes.map(q => `${escapeHtml(q.fonte || "-")}${q.empresa ? ` (${escapeHtml(q.empresa)})` : ""}: <b>${brl(num(q.valor))}</b>`).join("<br/>")
+      : "—";
+    const total = stats.n > 0 ? num(it.quantidade) * valorReferencia : 0;
+    return `<tr>
+      <td ${td}>${idx + 1}</td>
+      <td ${td}>${escapeHtml(it.descricao || "-")}</td>
+      <td ${td}>${escapeHtml(String(it.quantidade || "-"))} ${escapeHtml(it.unidade || "")}</td>
+      <td ${td}>${cotacoesTexto}</td>
+      <td ${td}><b>${stats.n > 0 ? brl(valorReferencia) : "—"}</b></td>
+      <td ${td}>${stats.n > 0 ? brl(total) : "—"}</td>
+    </tr>`;
+  }).join("");
+
+  const totalGeral = itens.reduce((s, it) => {
+    const stats = statsFor(cotacoes[it.id] || []);
+    const valorReferencia = usaMedia ? stats.media : stats.mediana;
+    return s + (stats.n > 0 ? num(it.quantidade) * valorReferencia : 0);
+  }, 0);
+
+  return `
+<h3>Quadro comprobatório da estimativa de valor</h3>
+<p style="font-size:9.5pt;">Demonstra, item a item, as cotações coletadas por fonte/fornecedor e o valor unitário de referência apurado — metodologia de cálculo adotada nesta contratação: ${metodologia}.</p>
+<table style="border-collapse:collapse;width:100%;margin-bottom:8pt;">
+<tr>
+  <th ${th}>Item</th><th ${th}>Descrição</th><th ${th}>Qtd.</th><th ${th}>Cotações coletadas</th>
+  <th ${th}>${labelReferencia}</th><th ${th}>Valor Total</th>
+</tr>
+${linhas}
+<tr><td colspan="5" style="border:1px solid #999;padding:5px 7px;text-align:right;font-size:9.5pt;"><b>Valor total estimado da contratação</b></td><td ${td}><b>${brl(totalGeral)}</b></td></tr>
+</table>
+<p style="font-size:9pt;">Cotações detalhadas conforme documentos anexos ao processo.</p>
+`.trim();
 }
 
 // Chamada à API da Anthropic para gerar rascunho de texto de uma seção
@@ -1399,7 +1561,9 @@ const MODELOS_PADRAO = {
 
 // ---------- App ----------
 export default function App() {
-  const [view, setView] = useState("list"); // list | editor | preview
+  const [view, setView] = useState("list"); // list | editor | preview | justificativa
+  const [showPcaAvulso, setShowPcaAvulso] = useState(false);
+  const [justificativaInicial, setJustificativaInicial] = useState(null);
   const [etps, setEtps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentId, setCurrentId] = useState(null);
@@ -1584,11 +1748,24 @@ export default function App() {
       {view === "list" && (
         <ListView
           etps={filteredEtps} loading={loading} search={search} setSearch={setSearch}
-          onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp} onSettings={() => setView("settings")}
+          onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp}
+          onPcaAvulso={() => setShowPcaAvulso(true)}
+          onSettings={() => setView("settings")}
         />
       )}
 
       {view === "settings" && <SettingsView onBack={() => setView("list")} />}
+
+      {showPcaAvulso && (
+        <PCAAvulsoView
+          onClose={() => setShowPcaAvulso(false)}
+          onJustificativa={(dadosIniciais) => { setShowPcaAvulso(false); setJustificativaInicial(dadosIniciais); setView("justificativa"); }}
+        />
+      )}
+
+      {view === "justificativa" && (
+        <JustificativaView dadosIniciais={justificativaInicial} onBack={() => setView("list")} />
+      )}
 
       {view === "editor" && current && (
         <EditorView
@@ -1678,7 +1855,7 @@ function SettingsView({ onBack }) {
 }
 
 // ---------- List View ----------
-function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, onSettings }) {
+function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, onPcaAvulso, onSettings }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleDeleteClick(id, e) {
@@ -1703,6 +1880,12 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
           <p className="text-sm mt-1" style={{ color: C.inkMuted }}>Estudos Técnicos Preliminares — organizados, completos e salvos automaticamente.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={onPcaAvulso}
+            className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border"
+            style={{ borderColor: C.border, color: C.navy, background: "white" }}
+            title="Verificar itens no PCA e gerar documento comprobatório, sem precisar abrir um ETP">
+            <ListChecks size={16} /> Verificar PCA
+          </button>
           <button onClick={onSettings}
             className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border"
             style={{ borderColor: C.border, color: C.navy, background: "white" }} title="Configurações">
@@ -1857,8 +2040,490 @@ function PromptIAView({ etp }) {
   );
 }
 
+// ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
+// Independente de qualquer ETP — fica salva neste navegador para reutilização.
+function PCAAvulsoView({ onClose, onJustificativa }) {
+  const [itens, setItens] = useState([]);
+  const [pca, setPca] = useState(null);
+  const [objeto, setObjeto] = useState("");
+  const [orgao, setOrgao] = useState("Secretaria Municipal de Assistência Social");
+  const [timbre, setTimbre] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showFaltantes, setShowFaltantes] = useState(false);
+
+  const fileItensRef = useRef(null);
+  const filePcaRef = useRef(null);
+  const [importingItens, setImportingItens] = useState(false);
+  const [importingPca, setImportingPca] = useState(false);
+  const [errorItens, setErrorItens] = useState("");
+  const [errorPca, setErrorPca] = useState("");
+
+  useEffect(() => {
+    Promise.all([
+      storage.get("avulso:pca", false).catch(() => null),
+      storage.get("timbre:padrao", false).catch(() => null),
+    ]).then(([dadosRes, timbreRes]) => {
+      if (dadosRes?.value) {
+        const dados = JSON.parse(dadosRes.value);
+        setItens(dados.itens || []);
+        setPca(dados.pca || null);
+        setObjeto(dados.objeto || "");
+        setOrgao(dados.orgao || "Secretaria Municipal de Assistência Social");
+      }
+      setTimbre(timbreRes?.value || TIMBRE_PADRAO);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  function salvar(next) {
+    storage.set("avulso:pca", JSON.stringify(next), false).catch(() => {});
+  }
+  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao }); }
+  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao }); }
+  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao }); }
+  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v }); }
+
+  async function handleImportItens(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingItens(true);
+    setErrorItens("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      const result = parseCentiSheet(rows);
+      if (result.itens.length === 0) throw new Error("Nenhum item encontrado nesta planilha.");
+      atualizarItens(result.itens);
+    } catch (err) {
+      console.error(err);
+      setErrorItens(err.message || "Não foi possível importar esta planilha.");
+    }
+    setImportingItens(false);
+    e.target.value = "";
+  }
+
+  async function handleImportPca(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingPca(true);
+    setErrorPca("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      const linhas = parsePCASheet(rows);
+      atualizarPca({ nomeArquivo: file.name, importedAt: Date.now(), linhas });
+    } catch (err) {
+      console.error(err);
+      setErrorPca(err.message || "Não foi possível importar esta planilha.");
+    }
+    setImportingPca(false);
+    e.target.value = "";
+  }
+
+  const matches = itens.map(it => ({ item: it, pcaRow: pca ? pcaMatchFor(it, pca.linhas) : null }));
+  const encontrados = matches.filter(m => m.pcaRow).length;
+  const itensFaltantes = matches.filter(m => !m.pcaRow).map(m => m.item);
+  const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
+
+  function baixarDocumento() {
+    const linhasTabela = matches.filter(m => m.pcaRow).map(({ item, pcaRow }, idx) =>
+      `<tr><td>${idx + 1}</td><td>${escapeHtml(item.idProduto || "-")}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(pcaRow.sequencial || "-")}</td></tr>`
+    ).join("");
+    gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela });
+  }
+
+  function irParaJustificativa() {
+    onJustificativa({ objeto, orgao });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        className="w-full max-w-4xl max-h-[90vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl z-10" style={{ borderColor: C.border }}>
+          <div>
+            <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+              <ListChecks size={16} />
+              <span className="text-xs font-semibold tracking-widest uppercase">Ferramenta avulsa</span>
+            </div>
+            <h2 className="serif text-xl font-semibold" style={{ color: C.navy }}>Verificar Itens no PCA</h2>
+          </div>
+          <button onClick={onClose} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
+        </div>
+
+        <div className="p-5">
+          {loading ? (
+            <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
+          ) : (
+            <>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                Confere se uma lista de itens já consta no Plano de Contratações Anual, sem precisar abrir um ETP, e
+                gera um documento pronto para anexar ao processo. Fica salvo neste navegador — pode usar de novo
+                quando quiser, para qualquer finalidade.
+              </p>
+
+              <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <span className="text-sm font-semibold" style={{ color: C.navy }}>1. Planilha de Itens</span>
+                  <span className="text-xs" style={{ color: C.inkMuted }}>{itens.length} item(ns)</span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input ref={fileItensRef} type="file" accept=".xlsx,.xls" onChange={handleImportItens} className="hidden" />
+                  <button onClick={() => fileItensRef.current?.click()} disabled={importingItens}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+                    style={{ background: C.navy, color: C.paper }}>
+                    {importingItens ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                    {importingItens ? "Importando..." : "Importar do Sistema Centi"}
+                  </button>
+                  <button onClick={baixarModeloPlanilha}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+                    style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
+                    <FileText size={13} /> Baixar modelo em branco
+                  </button>
+                  {itens.length > 0 && (
+                    <button onClick={() => atualizarItens([])}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium" style={{ color: C.red }}>
+                      <Trash2 size={13} /> Limpar lista
+                    </button>
+                  )}
+                </div>
+                {errorItens && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorItens}</p>}
+              </div>
+
+              <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <span className="text-sm font-semibold" style={{ color: C.navy }}>2. Planilha do PCA</span>
+                  {pca && <span className="text-xs" style={{ color: C.inkMuted }}>{pca.nomeArquivo} · {pca.linhas.length} itens no painel · importada em {fmtDate(pca.importedAt)}</span>}
+                </div>
+                <input ref={filePcaRef} type="file" accept=".xlsx,.xls" onChange={handleImportPca} className="hidden" />
+                <button onClick={() => filePcaRef.current?.click()} disabled={importingPca}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+                  style={{ background: C.navy, color: C.paper }}>
+                  {importingPca ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {importingPca ? "Importando..." : pca ? "Atualizar planilha do PCA" : "Importar planilha do PCA"}
+                </button>
+                {errorPca && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorPca}</p>}
+              </div>
+
+              {itens.length > 0 && pca && (
+                <div className="mb-5">
+                  <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ background: C.paperDark }}>
+                          <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
+                          <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
+                          <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Consta no PCA?</th>
+                          <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Sequencial (PCA)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {matches.map(({ item, pcaRow }, idx) => (
+                          <tr key={item.id} className="border-t" style={{ borderColor: C.border }}>
+                            <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
+                            <td className="px-3 py-2">{item.descricao || `Item ${idx + 1}`}</td>
+                            <td className="px-2 py-2">
+                              {pcaRow ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
+                                  <Check size={11} /> Sim
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+                                  <AlertCircle size={11} /> Não
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.sequencial || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-3 p-3 rounded-lg flex items-center gap-2 text-xs flex-wrap" style={{ background: totalmenteAlinhado ? "rgba(76,124,89,0.1)" : "rgba(166,131,46,0.1)", color: C.ink }}>
+                    {totalmenteAlinhado ? <Check size={14} style={{ color: C.green }} /> : <Info size={14} style={{ color: C.brass }} />}
+                    <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA.</span>
+                  </div>
+
+                  {itensFaltantes.length > 0 && (
+                    <button onClick={() => setShowFaltantes(true)}
+                      className="flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-md text-xs font-medium"
+                      style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+                      <ListX size={13} /> Ver itens sem previsão no PCA ({itensFaltantes.length})
+                    </button>
+                  )}
+
+                  {totalmenteAlinhado && (
+                    <div className="mt-4 p-4 rounded-lg flex items-center justify-between gap-3 flex-wrap" style={{ background: "rgba(76,124,89,0.08)", border: `1px solid rgba(76,124,89,0.3)` }}>
+                      <span className="text-sm" style={{ color: C.ink }}>
+                        <b>Todos os itens estão alinhados ao PCA.</b> Já dá pra elaborar a justificativa de aquisição.
+                      </span>
+                      <button onClick={irParaJustificativa}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
+                        style={{ background: C.green, color: "white" }}>
+                        Elaborar Justificativa de Aquisição →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
+                <span className="text-sm font-semibold block mb-3" style={{ color: C.navy }}>3. Documento de demonstração no PCA</span>
+                <label className="block mb-3">
+                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Objeto (descrição resumida da aquisição)</span>
+                  <input value={objeto} onChange={e => atualizarObjeto(e.target.value)}
+                    placeholder="Ex.: aquisição de materiais de copa e cozinha"
+                    className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
+                </label>
+                <label className="block mb-4">
+                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Órgão / Secretaria</span>
+                  <input value={orgao} onChange={e => atualizarOrgao(e.target.value)}
+                    className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
+                </label>
+                <button onClick={baixarDocumento} disabled={encontrados === 0 || !objeto.trim()}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                  style={{ background: C.navy, color: C.paper }}>
+                  <Download size={15} /> Baixar documento (Word)
+                </button>
+                {(encontrados === 0 || !objeto.trim()) && (
+                  <p className="text-xs mt-2" style={{ color: C.inkMuted }}>
+                    Importe os itens e o PCA (com ao menos um item localizado) e preencha o Objeto para gerar o documento.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {showFaltantes && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+          onClick={e => { e.stopPropagation(); setShowFaltantes(false); }}>
+          <div onClick={e => e.stopPropagation()}
+            className="w-full max-w-xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between mb-1">
+              <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
+              <button onClick={() => setShowFaltantes(false)} style={{ color: C.inkMuted }}><X size={18} /></button>
+            </div>
+            <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+              Estes {itensFaltantes.length} item(ns) não foram localizados na planilha do PCA importada. Baixe a
+              planilha abaixo e importe no Sistema Centi para formalizar o requerimento de inclusão deles no plano.
+            </p>
+            {itensFaltantes.some(it => !it.idProduto) && (
+              <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
+                <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                <span>
+                  Algum(ns) item(ns) está(ão) sem código/ID (provavelmente adicionado manualmente, e não pela
+                  importação do Sistema Centi). A planilha sairá com essa célula em branco.
+                </span>
+              </div>
+            )}
+            <div className="rounded-lg border overflow-hidden mb-4" style={{ borderColor: C.border }}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ background: C.paperDark }}>
+                    <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
+                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Código/ID</th>
+                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Unid.</th>
+                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {itensFaltantes.map((it, idx) => (
+                    <tr key={it.id} className="border-t" style={{ borderColor: C.border }}>
+                      <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
+                      <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
+                      <td className="px-2 py-2 text-xs" style={{ color: it.idProduto ? C.ink : C.red }}>{it.idProduto || "sem código"}</td>
+                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.unidade}</td>
+                      <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
+              style={{ background: C.navy, color: C.paper }}>
+              <Download size={14} /> Baixar planilha para inclusão no Centi
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
+function JustificativaView({ dadosIniciais, onBack }) {
+  const [campos, setCampos] = useState({
+    objeto: "", empresa: "", cnpj: "", unidadeBeneficiada: "",
+    pregao: "", processo: "", orgao: "Secretaria Municipal de Assistência Social",
+    programas: "", localEntrega: "", horarioEntrega: "", prazoPagamentoDias: "",
+  });
+  const [conteudo, setConteudo] = useState("");
+  const [timbre, setTimbre] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [modoPreview, setModoPreview] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      storage.get("avulso:justificativa", false).catch(() => null),
+      storage.get("timbre:padrao", false).catch(() => null),
+    ]).then(([dadosRes, timbreRes]) => {
+      if (dadosRes?.value) {
+        const salvo = JSON.parse(dadosRes.value);
+        setCampos(c => ({ ...c, ...salvo.campos }));
+        setConteudo(salvo.conteudo || "");
+      } else if (dadosIniciais) {
+        setCampos(c => ({ ...c, objeto: dadosIniciais.objeto || "", orgao: dadosIniciais.orgao || c.orgao }));
+      }
+      setTimbre(timbreRes?.value || TIMBRE_PADRAO);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  function salvar(novosCampos, novoConteudo) {
+    storage.set("avulso:justificativa", JSON.stringify({ campos: novosCampos, conteudo: novoConteudo }), false).catch(() => {});
+  }
+  function atualizarCampo(campo, valor) {
+    const novos = { ...campos, [campo]: valor };
+    setCampos(novos);
+    salvar(novos, conteudo);
+  }
+  function atualizarConteudo(html) {
+    setConteudo(html);
+    salvar(campos, html);
+  }
+
+  function gerarPadrao() {
+    atualizarConteudo(gerarTextoPadraoJustificativa(campos));
+  }
+
+  function baixarDocumento() {
+    gerarDocumentoJustificativaWord({ conteudoHtml: conteudo, timbreDataUrl: timbre });
+  }
+
+  const camposPreenchidos = Object.values(campos).filter(v => v?.trim?.()).length;
+
+  if (loading) {
+    return <div className="max-w-3xl mx-auto px-6 py-10"><p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p></div>;
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-6 py-10">
+      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+        <ArrowLeft size={16} /> Voltar
+      </button>
+
+      <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+        <FileEdit size={18} />
+        <span className="text-xs font-semibold tracking-widest uppercase">Ferramenta avulsa</span>
+      </div>
+      <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Justificativa de Aquisição</h1>
+      <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
+        Preencha os dados abaixo e gere o texto padrão automaticamente (sem IA), ou escreva a justificativa do seu
+        jeito no editor formatado. Fica salvo neste navegador entre usos.
+      </p>
+
+      <div className="inline-flex p-1 rounded-lg mb-5" style={{ background: C.paperDark }}>
+        <button onClick={() => setModoPreview(false)}
+          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
+          style={{ background: !modoPreview ? "white" : "transparent", color: !modoPreview ? C.navy : C.inkMuted, boxShadow: !modoPreview ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Dados e texto
+        </button>
+        <button onClick={() => setModoPreview(true)}
+          className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
+          style={{ background: modoPreview ? "white" : "transparent", color: modoPreview ? C.navy : C.inkMuted, boxShadow: modoPreview ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Pré-visualizar
+        </button>
+      </div>
+
+      {!modoPreview ? (
+        <>
+          <div className="p-4 rounded-lg border mb-5" style={{ borderColor: C.border, background: "white" }}>
+            <span className="text-xs font-semibold uppercase tracking-wide block mb-3" style={{ color: C.inkMuted }}>
+              Dados da aquisição ({camposPreenchidos}/11 preenchidos)
+            </span>
+            <div className="grid sm:grid-cols-2 gap-x-4">
+              <Field label="Objeto (o que está sendo adquirido)" value={campos.objeto} onChange={v => atualizarCampo("objeto", v)}
+                placeholder="Ex.: Material de Consumo (Gás engarrafado P45kg)" />
+              <Field label="Empresa fornecedora" value={campos.empresa} onChange={v => atualizarCampo("empresa", v)}
+                placeholder="Ex.: CHEIK ROSSLAM CHEBLI" />
+              <Field label="CNPJ da empresa" value={campos.cnpj} onChange={v => atualizarCampo("cnpj", v)}
+                placeholder="00.000.000/0000-00" />
+              <Field label="Nº do Pregão Eletrônico" value={campos.pregao} onChange={v => atualizarCampo("pregao", v)}
+                placeholder="Ex.: 90010/2026" />
+              <Field label="Nº do Processo" value={campos.processo} onChange={v => atualizarCampo("processo", v)}
+                placeholder="Ex.: 136187/2025" />
+              <Field label="Órgão / Secretaria" value={campos.orgao} onChange={v => atualizarCampo("orgao", v)} />
+              <Field label="Unidade/programa beneficiado" value={campos.unidadeBeneficiada} onChange={v => atualizarCampo("unidadeBeneficiada", v)}
+                placeholder="Ex.: Unidade de Produção FABRIS e dos Programas vinculados ao FMAS" />
+              <Field label="Local de entrega" value={campos.localEntrega} onChange={v => atualizarCampo("localEntrega", v)}
+                placeholder="Ex.: sede da Secretaria Municipal de Assistência Social" />
+              <Field label="Horário de entrega" value={campos.horarioEntrega} onChange={v => atualizarCampo("horarioEntrega", v)}
+                placeholder="Ex.: 08:00 às 11:00 e 13:00 às 17:00, de segunda a sexta-feira" />
+              <Field label="Prazo de pagamento (dias)" value={campos.prazoPagamentoDias} onChange={v => atualizarCampo("prazoPagamentoDias", v)}
+                placeholder="Ex.: 10" />
+            </div>
+            <label className="block mt-1">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Programas/unidades beneficiados (um por linha)
+              </span>
+              <textarea value={campos.programas} onChange={e => atualizarCampo("programas", e.target.value)} rows={2}
+                placeholder={"Ex.: Unidades de Produção Fabris\nCentro de Convivência Municipal"}
+                className="mt-1.5 w-full px-3 py-2 rounded-lg border text-sm leading-relaxed resize-y"
+                style={{ borderColor: C.border, background: "white" }} />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2 mb-3">
+            <button onClick={gerarPadrao}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+              style={{ background: C.brass, color: C.navyDark }}
+              title="Preenche com o texto-modelo salvo no app — grátis, sem IA e sem API">
+              <FileEdit size={13} /> Gerar justificativa padrão (sem IA)
+            </button>
+          </div>
+          <RichTextEditor value={conteudo} onChange={atualizarConteudo} />
+        </>
+      ) : (
+        <div className="rounded-lg border p-8 bg-white" style={{ borderColor: C.border }}>
+          {timbre && (
+            <div className="mb-6 flex justify-center">
+              <img src={timbre} alt="Timbre" style={{ maxHeight: "110px", maxWidth: "100%" }} />
+            </div>
+          )}
+          <h2 className="serif text-lg font-semibold text-center mb-4 uppercase" style={{ color: C.navy }}>Justificativa</h2>
+          {conteudo ? (
+            <div className="text-sm leading-relaxed rich-content text-justify" style={{ color: C.ink }}
+              dangerouslySetInnerHTML={{ __html: conteudo }} />
+          ) : (
+            <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum texto ainda — volte em "Dados e texto" e gere ou escreva a justificativa.</p>
+          )}
+          <p className="text-sm text-center mt-10 italic" style={{ color: C.ink }}>Atenciosamente,</p>
+          <p className="text-sm text-center mt-16 italic" style={{ color: C.ink }}>[DATADO E ASSINADO DIGITALMENTE]</p>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mt-5">
+        <button onClick={baixarDocumento} disabled={!conteudo.trim()}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+          style={{ background: C.navy, color: C.paper }}>
+          <Download size={15} /> Baixar documento (Word)
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes, onValoresAdotados, onPca, onSolucoesMercado, saveState, onBack, onPreview }) {
   const p = progress(etp);
+
 
   return (
     <div className="flex flex-col h-full min-h-screen">
@@ -3472,27 +4137,31 @@ function PreviewView({ etp, onBack }) {
           t += `• ${it.descricao || "-"} — ${it.unidade || ""} — qtd. ${it.quantidade || "-"}\n`;
         });
       }
-      if (s.id === "VI" && Object.keys(etp.valoresAdotados || {}).length > 0) {
-        t += `\nQuadro de estimativa de valores:\n`;
-        let totalGeral = 0;
-        etp.itens.forEach(it => {
-          const v = (etp.valoresAdotados || {})[it.id];
-          if (v) {
-            const totalItem = num(it.quantidade) * num(v);
-            totalGeral += totalItem;
-            t += `• ${it.descricao || "-"} — qtd. ${it.quantidade || "-"} × ${brl(num(v))} = ${brl(totalItem)}\n`;
-          }
-        });
-        t += `Valor total estimado: ${brl(totalGeral)}\n`;
-
-        const temCotacoes = etp.itens.some(it => (etp.cotacoes?.[it.id] || []).length > 0);
-        if (temCotacoes) {
-          t += `\nQuadro detalhado de cotações por item e fonte:\n`;
+      if (s.id === "VI") {
+        const valoresAdotados = etp.valoresAdotados || {};
+        const cotacoes = etp.cotacoes || {};
+        const temAlgumDado = etp.itens.some(it => (cotacoes[it.id] || []).length > 0 || valoresAdotados[it.id]);
+        if (temAlgumDado) {
+          const usaMedia = etp.meta.metodologiaCalculo === "media";
+          const metodologia = usaMedia ? "média aritmética simples" : "mediana";
+          const labelReferencia = usaMedia ? "Média" : "Mediana";
+          t += `\nQuadro comprobatório da estimativa de valor (metodologia adotada: ${metodologia}):\n`;
+          let totalGeral = 0;
           etp.itens.forEach(it => {
-            (etp.cotacoes?.[it.id] || []).forEach(q => {
-              t += `• ${it.descricao || "-"} — ${q.fonte || "-"}${q.empresa ? ` (${q.empresa})` : ""}: ${brl(num(q.valor))}\n`;
-            });
+            const quotes = cotacoes[it.id] || [];
+            const stats = statsFor(quotes);
+            const valorReferencia = usaMedia ? stats.media : stats.mediana;
+            const totalItem = stats.n > 0 ? num(it.quantidade) * valorReferencia : 0;
+            if (stats.n > 0) totalGeral += totalItem;
+            t += `\n${it.descricao || "-"} (qtd. ${it.quantidade || "-"} ${it.unidade || ""})\n`;
+            if (quotes.length > 0) {
+              quotes.forEach(q => {
+                t += `  • ${q.fonte || "-"}${q.empresa ? ` (${q.empresa})` : ""}: ${brl(num(q.valor))}\n`;
+              });
+              t += `  ${labelReferencia}: ${brl(valorReferencia)} · Total do item: ${brl(totalItem)}\n`;
+            }
           });
+          t += `\nValor total estimado da contratação: ${brl(totalGeral)}\n`;
         }
       }
       t += `\n`;
@@ -3669,73 +4338,9 @@ function PreviewView({ etp, onBack }) {
                   </table>
                 </div>
               )}
-              {s.id === "VI" && etp.itens?.length > 0 && Object.keys(etp.valoresAdotados || {}).length > 0 && (
-                <div className="mt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
-                    Quadro de estimativa de valores
-                  </p>
-                  <table className="w-full text-xs border-collapse">
-                    <thead>
-                      <tr style={{ background: C.paperDark }}>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Descrição</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Qtd.</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Unit. Adotado</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Vlr. Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {etp.itens.map((it, idx) => {
-                        const v = (etp.valoresAdotados || {})[it.id];
-                        return (
-                          <tr key={it.id}>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{v ? brl(num(v)) : "—"}</td>
-                            <td className="px-2 py-1.5 border font-medium" style={{ borderColor: C.border }}>{v ? brl(num(it.quantidade) * num(v)) : "—"}</td>
-                          </tr>
-                        );
-                      })}
-                      <tr style={{ background: C.paperDark }}>
-                        <td colSpan={4} className="px-2 py-1.5 border text-right font-semibold" style={{ borderColor: C.border }}>Valor total estimado</td>
-                        <td className="px-2 py-1.5 border font-bold" style={{ borderColor: C.border, color: C.navy }}>
-                          {brl(etp.itens.reduce((s2, i) => s2 + num(i.quantidade) * num((etp.valoresAdotados || {})[i.id]), 0))}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {s.id === "VI" && etp.itens?.some(it => (etp.cotacoes?.[it.id] || []).length > 0) && (
-                <div className="mt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.inkMuted }}>
-                    Quadro detalhado de cotações por item e fonte
-                  </p>
-                  <table className="w-full text-xs border-collapse">
-                    <thead>
-                      <tr style={{ background: C.paperDark }}>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Item</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Fonte</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Fornecedor</th>
-                        <th className="text-left px-2 py-1.5 border" style={{ borderColor: C.border }}>Valor Cotado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {etp.itens.flatMap(it => (etp.cotacoes?.[it.id] || []).map(q => (
-                        <tr key={q.id}>
-                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
-                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{q.fonte || "-"}</td>
-                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{q.empresa || "—"}</td>
-                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{brl(num(q.valor))}</td>
-                        </tr>
-                      )))}
-                    </tbody>
-                  </table>
-                  <p className="text-[10px] mt-1" style={{ color: C.inkMuted }}>
-                    Cotações detalhadas por item, conforme documentos anexos ao processo.
-                  </p>
-                </div>
+              {s.id === "VI" && gerarRelatorioEstimativaHtml(etp) && (
+                <div className="mt-3 rich-content text-sm" style={{ color: C.ink }}
+                  dangerouslySetInnerHTML={{ __html: gerarRelatorioEstimativaHtml(etp) }} />
               )}
             </div>
           ))}
