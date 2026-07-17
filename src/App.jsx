@@ -1009,10 +1009,7 @@ function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela })
 // ETP — genérico, sem inventar dado que o servidor não informou, com lacuna em colchetes quando falta.
 function gerarTextoPadraoJustificativa(dados) {
   const objeto = dados.objeto?.trim() || "[objeto da aquisição]";
-  const empresa = dados.empresa?.trim() || "[empresa fornecedora]";
-  const cnpj = dados.cnpj?.trim();
   const unidadeBeneficiada = dados.unidadeBeneficiada?.trim() || "[unidade/programa beneficiado]";
-  const pregao = dados.pregao?.trim();
   const processo = dados.processo?.trim();
   const orgao = dados.orgao?.trim() || "[órgão/secretaria]";
   const programas = (dados.programas || "").split("\n").map(p => p.trim()).filter(Boolean);
@@ -1020,17 +1017,12 @@ function gerarTextoPadraoJustificativa(dados) {
   const horarioEntrega = dados.horarioEntrega?.trim() || "[horário de entrega]";
   const prazoPagamentoDias = dados.prazoPagamentoDias?.trim();
 
-  const paragrafoAta = pregao
-    ? `<p>Pois bem, a presente aquisição se dá com base nos preços que foram registrados na Ata de Registro de Preço do Pregão Eletrônico nº. ${escapeHtml(pregao)}. É cediço que a Ata de Registro fixa o compromisso e a expectativa de direito ao fornecimento, tendo sua vigência de no máximo 12 meses e a sua contratação só é realizada quando melhor convier ao órgão que integra a ata.</p>`
-    : `<p>Pois bem, a presente aquisição se dá com base nos preços que foram registrados na respectiva Ata de Registro de Preço. É cediço que a Ata de Registro fixa o compromisso e a expectativa de direito ao fornecimento, tendo sua vigência de no máximo 12 meses e a sua contratação só é realizada quando melhor convier ao órgão que integra a ata.</p>`;
-
   const listaProgramas = programas.length > 0
     ? `<ul>${programas.map(p => `<li>${escapeHtml(p)}.</li>`).join("")}</ul>`
     : "";
 
   return `
-<p>Justifica-se a aquisição de ${escapeHtml(objeto)} com a empresa ${escapeHtml(empresa)}${cnpj ? `; CNPJ: ${escapeHtml(cnpj)}` : ""}, visando atender as necessidades da ${escapeHtml(unidadeBeneficiada)}${pregao || processo ? `; conforme ${pregao ? `Pregão Eletrônico nº. ${escapeHtml(pregao)}` : ""}${pregao && processo ? " e " : ""}${processo ? `Processo nº.${escapeHtml(processo)}` : ""}` : ""}.</p>
-${paragrafoAta}
+<p>Justifica-se a aquisição de ${escapeHtml(objeto)}, visando atender as necessidades da ${escapeHtml(unidadeBeneficiada)}${processo ? `, conforme Processo nº. ${escapeHtml(processo)}` : ""}.</p>
 <p>A aquisição de ${escapeHtml(objeto)} atenderá as necessidades dos Programas vinculados à ${escapeHtml(orgao)};</p>
 ${listaProgramas}
 <p>Os quantitativos foram baseados no levantamento das solicitações ocorridas nos últimos meses para suprir quaisquer outras necessidades que venham surgir.</p>
@@ -2047,6 +2039,7 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
   const [pca, setPca] = useState(null);
   const [objeto, setObjeto] = useState("");
   const [orgao, setOrgao] = useState("Secretaria Municipal de Assistência Social");
+  const [codigosSuplementares, setCodigosSuplementares] = useState({}); // { itemId: "código/justificativa digitada" }
   const [timbre, setTimbre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
@@ -2069,6 +2062,7 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
         setPca(dados.pca || null);
         setObjeto(dados.objeto || "");
         setOrgao(dados.orgao || "Secretaria Municipal de Assistência Social");
+        setCodigosSuplementares(dados.codigosSuplementares || {});
       }
       setTimbre(timbreRes?.value || TIMBRE_PADRAO);
     }).finally(() => setLoading(false));
@@ -2077,10 +2071,15 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
   function salvar(next) {
     storage.set("avulso:pca", JSON.stringify(next), false).catch(() => {});
   }
-  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao }); }
-  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao }); }
-  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao }); }
-  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v }); }
+  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao, codigosSuplementares }); }
+  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao, codigosSuplementares }); }
+  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao, codigosSuplementares }); }
+  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v, codigosSuplementares }); }
+  function atualizarCodigoSuplementar(itemId, valor) {
+    const next = { ...codigosSuplementares, [itemId]: valor };
+    setCodigosSuplementares(next);
+    salvar({ itens, pca, objeto, orgao, codigosSuplementares: next });
+  }
 
   async function handleImportItens(e) {
     const file = e.target.files?.[0];
@@ -2123,14 +2122,18 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
     e.target.value = "";
   }
 
-  const matches = itens.map(it => ({ item: it, pcaRow: pca ? pcaMatchFor(it, pca.linhas) : null }));
-  const encontrados = matches.filter(m => m.pcaRow).length;
-  const itensFaltantes = matches.filter(m => !m.pcaRow).map(m => m.item);
+  const matches = itens.map(it => {
+    const pcaRow = pca ? pcaMatchFor(it, pca.linhas) : null;
+    const suplementar = !pcaRow ? (codigosSuplementares[it.id] || "").trim() : "";
+    return { item: it, pcaRow, suplementar: suplementar || null };
+  });
+  const encontrados = matches.filter(m => m.pcaRow || m.suplementar).length;
+  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.suplementar).map(m => m.item);
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.pcaRow).map(({ item, pcaRow }, idx) =>
-      `<tr><td>${idx + 1}</td><td>${escapeHtml(item.idProduto || "-")}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(pcaRow.sequencial || "-")}</td></tr>`
+    const linhasTabela = matches.filter(m => m.pcaRow || m.suplementar).map(({ item, pcaRow, suplementar }, idx) =>
+      `<tr><td>${idx + 1}</td><td>${escapeHtml(item.idProduto || "-")}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(pcaRow ? (pcaRow.sequencial || "-") : `${suplementar} (código suplementar)`)}</td></tr>`
     ).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela });
   }
@@ -2222,8 +2225,8 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {matches.map(({ item, pcaRow }, idx) => (
-                          <tr key={item.id} className="border-t" style={{ borderColor: C.border }}>
+                        {matches.map(({ item, pcaRow, suplementar }, idx) => (
+                          <tr key={item.id} className="border-t align-top" style={{ borderColor: C.border }}>
                             <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
                             <td className="px-3 py-2">{item.descricao || `Item ${idx + 1}`}</td>
                             <td className="px-2 py-2">
@@ -2231,13 +2234,25 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
                                   <Check size={11} /> Sim
                                 </span>
+                              ) : suplementar ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,131,46,0.15)", color: C.brass }}>
+                                  <Check size={11} /> Sim (suplementar)
+                                </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
                                   <AlertCircle size={11} /> Não
                                 </span>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.sequencial || "—"}</td>
+                            <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>
+                              {pcaRow ? (
+                                pcaRow.sequencial || "—"
+                              ) : (
+                                <input value={codigosSuplementares[item.id] || ""} onChange={e => atualizarCodigoSuplementar(item.id, e.target.value)}
+                                  placeholder="Código/justificativa"
+                                  className="w-full px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -2246,7 +2261,7 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 
                   <div className="mt-3 p-3 rounded-lg flex items-center gap-2 text-xs flex-wrap" style={{ background: totalmenteAlinhado ? "rgba(76,124,89,0.1)" : "rgba(166,131,46,0.1)", color: C.ink }}>
                     {totalmenteAlinhado ? <Check size={14} style={{ color: C.green }} /> : <Info size={14} style={{ color: C.brass }} />}
-                    <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA.</span>
+                    <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA (incluindo códigos suplementares).</span>
                   </div>
 
                   {itensFaltantes.length > 0 && (
@@ -2256,21 +2271,20 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                       <ListX size={13} /> Ver itens sem previsão no PCA ({itensFaltantes.length})
                     </button>
                   )}
-
-                  {totalmenteAlinhado && (
-                    <div className="mt-4 p-4 rounded-lg flex items-center justify-between gap-3 flex-wrap" style={{ background: "rgba(76,124,89,0.08)", border: `1px solid rgba(76,124,89,0.3)` }}>
-                      <span className="text-sm" style={{ color: C.ink }}>
-                        <b>Todos os itens estão alinhados ao PCA.</b> Já dá pra elaborar a justificativa de aquisição.
-                      </span>
-                      <button onClick={irParaJustificativa}
-                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
-                        style={{ background: C.green, color: "white" }}>
-                        Elaborar Justificativa de Aquisição →
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
+
+              <div className="mt-5 p-4 rounded-lg flex items-center justify-between gap-3 flex-wrap" style={{ background: "rgba(28,46,74,0.06)", border: `1px solid ${C.border}` }}>
+                <span className="text-sm" style={{ color: C.ink }}>
+                  Já pode elaborar a <b>Justificativa de Aquisição</b> — mesmo que nem todos os itens estejam no
+                  PCA, ela pode ser feita à parte (ex.: previsão feita de outra forma).
+                </span>
+                <button onClick={irParaJustificativa}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
+                  style={{ background: C.navy, color: C.paper }}>
+                  Elaborar Justificativa de Aquisição →
+                </button>
+              </div>
 
               <div className="p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
                 <span className="text-sm font-semibold block mb-3" style={{ color: C.navy }}>3. Documento de demonstração no PCA</span>
@@ -2362,8 +2376,8 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
 function JustificativaView({ dadosIniciais, onBack }) {
   const [campos, setCampos] = useState({
-    objeto: "", empresa: "", cnpj: "", unidadeBeneficiada: "",
-    pregao: "", processo: "", orgao: "Secretaria Municipal de Assistência Social",
+    objeto: "", unidadeBeneficiada: "",
+    processo: "", orgao: "Secretaria Municipal de Assistência Social",
     programas: "", localEntrega: "", horarioEntrega: "", prazoPagamentoDias: "",
   });
   const [conteudo, setConteudo] = useState("");
@@ -2447,17 +2461,11 @@ function JustificativaView({ dadosIniciais, onBack }) {
         <>
           <div className="p-4 rounded-lg border mb-5" style={{ borderColor: C.border, background: "white" }}>
             <span className="text-xs font-semibold uppercase tracking-wide block mb-3" style={{ color: C.inkMuted }}>
-              Dados da aquisição ({camposPreenchidos}/11 preenchidos)
+              Dados da aquisição ({camposPreenchidos}/8 preenchidos)
             </span>
             <div className="grid sm:grid-cols-2 gap-x-4">
               <Field label="Objeto (o que está sendo adquirido)" value={campos.objeto} onChange={v => atualizarCampo("objeto", v)}
                 placeholder="Ex.: Material de Consumo (Gás engarrafado P45kg)" />
-              <Field label="Empresa fornecedora" value={campos.empresa} onChange={v => atualizarCampo("empresa", v)}
-                placeholder="Ex.: CHEIK ROSSLAM CHEBLI" />
-              <Field label="CNPJ da empresa" value={campos.cnpj} onChange={v => atualizarCampo("cnpj", v)}
-                placeholder="00.000.000/0000-00" />
-              <Field label="Nº do Pregão Eletrônico" value={campos.pregao} onChange={v => atualizarCampo("pregao", v)}
-                placeholder="Ex.: 90010/2026" />
               <Field label="Nº do Processo" value={campos.processo} onChange={v => atualizarCampo("processo", v)}
                 placeholder="Ex.: 136187/2025" />
               <Field label="Órgão / Secretaria" value={campos.orgao} onChange={v => atualizarCampo("orgao", v)} />
@@ -2479,6 +2487,10 @@ function JustificativaView({ dadosIniciais, onBack }) {
                 className="mt-1.5 w-full px-3 py-2 rounded-lg border text-sm leading-relaxed resize-y"
                 style={{ borderColor: C.border, background: "white" }} />
             </label>
+            <p className="text-[10px] mt-2" style={{ color: C.inkMuted }}>
+              Esta justificativa é anterior à aquisição — por isso não pede empresa, CNPJ nem nº de pregão, que
+              ainda não existem nesta etapa.
+            </p>
           </div>
 
           <div className="flex items-center gap-2 mb-3">
