@@ -316,6 +316,29 @@ function fmtDate(ts) {
   return new Date(ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Data relativa curta ("hoje", "há 3 dias") para o painel — cai para a data cheia quando é antigo
+function fmtDateRelativa(ts) {
+  const dias = Math.floor((Date.now() - ts) / 86400000);
+  if (dias <= 0) return "hoje";
+  if (dias === 1) return "ontem";
+  if (dias < 30) return `há ${dias} dias`;
+  return fmtDate(ts);
+}
+
+// Valor total estimado de um ETP — usa a média/mediana das cotações (mesma lógica do quadro
+// comprobatório do inciso VI); se não houver cotações, cai no valor adotado manualmente.
+function valorTotalEtp(etp) {
+  const itens = etp.itens || [];
+  const cotacoes = etp.cotacoes || {};
+  const valoresAdotados = etp.valoresAdotados || {};
+  const usaMedia = etp.meta?.metodologiaCalculo === "media";
+  return itens.reduce((soma, it) => {
+    const stats = statsFor(cotacoes[it.id] || []);
+    const unitario = stats.n > 0 ? (usaMedia ? stats.media : stats.mediana) : num(valoresAdotados[it.id]);
+    return soma + num(it.quantidade) * unitario;
+  }, 0);
+}
+
 // Data de hoje no formato ISO (yyyy-mm-dd), para preencher <input type="date">
 function todayISO() {
   const d = new Date();
@@ -1739,10 +1762,11 @@ export default function App() {
 
       {view === "list" && (
         <ListView
-          etps={filteredEtps} loading={loading} search={search} setSearch={setSearch}
+          etps={filteredEtps} todosEtps={etps} loading={loading} search={search} setSearch={setSearch}
           onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp}
           onPcaAvulso={() => setShowPcaAvulso(true)}
           onSettings={() => setView("settings")}
+          onJustificativa={(dadosIniciais) => { setJustificativaInicial(dadosIniciais); setView("justificativa"); }}
         />
       )}
 
@@ -1847,7 +1871,7 @@ function SettingsView({ onBack }) {
 }
 
 // ---------- List View ----------
-function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, onPcaAvulso, onSettings }) {
+function ListView({ etps, todosEtps, loading, search, setSearch, onOpen, onNew, onDelete, onPcaAvulso, onJustificativa, onSettings }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleDeleteClick(id, e) {
@@ -1860,9 +1884,41 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
     }
   }
 
+  // Indicadores calculados sobre TODOS os ETPs (não sobre o resultado da busca), para que os
+  // números do painel não mudem enquanto o servidor digita no campo de busca.
+  const base = todosEtps || etps;
+  const completos = base.filter(e => progress(e).reqFilled === progress(e).reqTotal);
+  const emRascunho = base.length - completos.length;
+  const valorTotalCompletos = completos.reduce((s, e) => s + valorTotalEtp(e), 0);
+
+  const recentes = [...base].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
+
+  // Pendências — cada linha aponta para algo concreto que falta em um ETP específico
+  const pendencias = [];
+  base.forEach(e => {
+    const p = progress(e);
+    const titulo = e.meta.titulo || "ETP sem título";
+    if (p.reqFilled < p.reqTotal) {
+      pendencias.push({ etp: e, texto: `${titulo} — ${p.reqTotal - p.reqFilled} inciso(s) obrigatório(s) em branco` });
+    }
+    if (listaResponsaveis(e).length === 0) {
+      pendencias.push({ etp: e, texto: `${titulo} — sem responsável técnico cadastrado` });
+    }
+    if ((e.itens || []).length > 0 && valorTotalEtp(e) === 0) {
+      pendencias.push({ etp: e, texto: `${titulo} — sem valor estimado (cotações não lançadas)` });
+    }
+  });
+
+  const indicadores = [
+    { rotulo: "ETPs no total", valor: String(base.length) },
+    { rotulo: "Em rascunho", valor: String(emRascunho) },
+    { rotulo: "Completos", valor: String(completos.length) },
+    { rotulo: "Valor estimado (completos)", valor: brl(valorTotalCompletos), pequeno: true },
+  ];
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+      <div className="flex items-start justify-between gap-4 mb-7">
         <div>
           <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
             <ClipboardList size={18} />
@@ -1871,25 +1927,118 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
           <h1 className="serif text-3xl font-semibold" style={{ color: C.navy }}>Gerador de ETP</h1>
           <p className="text-sm mt-1" style={{ color: C.inkMuted }}>Estudos Técnicos Preliminares — organizados, completos e salvos automaticamente.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={onPcaAvulso}
-            className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border"
-            style={{ borderColor: C.border, color: C.navy, background: "white" }}
-            title="Verificar itens no PCA e gerar documento comprobatório, sem precisar abrir um ETP">
-            <ListChecks size={16} /> Verificar PCA
-          </button>
-          <button onClick={onSettings}
-            className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border"
-            style={{ borderColor: C.border, color: C.navy, background: "white" }} title="Configurações">
-            <Settings size={16} />
-          </button>
-          <button onClick={onNew}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm shadow-sm"
-            style={{ background: C.navy, color: C.paper }}>
-            <Plus size={16} /> Novo ETP
-          </button>
-        </div>
+        <button onClick={onSettings}
+          className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border shrink-0"
+          style={{ borderColor: C.border, color: C.navy, background: "white" }} title="Configurações">
+          <Settings size={16} />
+        </button>
       </div>
+
+      {!loading && base.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {indicadores.map(ind => (
+            <div key={ind.rotulo} className="p-4 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
+              <span className="text-[10px] font-semibold uppercase tracking-wide block mb-1" style={{ color: C.brass }}>
+                {ind.rotulo}
+              </span>
+              <span className={`serif font-semibold ${ind.pequeno ? "text-lg" : "text-2xl"}`} style={{ color: C.navy }}>
+                {ind.valor}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid sm:grid-cols-3 gap-3 mb-6">
+        <button onClick={onNew}
+          className="flex items-center gap-3 p-4 rounded-xl text-left shadow-sm"
+          style={{ background: C.navy, color: C.paper }}>
+          <Plus size={20} className="shrink-0" />
+          <span>
+            <span className="block text-sm font-semibold">Novo ETP</span>
+            <span className="block text-xs opacity-75">Iniciar um estudo do zero</span>
+          </span>
+        </button>
+        <button onClick={onPcaAvulso}
+          className="flex items-center gap-3 p-4 rounded-xl text-left border"
+          style={{ borderColor: C.border, background: "white", color: C.navy }}>
+          <ListChecks size={20} className="shrink-0" style={{ color: C.brass }} />
+          <span>
+            <span className="block text-sm font-semibold">Verificar PCA</span>
+            <span className="block text-xs" style={{ color: C.inkMuted }}>Conferir itens e gerar documento</span>
+          </span>
+        </button>
+        <button onClick={() => onJustificativa(null)}
+          className="flex items-center gap-3 p-4 rounded-xl text-left border"
+          style={{ borderColor: C.border, background: "white", color: C.navy }}>
+          <FileEdit size={20} className="shrink-0" style={{ color: C.brass }} />
+          <span>
+            <span className="block text-sm font-semibold">Justificativa</span>
+            <span className="block text-xs" style={{ color: C.inkMuted }}>Elaborar justificativa de aquisição</span>
+          </span>
+        </button>
+      </div>
+
+      {!loading && recentes.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+            Continuar de onde parou
+          </h2>
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+            {recentes.map((etp, idx) => {
+              const p = progress(etp);
+              const done = p.reqFilled === p.reqTotal;
+              return (
+                <button key={etp.id} onClick={() => onOpen(etp)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
+                  style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: C.navy }}>
+                      {etp.meta.titulo || "ETP sem título"}
+                    </p>
+                    <p className="text-xs" style={{ color: C.inkMuted }}>
+                      {etp.meta.orgao || "Órgão não informado"} · editado {fmtDateRelativa(etp.updatedAt)}
+                    </p>
+                  </div>
+                  <div className="w-24 shrink-0">
+                    <div className="h-1.5 rounded-full" style={{ background: C.paperDark }}>
+                      <div className="h-1.5 rounded-full" style={{ width: p.pct + "%", background: done ? C.green : C.brass }} />
+                    </div>
+                  </div>
+                  <span className="text-xs shrink-0 w-10 text-right" style={{ color: C.inkMuted }}>{p.filled}/{p.total}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!loading && pendencias.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+            Pendências ({pendencias.length})
+          </h2>
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+            {pendencias.slice(0, 6).map((pend, idx) => (
+              <button key={idx} onClick={() => onOpen(pend.etp)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02]"
+                style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                <AlertCircle size={13} className="shrink-0" style={{ color: C.brass }} />
+                <span className="text-xs flex-1 min-w-0 truncate" style={{ color: C.ink }}>{pend.texto}</span>
+              </button>
+            ))}
+            {pendencias.length > 6 && (
+              <p className="px-4 py-2 text-[11px]" style={{ color: C.inkMuted, borderTop: `1px solid ${C.border}` }}>
+                e mais {pendencias.length - 6} pendência(s).
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+        Todos os ETPs
+      </h2>
 
       <div className="relative mb-6">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
@@ -1904,9 +2053,17 @@ function ListView({ etps, loading, search, setSearch, onOpen, onNew, onDelete, o
       {loading ? (
         <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
       ) : etps.length === 0 ? (
-        <div className="text-center py-20 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+        <div className="text-center py-16 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <FileText size={32} className="mx-auto mb-3" style={{ color: C.border }} />
-          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum ETP criado ainda. Comece um novo estudo acima.</p>
+          <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Nenhum ETP criado ainda</p>
+          <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+            Comece cadastrando os itens da contratação — o restante do estudo se apoia neles.
+          </p>
+          <button onClick={onNew}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm shadow-sm"
+            style={{ background: C.navy, color: C.paper }}>
+            <Plus size={16} /> Criar o primeiro ETP
+          </button>
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
