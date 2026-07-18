@@ -108,6 +108,42 @@ function emptyEtp() {
   };
 }
 
+// Justificativa de Aquisição — documento próprio, salvo em lista (chave "just:<id>"), como os ETPs
+function emptyJustificativa() {
+  return {
+    id: "just_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    campos: {
+      objeto: "", unidadeBeneficiada: "",
+      processo: "", orgao: "Secretaria Municipal de Assistência Social",
+      programas: "", localEntrega: "", horarioEntrega: "", prazoPagamentoDias: "",
+    },
+    conteudo: "",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+// Declaração de previsão no PCA — documento próprio, salvo em lista (chave "decl:<id>").
+// Guarda só os itens e o preenchimento manual; a planilha do PCA fica compartilhada
+// (chave "pca:planilha"), porque é uma tabela de referência grande e comum a todos.
+function emptyDeclaracao() {
+  return {
+    id: "decl_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    objeto: "",
+    orgao: "Secretaria Municipal de Assistência Social",
+    itens: [],
+    manuais: {}, // { itemId: { codigo, sequencial } }
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+// Título curto para exibir na lista de documentos avulsos
+function tituloDocumento(doc) {
+  const obj = (doc.campos?.objeto ?? doc.objeto ?? "").trim();
+  return obj || "Sem objeto definido";
+}
+
 function newItem() {
   return { id: "it_" + Math.random().toString(36).slice(2, 8), idProduto: "", descricao: "", unidade: "UNIDADE", quantidade: "", classificacao: "" };
 }
@@ -1576,10 +1612,12 @@ const MODELOS_PADRAO = {
 
 // ---------- App ----------
 export default function App() {
-  const [view, setView] = useState("list"); // list | editor | preview | justificativa
-  const [showPcaAvulso, setShowPcaAvulso] = useState(false);
-  const [justificativaInicial, setJustificativaInicial] = useState(null);
+  const [view, setView] = useState("list"); // list | editor | preview | justificativa | declaracao
   const [etps, setEtps] = useState([]);
+  const [justificativas, setJustificativas] = useState([]);
+  const [declaracoes, setDeclaracoes] = useState([]);
+  const [currentJust, setCurrentJust] = useState(null);
+  const [currentDecl, setCurrentDecl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentId, setCurrentId] = useState(null);
   const [current, setCurrent] = useState(null);
@@ -1588,26 +1626,38 @@ export default function App() {
   const [search, setSearch] = useState("");
   const saveTimer = useRef(null);
 
-  const loadList = useCallback(async () => {
-    setLoading(true);
+  // Carrega uma coleção inteira a partir do prefixo da chave (mesmo mecanismo dos ETPs)
+  const carregarColecao = useCallback(async (prefixo) => {
+    const itens = [];
     try {
-      const keys = await storage.list("etp:", false);
-      const items = [];
+      const keys = await storage.list(prefixo, false);
       if (keys?.keys?.length) {
         for (const k of keys.keys) {
           try {
             const r = await storage.get(k, false);
-            if (r?.value) items.push(JSON.parse(r.value));
-          } catch (e) { /* skip missing */ }
+            if (r?.value) itens.push(JSON.parse(r.value));
+          } catch (e) { /* registro ausente, ignora */ }
         }
       }
-      items.sort((a, b) => b.updatedAt - a.updatedAt);
-      setEtps(items);
     } catch (e) {
-      console.error("Erro ao carregar ETPs", e);
+      console.error("Erro ao carregar " + prefixo, e);
     }
-    setLoading(false);
+    itens.sort((a, b) => b.updatedAt - a.updatedAt);
+    return itens;
   }, []);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    const [listaEtps, listaJust, listaDecl] = await Promise.all([
+      carregarColecao("etp:"),
+      carregarColecao("just:"),
+      carregarColecao("decl:"),
+    ]);
+    setEtps(listaEtps);
+    setJustificativas(listaJust);
+    setDeclaracoes(listaDecl);
+    setLoading(false);
+  }, [carregarColecao]);
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -1646,6 +1696,58 @@ export default function App() {
     try {
       await storage.delete("etp:" + id, false);
       setEtps(prev => prev.filter(x => x.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
+  // ----- Justificativas de Aquisição -----
+  function abrirJustificativa(doc) {
+    setCurrentJust(doc);
+    setView("justificativa");
+  }
+  function novaJustificativa(dadosIniciais) {
+    const doc = emptyJustificativa();
+    if (dadosIniciais?.objeto) doc.campos.objeto = dadosIniciais.objeto;
+    if (dadosIniciais?.orgao) doc.campos.orgao = dadosIniciais.orgao;
+    storage.set("just:" + doc.id, JSON.stringify(doc), false).catch(() => {});
+    setJustificativas(prev => [doc, ...prev]);
+    abrirJustificativa(doc);
+  }
+  function salvarJustificativa(doc) {
+    const atualizado = { ...doc, updatedAt: Date.now() };
+    setCurrentJust(atualizado);
+    setJustificativas(prev => prev.map(d => (d.id === atualizado.id ? atualizado : d)));
+    storage.set("just:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+  async function excluirJustificativa(id, e) {
+    e.stopPropagation();
+    try {
+      await storage.delete("just:" + id, false);
+      setJustificativas(prev => prev.filter(x => x.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
+  // ----- Declarações de previsão no PCA -----
+  function abrirDeclaracao(doc) {
+    setCurrentDecl(doc);
+    setView("declaracao");
+  }
+  function novaDeclaracao() {
+    const doc = emptyDeclaracao();
+    storage.set("decl:" + doc.id, JSON.stringify(doc), false).catch(() => {});
+    setDeclaracoes(prev => [doc, ...prev]);
+    abrirDeclaracao(doc);
+  }
+  function salvarDeclaracao(doc) {
+    const atualizado = { ...doc, updatedAt: Date.now() };
+    setCurrentDecl(atualizado);
+    setDeclaracoes(prev => prev.map(d => (d.id === atualizado.id ? atualizado : d)));
+    storage.set("decl:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+  async function excluirDeclaracao(id, e) {
+    e.stopPropagation();
+    try {
+      await storage.delete("decl:" + id, false);
+      setDeclaracoes(prev => prev.filter(x => x.id !== id));
     } catch (err) { console.error(err); }
   }
 
@@ -1762,25 +1864,25 @@ export default function App() {
 
       {view === "list" && (
         <ListView
-          etps={filteredEtps} todosEtps={etps} loading={loading} search={search} setSearch={setSearch}
+          etps={filteredEtps} todosEtps={etps}
+          justificativas={justificativas} declaracoes={declaracoes}
+          loading={loading} search={search} setSearch={setSearch}
           onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp}
-          onPcaAvulso={() => setShowPcaAvulso(true)}
+          onAbrirDeclaracao={abrirDeclaracao} onNovaDeclaracao={novaDeclaracao} onExcluirDeclaracao={excluirDeclaracao}
+          onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa} onExcluirJustificativa={excluirJustificativa}
           onSettings={() => setView("settings")}
-          onJustificativa={(dadosIniciais) => { setJustificativaInicial(dadosIniciais); setView("justificativa"); }}
         />
       )}
 
       {view === "settings" && <SettingsView onBack={() => setView("list")} />}
 
-      {showPcaAvulso && (
-        <PCAAvulsoView
-          onClose={() => setShowPcaAvulso(false)}
-          onJustificativa={(dadosIniciais) => { setShowPcaAvulso(false); setJustificativaInicial(dadosIniciais); setView("justificativa"); }}
-        />
+      {view === "justificativa" && currentJust && (
+        <JustificativaView doc={currentJust} onSalvar={salvarJustificativa} onBack={() => setView("list")} />
       )}
 
-      {view === "justificativa" && (
-        <JustificativaView dadosIniciais={justificativaInicial} onBack={() => setView("list")} />
+      {view === "declaracao" && currentDecl && (
+        <DeclaracaoView doc={currentDecl} onSalvar={salvarDeclaracao} onBack={() => setView("list")}
+          onGerarJustificativa={(dados) => novaJustificativa(dados)} />
       )}
 
       {view === "editor" && current && (
@@ -1870,8 +1972,80 @@ function SettingsView({ onBack }) {
   );
 }
 
+// ---------- Lista de documentos avulsos (declarações e justificativas) ----------
+// Mesmo comportamento das duas listas: abrir, excluir com confirmação e criar novo.
+function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onNovo, icone: Icone, vazio }) {
+  const [confirmId, setConfirmId] = useState(null);
+
+  function handleExcluir(id, e) {
+    e.stopPropagation();
+    if (confirmId === id) {
+      onExcluir(id, e);
+      setConfirmId(null);
+    } else {
+      setConfirmId(id);
+    }
+  }
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+          {titulo} {docs.length > 0 && `(${docs.length})`}
+        </h2>
+        <button onClick={onNovo} className="text-xs font-medium flex items-center gap-1" style={{ color: C.brass }}>
+          <Plus size={12} /> Novo
+        </button>
+      </div>
+
+      {docs.length === 0 ? (
+        <div className="rounded-xl border border-dashed px-4 py-5 text-center" style={{ borderColor: C.border }}>
+          <p className="text-xs" style={{ color: C.inkMuted }}>{vazio}</p>
+        </div>
+      ) : (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+          {docs.map((doc, idx) => {
+            const confirmando = confirmId === doc.id;
+            return (
+              <div key={doc.id} onClick={() => (confirmando ? null : onAbrir(doc))}
+                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-black/[0.02] group"
+                style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                <Icone size={15} className="shrink-0" style={{ color: C.brass }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: C.navy }}>{tituloDocumento(doc)}</p>
+                  <p className="text-xs" style={{ color: C.inkMuted }}>
+                    editado {fmtDateRelativa(doc.updatedAt)}
+                  </p>
+                </div>
+                {confirmando ? (
+                  <div onClick={e => e.stopPropagation()} className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[10px]" style={{ color: C.red }}>Excluir?</span>
+                    <button onClick={e => handleExcluir(doc.id, e)}
+                      className="px-2 py-1 rounded text-[10px] font-semibold" style={{ background: C.red, color: "white" }}>Sim</button>
+                    <button onClick={e => { e.stopPropagation(); setConfirmId(null); }}
+                      className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
+                  </div>
+                ) : (
+                  <button onClick={e => handleExcluir(doc.id, e)}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                    style={{ color: C.red }} title="Excluir">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- List View ----------
-function ListView({ etps, todosEtps, loading, search, setSearch, onOpen, onNew, onDelete, onPcaAvulso, onJustificativa, onSettings }) {
+function ListView({ etps, todosEtps, justificativas, declaracoes, loading, search, setSearch,
+  onOpen, onNew, onDelete,
+  onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao,
+  onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onSettings }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleDeleteClick(id, e) {
@@ -1959,22 +2133,22 @@ function ListView({ etps, todosEtps, loading, search, setSearch, onOpen, onNew, 
             <span className="block text-xs opacity-75">Iniciar um estudo do zero</span>
           </span>
         </button>
-        <button onClick={onPcaAvulso}
+        <button onClick={onNovaDeclaracao}
           className="flex items-center gap-3 p-4 rounded-xl text-left border"
           style={{ borderColor: C.border, background: "white", color: C.navy }}>
           <ListChecks size={20} className="shrink-0" style={{ color: C.brass }} />
           <span>
-            <span className="block text-sm font-semibold">Verificar PCA</span>
+            <span className="block text-sm font-semibold">Nova Declaração de PCA</span>
             <span className="block text-xs" style={{ color: C.inkMuted }}>Conferir itens e gerar documento</span>
           </span>
         </button>
-        <button onClick={() => onJustificativa(null)}
+        <button onClick={() => onNovaJustificativa(null)}
           className="flex items-center gap-3 p-4 rounded-xl text-left border"
           style={{ borderColor: C.border, background: "white", color: C.navy }}>
           <FileEdit size={20} className="shrink-0" style={{ color: C.brass }} />
           <span>
-            <span className="block text-sm font-semibold">Justificativa</span>
-            <span className="block text-xs" style={{ color: C.inkMuted }}>Elaborar justificativa de aquisição</span>
+            <span className="block text-sm font-semibold">Nova Justificativa</span>
+            <span className="block text-xs" style={{ color: C.inkMuted }}>Justificativa de aquisição</span>
           </span>
         </button>
       </div>
@@ -2035,6 +2209,26 @@ function ListView({ etps, todosEtps, loading, search, setSearch, onOpen, onNew, 
           </div>
         </div>
       )}
+
+      <ListaDocumentos
+        titulo="Declarações de previsão no PCA"
+        docs={declaracoes}
+        onAbrir={onAbrirDeclaracao}
+        onExcluir={onExcluirDeclaracao}
+        onNovo={onNovaDeclaracao}
+        icone={ListChecks}
+        vazio="Nenhuma declaração criada ainda."
+      />
+
+      <ListaDocumentos
+        titulo="Justificativas de aquisição"
+        docs={justificativas}
+        onAbrir={onAbrirJustificativa}
+        onExcluir={onExcluirJustificativa}
+        onNovo={() => onNovaJustificativa(null)}
+        icone={FileEdit}
+        vazio="Nenhuma justificativa criada ainda."
+      />
 
       <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
         Todos os ETPs
@@ -2191,12 +2385,15 @@ function PromptIAView({ etp }) {
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
-function PCAAvulsoView({ onClose, onJustificativa }) {
-  const [itens, setItens] = useState([]);
+function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
+  const itens = doc.itens || [];
+  const objeto = doc.objeto || "";
+  const orgao = doc.orgao || "";
+  const manuais = doc.manuais || {};
+
+  // A planilha do PCA é uma tabela de referência compartilhada entre todas as declarações —
+  // fica numa chave própria para não duplicar milhares de linhas em cada documento.
   const [pca, setPca] = useState(null);
-  const [objeto, setObjeto] = useState("");
-  const [orgao, setOrgao] = useState("Secretaria Municipal de Assistência Social");
-  const [manuais, setManuais] = useState({}); // { itemId: { codigo: "", sequencial: "" } }
   const [timbre, setTimbre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
@@ -2210,39 +2407,24 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 
   useEffect(() => {
     Promise.all([
-      storage.get("avulso:pca", false).catch(() => null),
+      storage.get("pca:planilha", false).catch(() => null),
       storage.get("timbre:padrao", false).catch(() => null),
-    ]).then(([dadosRes, timbreRes]) => {
-      if (dadosRes?.value) {
-        const dados = JSON.parse(dadosRes.value);
-        setItens(dados.itens || []);
-        setPca(dados.pca || null);
-        setObjeto(dados.objeto || "");
-        setOrgao(dados.orgao || "Secretaria Municipal de Assistência Social");
-        // Compatibilidade com o formato antigo (texto único) — migra para {codigo, sequencial}
-        const brutos = dados.manuais || dados.codigosSuplementares || {};
-        const migrados = {};
-        Object.entries(brutos).forEach(([id, v]) => {
-          migrados[id] = typeof v === "string" ? { codigo: "", sequencial: v } : { codigo: v.codigo || "", sequencial: v.sequencial || "" };
-        });
-        setManuais(migrados);
-      }
+    ]).then(([pcaRes, timbreRes]) => {
+      if (pcaRes?.value) setPca(JSON.parse(pcaRes.value));
       setTimbre(timbreRes?.value || TIMBRE_PADRAO);
     }).finally(() => setLoading(false));
   }, []);
 
-  function salvar(next) {
-    storage.set("avulso:pca", JSON.stringify(next), false).catch(() => {});
+  function atualizarItens(v) { onSalvar({ ...doc, itens: v }); }
+  function atualizarObjeto(v) { onSalvar({ ...doc, objeto: v }); }
+  function atualizarOrgao(v) { onSalvar({ ...doc, orgao: v }); }
+  function atualizarPca(v) {
+    setPca(v);
+    storage.set("pca:planilha", JSON.stringify(v), false).catch(() => {});
   }
-  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao, manuais }); }
-  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao, manuais }); }
-  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao, manuais }); }
-  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v, manuais }); }
   function atualizarManual(itemId, campo, valor) {
     const atual = manuais[itemId] || { codigo: "", sequencial: "" };
-    const next = { ...manuais, [itemId]: { ...atual, [campo]: valor } };
-    setManuais(next);
-    salvar({ itens, pca, objeto, orgao, manuais: next });
+    onSalvar({ ...doc, manuais: { ...manuais, [itemId]: { ...atual, [campo]: valor } } });
   }
 
   async function handleImportItens(e) {
@@ -2307,34 +2489,35 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
   }
 
   function irParaJustificativa() {
-    onJustificativa({ objeto, orgao });
+    onGerarJustificativa({ objeto, orgao });
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
-      onClick={onClose}>
-      <div onClick={e => e.stopPropagation()}
-        className="w-full max-w-4xl max-h-[90vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl z-10" style={{ borderColor: C.border }}>
-          <div>
-            <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
-              <ListChecks size={16} />
-              <span className="text-xs font-semibold tracking-widest uppercase">Ferramenta avulsa</span>
-            </div>
-            <h2 className="serif text-xl font-semibold" style={{ color: C.navy }}>Verificar Itens no PCA</h2>
-          </div>
-          <button onClick={onClose} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
-        </div>
+    <div className="max-w-4xl mx-auto px-6 py-10">
+      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+        <ArrowLeft size={16} /> Voltar
+      </button>
 
-        <div className="p-5">
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+          <ListChecks size={16} />
+          <span className="text-xs font-semibold tracking-widest uppercase">Declaração de previsão no PCA</span>
+        </div>
+        <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
+          {objeto.trim() || "Nova declaração"}
+        </h1>
+      </div>
+
+      <div>
+        <div>
           {loading ? (
             <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
           ) : (
             <>
               <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
-                Confere se uma lista de itens já consta no Plano de Contratações Anual, sem precisar abrir um ETP, e
-                gera um documento pronto para anexar ao processo. Fica salvo neste navegador — pode usar de novo
-                quando quiser, para qualquer finalidade.
+                Confere se uma lista de itens já consta no Plano de Contratações Anual e gera o documento pronto
+                para anexar ao processo. Cada declaração é salva separadamente — você pode ter várias, uma por
+                contratação.
               </p>
 
               <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
@@ -2435,13 +2618,13 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 
               <div className="mt-5 p-4 rounded-lg flex items-center justify-between gap-3 flex-wrap" style={{ background: "rgba(28,46,74,0.06)", border: `1px solid ${C.border}` }}>
                 <span className="text-sm" style={{ color: C.ink }}>
-                  Já pode elaborar a <b>Justificativa de Aquisição</b> — mesmo que nem todos os itens estejam no
-                  PCA, ela pode ser feita à parte (ex.: previsão feita de outra forma).
+                  Criar uma <b>Justificativa de Aquisição</b> a partir desta declaração — ela nasce como documento
+                  próprio, já com o objeto e o órgão preenchidos.
                 </span>
                 <button onClick={irParaJustificativa}
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
                   style={{ background: C.navy, color: C.paper }}>
-                  Elaborar Justificativa de Aquisição →
+                  Criar Justificativa →
                 </button>
               </div>
 
@@ -2562,44 +2745,25 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 }
 
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
-function JustificativaView({ dadosIniciais, onBack }) {
-  const [campos, setCampos] = useState({
-    objeto: "", unidadeBeneficiada: "",
-    processo: "", orgao: "Secretaria Municipal de Assistência Social",
-    programas: "", localEntrega: "", horarioEntrega: "", prazoPagamentoDias: "",
-  });
-  const [conteudo, setConteudo] = useState("");
+function JustificativaView({ doc, onSalvar, onBack }) {
+  const campos = doc.campos;
+  const conteudo = doc.conteudo || "";
   const [timbre, setTimbre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modoPreview, setModoPreview] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      storage.get("avulso:justificativa", false).catch(() => null),
-      storage.get("timbre:padrao", false).catch(() => null),
-    ]).then(([dadosRes, timbreRes]) => {
-      if (dadosRes?.value) {
-        const salvo = JSON.parse(dadosRes.value);
-        setCampos(c => ({ ...c, ...salvo.campos }));
-        setConteudo(salvo.conteudo || "");
-      } else if (dadosIniciais) {
-        setCampos(c => ({ ...c, objeto: dadosIniciais.objeto || "", orgao: dadosIniciais.orgao || c.orgao }));
-      }
-      setTimbre(timbreRes?.value || TIMBRE_PADRAO);
-    }).finally(() => setLoading(false));
+    storage.get("timbre:padrao", false)
+      .then(r => setTimbre(r?.value || TIMBRE_PADRAO))
+      .catch(() => setTimbre(TIMBRE_PADRAO))
+      .finally(() => setLoading(false));
   }, []);
 
-  function salvar(novosCampos, novoConteudo) {
-    storage.set("avulso:justificativa", JSON.stringify({ campos: novosCampos, conteudo: novoConteudo }), false).catch(() => {});
-  }
   function atualizarCampo(campo, valor) {
-    const novos = { ...campos, [campo]: valor };
-    setCampos(novos);
-    salvar(novos, conteudo);
+    onSalvar({ ...doc, campos: { ...campos, [campo]: valor } });
   }
   function atualizarConteudo(html) {
-    setConteudo(html);
-    salvar(campos, html);
+    onSalvar({ ...doc, conteudo: html });
   }
 
   function gerarPadrao() {
@@ -2622,14 +2786,19 @@ function JustificativaView({ dadosIniciais, onBack }) {
         <ArrowLeft size={16} /> Voltar
       </button>
 
-      <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
-        <FileEdit size={18} />
-        <span className="text-xs font-semibold tracking-widest uppercase">Ferramenta avulsa</span>
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+          <FileEdit size={16} />
+          <span className="text-xs font-semibold tracking-widest uppercase">Justificativa de aquisição</span>
+        </div>
+        <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
+          {campos.objeto?.trim() || "Nova justificativa"}
+        </h1>
       </div>
-      <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Justificativa de Aquisição</h1>
+
       <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
         Preencha os dados abaixo e gere o texto padrão automaticamente (sem IA), ou escreva a justificativa do seu
-        jeito no editor formatado. Fica salvo neste navegador entre usos.
+        jeito no editor formatado. As alterações são salvas automaticamente.
       </p>
 
       <div className="inline-flex p-1 rounded-lg mb-5" style={{ background: C.paperDark }}>
