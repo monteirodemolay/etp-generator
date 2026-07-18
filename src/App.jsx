@@ -2039,7 +2039,7 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
   const [pca, setPca] = useState(null);
   const [objeto, setObjeto] = useState("");
   const [orgao, setOrgao] = useState("Secretaria Municipal de Assistência Social");
-  const [codigosSuplementares, setCodigosSuplementares] = useState({}); // { itemId: "código/justificativa digitada" }
+  const [manuais, setManuais] = useState({}); // { itemId: { codigo: "", sequencial: "" } }
   const [timbre, setTimbre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
@@ -2062,7 +2062,13 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
         setPca(dados.pca || null);
         setObjeto(dados.objeto || "");
         setOrgao(dados.orgao || "Secretaria Municipal de Assistência Social");
-        setCodigosSuplementares(dados.codigosSuplementares || {});
+        // Compatibilidade com o formato antigo (texto único) — migra para {codigo, sequencial}
+        const brutos = dados.manuais || dados.codigosSuplementares || {};
+        const migrados = {};
+        Object.entries(brutos).forEach(([id, v]) => {
+          migrados[id] = typeof v === "string" ? { codigo: "", sequencial: v } : { codigo: v.codigo || "", sequencial: v.sequencial || "" };
+        });
+        setManuais(migrados);
       }
       setTimbre(timbreRes?.value || TIMBRE_PADRAO);
     }).finally(() => setLoading(false));
@@ -2071,14 +2077,15 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
   function salvar(next) {
     storage.set("avulso:pca", JSON.stringify(next), false).catch(() => {});
   }
-  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao, codigosSuplementares }); }
-  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao, codigosSuplementares }); }
-  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao, codigosSuplementares }); }
-  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v, codigosSuplementares }); }
-  function atualizarCodigoSuplementar(itemId, valor) {
-    const next = { ...codigosSuplementares, [itemId]: valor };
-    setCodigosSuplementares(next);
-    salvar({ itens, pca, objeto, orgao, codigosSuplementares: next });
+  function atualizarItens(v) { setItens(v); salvar({ itens: v, pca, objeto, orgao, manuais }); }
+  function atualizarPca(v) { setPca(v); salvar({ itens, pca: v, objeto, orgao, manuais }); }
+  function atualizarObjeto(v) { setObjeto(v); salvar({ itens, pca, objeto: v, orgao, manuais }); }
+  function atualizarOrgao(v) { setOrgao(v); salvar({ itens, pca, objeto, orgao: v, manuais }); }
+  function atualizarManual(itemId, campo, valor) {
+    const atual = manuais[itemId] || { codigo: "", sequencial: "" };
+    const next = { ...manuais, [itemId]: { ...atual, [campo]: valor } };
+    setManuais(next);
+    salvar({ itens, pca, objeto, orgao, manuais: next });
   }
 
   async function handleImportItens(e) {
@@ -2124,18 +2131,21 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 
   const matches = itens.map(it => {
     const pcaRow = pca ? pcaMatchFor(it, pca.linhas) : null;
-    const suplementar = !pcaRow ? (codigosSuplementares[it.id] || "").trim() : "";
-    return { item: it, pcaRow, suplementar: suplementar || null };
+    const manual = !pcaRow ? (manuais[it.id] || null) : null;
+    const manualSequencial = manual?.sequencial?.trim() || null;
+    return { item: it, pcaRow, manual, manualSequencial };
   });
-  const encontrados = matches.filter(m => m.pcaRow || m.suplementar).length;
-  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática (com ou sem código suplementar já preenchido)
-  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.suplementar).map(m => m.item); // realmente sem nenhuma previsão
+  const encontrados = matches.filter(m => m.pcaRow || m.manualSequencial).length;
+  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática (com ou sem preenchimento manual já feito)
+  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.manualSequencial).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.pcaRow || m.suplementar).map(({ item, pcaRow, suplementar }, idx) =>
-      `<tr><td>${idx + 1}</td><td>${escapeHtml(item.idProduto || "-")}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(pcaRow ? (pcaRow.sequencial || "-") : `${suplementar} (código suplementar)`)}</td></tr>`
-    ).join("");
+    const linhasTabela = matches.filter(m => m.pcaRow || m.manualSequencial).map(({ item, pcaRow, manual, manualSequencial }, idx) => {
+      const codigoExibido = pcaRow ? (item.idProduto || "-") : (manual?.codigo?.trim() || item.idProduto || "-");
+      const sequencialExibido = pcaRow ? (pcaRow.sequencial || "-") : manualSequencial;
+      return `<tr><td>${idx + 1}</td><td>${escapeHtml(codigoExibido)}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(sequencialExibido)}</td></tr>`;
+    }).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela });
   }
 
@@ -2226,18 +2236,14 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {matches.map(({ item, pcaRow, suplementar }, idx) => (
+                        {matches.map(({ item, pcaRow, manualSequencial }, idx) => (
                           <tr key={item.id} className="border-t align-top" style={{ borderColor: C.border }}>
                             <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
                             <td className="px-3 py-2">{item.descricao || `Item ${idx + 1}`}</td>
                             <td className="px-2 py-2">
-                              {pcaRow ? (
+                              {(pcaRow || manualSequencial) ? (
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
                                   <Check size={11} /> Sim
-                                </span>
-                              ) : suplementar ? (
-                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,131,46,0.15)", color: C.brass }}>
-                                  <Check size={11} /> Sim (suplementar)
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
@@ -2245,8 +2251,8 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
                                 </span>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs" style={{ color: pcaRow || suplementar ? C.ink : C.inkMuted }}>
-                              {pcaRow ? (pcaRow.sequencial || "—") : suplementar ? `${suplementar} (suplementar)` : "—"}
+                            <td className="px-2 py-2 text-xs" style={{ color: pcaRow || manualSequencial ? C.ink : C.inkMuted }}>
+                              {pcaRow ? (pcaRow.sequencial || "—") : (manualSequencial || "—")}
                             </td>
                           </tr>
                         ))}
@@ -2256,7 +2262,7 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
 
                   <div className="mt-3 p-3 rounded-lg flex items-center gap-2 text-xs flex-wrap" style={{ background: totalmenteAlinhado ? "rgba(76,124,89,0.1)" : "rgba(166,131,46,0.1)", color: C.ink }}>
                     {totalmenteAlinhado ? <Check size={14} style={{ color: C.green }} /> : <Info size={14} style={{ color: C.brass }} />}
-                    <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA (incluindo códigos suplementares).</span>
+                    <span><b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA (inclui os que você completou manualmente).</span>
                   </div>
 
                   {semPcaMatch.length > 0 && (
@@ -2312,62 +2318,85 @@ function PCAAvulsoView({ onClose, onJustificativa }) {
       </div>
 
       {showFaltantes && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
           onClick={e => { e.stopPropagation(); setShowFaltantes(false); }}>
           <div onClick={e => e.stopPropagation()}
-            className="w-full max-w-2xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between mb-1">
-              <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
-              <button onClick={() => setShowFaltantes(false)} style={{ color: C.inkMuted }}><X size={18} /></button>
-            </div>
-            <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-              Estes {semPcaMatch.length} item(ns) não foram localizados automaticamente na planilha do PCA importada.
-              Se algum já estiver previsto de outra forma (outro código, outro processo), digite um código
-              suplementar abaixo — ele passa a contar como previsto. Os demais, baixe a planilha para formalizar o
-              requerimento de inclusão no Sistema Centi.
-            </p>
-            {itensFaltantes.some(it => !it.idProduto) && (
-              <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
-                <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} />
-                <span>
-                  Algum(ns) item(ns) está(ão) sem código/ID (provavelmente adicionado manualmente, e não pela
-                  importação do Sistema Centi). A planilha sairá com essa célula em branco.
-                </span>
+            className="w-full max-w-2xl max-h-[88vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl z-10" style={{ borderColor: C.border }}>
+              <div>
+                <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
+                <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>
+                  {itensFaltantes.length} de {semPcaMatch.length} ainda pendente(s)
+                </p>
               </div>
-            )}
-            <div className="rounded-lg border overflow-hidden mb-4" style={{ borderColor: C.border }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: C.paperDark }}>
-                    <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
-                    <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
-                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Código/ID</th>
-                    <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-40" style={{ color: C.inkMuted }}>Código suplementar</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {semPcaMatch.map((it, idx) => (
-                    <tr key={it.id} className="border-t align-top" style={{ borderColor: C.border }}>
-                      <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
-                      <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
-                      <td className="px-2 py-2 text-xs" style={{ color: it.idProduto ? C.ink : C.red }}>{it.idProduto || "sem código"}</td>
-                      <td className="px-2 py-2">
-                        <input value={codigosSuplementares[it.id] || ""} onChange={e => atualizarCodigoSuplementar(it.id, e.target.value)}
-                          placeholder="Ex.: previsto no PCA sob outro código"
-                          className="w-full px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <button onClick={() => setShowFaltantes(false)} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
             </div>
-            {itensFaltantes.length > 0 && (
-              <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
-                style={{ background: C.navy, color: C.paper }}>
-                <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} sem código)
-              </button>
-            )}
+
+            <div className="p-5">
+              <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+                Estes itens não foram localizados automaticamente na planilha do PCA importada. Se algum já estiver
+                previsto de outra forma, preencha o <b>Código</b> e o <b>Sequencial do PCA</b> correspondentes —
+                assim que o Sequencial for preenchido, o item passa a contar como previsto. Os que ficarem sem
+                preenchimento podem ser baixados numa planilha para inclusão no Sistema Centi.
+              </p>
+              {itensFaltantes.some(it => !it.idProduto) && (
+                <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                  <span>
+                    Algum(ns) item(ns) está(ão) sem código/ID original (provavelmente adicionado manualmente, e não
+                    pela importação do Sistema Centi).
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-3 mb-5">
+                {semPcaMatch.map((it, idx) => {
+                  const dados = manuais[it.id] || { codigo: "", sequencial: "" };
+                  const resolvido = dados.sequencial?.trim();
+                  return (
+                    <div key={it.id} className="p-4 rounded-lg border-2" style={{ borderColor: resolvido ? "rgba(76,124,89,0.4)" : C.border, background: resolvido ? "rgba(76,124,89,0.04)" : "white" }}>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <span className="text-xs font-semibold" style={{ color: C.inkMuted }}>Item {itens.indexOf(it) + 1}</span>
+                          <p className="text-sm font-medium" style={{ color: C.navy }}>{it.descricao || `Item ${idx + 1}`}</p>
+                        </div>
+                        {resolvido ? (
+                          <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ background: "rgba(76,124,89,0.15)", color: C.green }}>
+                            <Check size={12} /> Previsto
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+                            <AlertCircle size={12} /> Pendente
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <label className="block">
+                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Código</span>
+                          <input value={dados.codigo} onChange={e => atualizarManual(it.id, "codigo", e.target.value)}
+                            placeholder={it.idProduto || "Ex.: 5241938182"}
+                            className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Sequencial do PCA</span>
+                          <input value={dados.sequencial} onChange={e => atualizarManual(it.id, "sequencial", e.target.value)}
+                            placeholder="Ex.: 10808"
+                            className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {itensFaltantes.length > 0 && (
+                <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: C.navy, color: C.paper }}>
+                  <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} pendente(s))
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
