@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX, ListChecks } from "lucide-react";
-import { Settings, Key } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, Settings } from "lucide-react";
+import { Key } from "lucide-react";
 import storage from "./storage";
 import { callClaude, getApiKey, setApiKey } from "./lib/anthropic";
 
@@ -108,6 +108,99 @@ function emptyEtp() {
   };
 }
 
+// Secretaria — unidade organizacional que agrupa os documentos (chave "sec:<id>").
+// Cada uma pode ter timbre próprio; sem timbre, cai no timbre geral do app.
+function emptySecretaria(nome, sigla) {
+  return {
+    id: "sec_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    nome: nome || "",
+    sigla: sigla || "",
+    timbre: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+// Secretaria a que um documento pertence. Documentos criados antes do cadastro de secretarias
+// não têm o campo — nesse caso pertencem à primeira secretaria (a padrão), sem precisar
+// reescrever nada no armazenamento.
+function secretariaDoDoc(doc, secretarias) {
+  if (!secretarias?.length) return null;
+  return secretarias.find(s => s.id === doc.secretariaId) || secretarias[0];
+}
+
+// Timbre a usar num documento: o da secretaria dele, se tiver um próprio;
+// senão, o timbre geral do app.
+function resolverTimbre(doc, secretarias, timbreGlobal) {
+  const sec = secretariaDoDoc(doc, secretarias);
+  return sec?.timbre || timbreGlobal || TIMBRE_PADRAO;
+}
+
+// ---------- Cabeçalho dos documentos do Word ----------
+// A4 em pontos (unidade que o Word entende de forma confiável): 210mm x 297mm.
+const PAGINA = { largura: 595.3, altura: 841.9, margemLateral: 72, margemCabecalho: 35.4 };
+const LARGURA_UTIL = PAGINA.largura - PAGINA.margemLateral * 2; // espaço entre as margens
+const ALTURA_MAX_TIMBRE = 80;
+
+// Lê as dimensões naturais da imagem (o timbre é um data URL já carregado na memória)
+function medirImagem(dataUrl) {
+  return new Promise(resolve => {
+    if (!dataUrl) return resolve(null);
+    const img = new Image();
+    img.onload = () => resolve({ largura: img.naturalWidth, altura: img.naturalHeight });
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+// Converte de pixels para pontos e reduz proporcionalmente até caber na largura útil da página
+// e na altura máxima do cabeçalho. Imagens menores que o limite não são ampliadas.
+function dimensionarTimbre(medida) {
+  if (!medida?.largura || !medida?.altura) return null;
+  const larguraPt = medida.largura * 0.75; // 96 dpi -> 72 pontos por polegada
+  const alturaPt = medida.altura * 0.75;
+  const escala = Math.min(LARGURA_UTIL / larguraPt, ALTURA_MAX_TIMBRE / alturaPt, 1);
+  return {
+    largura: Math.round(larguraPt * escala * 10) / 10,
+    altura: Math.round(alturaPt * escala * 10) / 10,
+  };
+}
+
+// Bloco de cabeçalho no formato que o Word reconhece como cabeçalho de seção — precisa estar
+// envolvido em "header-footer-group" e vir DEPOIS do corpo, senão o Word trata como texto
+// comum e a imagem só aparece na primeira página.
+function blocoCabecalhoWord(timbreDataUrl, tamanho) {
+  if (!timbreDataUrl) return "";
+  const dim = tamanho ? `width:${tamanho.largura}pt;height:${tamanho.altura}pt;` : "";
+  return `
+<div style='mso-element:header-footer-group'>
+  <div style='mso-element:header' id="h1">
+    <p class="MsoHeader" align="center" style="text-align:center;margin:0;border:none;border-bottom:solid windowtext 1.0pt;padding:0 0 6.0pt 0;">
+      <img src="${timbreDataUrl}" style="${dim}" />
+    </p>
+  </div>
+</div>`;
+}
+
+// Regras de página compartilhadas pelos documentos. A margem superior acompanha a altura do
+// timbre, para que o texto nunca comece por cima do cabeçalho.
+function cssPaginaWord(tamanhoTimbre) {
+  const margemTopo = tamanhoTimbre
+    ? Math.max(72, PAGINA.margemCabecalho + tamanhoTimbre.altura + 24)
+    : 72;
+  return `
+  @page Section1 {
+    size: ${PAGINA.largura}pt ${PAGINA.altura}pt;
+    margin: ${margemTopo}pt ${PAGINA.margemLateral}pt ${PAGINA.margemLateral}pt ${PAGINA.margemLateral}pt;
+    mso-header-margin: ${PAGINA.margemCabecalho}pt;
+    mso-footer-margin: ${PAGINA.margemCabecalho}pt;
+    mso-paper-source: 0;
+    mso-header: h1;
+  }
+  div.Section1 { page: Section1; }
+  p.MsoHeader { margin: 0; }`;
+}
+
 // Justificativa de Aquisição — documento próprio, salvo em lista (chave "just:<id>"), como os ETPs
 function emptyJustificativa() {
   return {
@@ -142,6 +235,25 @@ function emptyDeclaracao() {
 function tituloDocumento(doc) {
   const obj = (doc.campos?.objeto ?? doc.objeto ?? "").trim();
   return obj || "Sem objeto definido";
+}
+
+// Duplica qualquer documento (ETP, justificativa ou declaração): copia tudo, gera id novo,
+// zera as datas e acrescenta "(cópia)" ao título, para não confundir com o original.
+function duplicarDocumento(doc, prefixoId) {
+  const copia = JSON.parse(JSON.stringify(doc));
+  copia.id = prefixoId + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+  copia.createdAt = Date.now();
+  copia.updatedAt = Date.now();
+
+  // O título fica em lugares diferentes conforme o tipo de documento
+  if (copia.meta?.titulo !== undefined) {
+    copia.meta.titulo = (copia.meta.titulo || "Sem título") + " (cópia)";
+  } else if (copia.campos?.objeto !== undefined) {
+    copia.campos.objeto = (copia.campos.objeto || "Sem objeto") + " (cópia)";
+  } else if (copia.objeto !== undefined) {
+    copia.objeto = (copia.objeto || "Sem objeto") + " (cópia)";
+  }
+  return copia;
 }
 
 function newItem() {
@@ -1018,25 +1130,23 @@ function textoParaHtml(texto) {
 // Gera um documento .doc (HTML compatível com o Word) editável, com o timbre no cabeçalho
 // Documento avulso "Demonstração da Previsão da Contratação no PCA" — usa o cruzamento de itens já
 // feito na ferramenta "Verificar PCA", independente de qualquer ETP específico.
-function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela }) {
+async function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela }) {
+  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>Demonstração da Previsão no PCA</title>
 <style>
-  @page Section1 { size: 8.5in 11.0in; margin: 1.1in 1.0in 1.0in 1.0in; mso-header-margin: 0.4in; mso-header: h1; }
-  div.Section1 { page: Section1; }
+${cssPaginaWord(tamanhoTimbre)}
   body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
   h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
   p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
   table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 10pt 0; }
   td, th { border: 1px solid #000; padding: 5px 7px; text-align: left; }
   th { background: #ececec; font-weight: bold; }
-  .timbre { display: block; margin: 0 auto; max-height: 80px; }
   .assinatura { text-align: center; margin-top: 40pt; font-style: italic; page-break-inside: avoid; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
   <div class="Section1">
   <h1>Demonstração da Previsão da Contratação no Plano de Contratações Anual</h1>
   <p>A presente contratação, que visa à "${escapeHtml(objeto)}", destinados a atender às demandas da ${escapeHtml(orgao)}, encontra-se devidamente alinhada aos objetivos estratégicos da Administração Municipal.</p>
@@ -1049,6 +1159,7 @@ function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela })
   <p>Dessa forma, resta evidenciado que a contratação encontra-se compatível com o planejamento anual das contratações, atendendo ao disposto no artigo 12 da Lei nº 14.133/2021, assegurando a adequada vinculação entre a demanda identificada, o Plano de Contratações Anual e a futura contratação.</p>
   <p class="assinatura">[DATADO E ASSINADO DIGITALMENTE]</p>
   </div>
+${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
 </body>
 </html>`;
 
@@ -1092,29 +1203,28 @@ ${listaProgramas}
 }
 
 // Exporta a Justificativa como .doc, com timbre e assinatura, no mesmo padrão dos demais documentos
-function gerarDocumentoJustificativaWord({ conteudoHtml, timbreDataUrl }) {
+async function gerarDocumentoJustificativaWord({ conteudoHtml, timbreDataUrl }) {
+  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>Justificativa de Aquisição</title>
 <style>
-  @page Section1 { size: 8.5in 11.0in; margin: 1.1in 1.0in 1.0in 1.0in; mso-header-margin: 0.4in; mso-header: h1; }
-  div.Section1 { page: Section1; }
+${cssPaginaWord(tamanhoTimbre)}
   body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
   h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
   p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
   ul { margin: 0 0 10pt 20pt; }
-  .timbre { display: block; margin: 0 auto; max-height: 80px; }
   .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
   <div class="Section1">
   <h1>Justificativa</h1>
   ${conteudoHtml}
   <p class="assinatura">Atenciosamente,</p>
   <p class="assinatura" style="margin-top:60pt;">[DATADO E ASSINADO DIGITALMENTE]</p>
   </div>
+${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
 </body>
 </html>`;
 
@@ -1129,7 +1239,8 @@ function gerarDocumentoJustificativaWord({ conteudoHtml, timbreDataUrl }) {
   URL.revokeObjectURL(url);
 }
 
-function gerarDocumentoWord(etp, timbreDataUrl) {
+async function gerarDocumentoWord(etp, timbreDataUrl) {
+  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
   const itens = etp.itens || [];
   const valoresAdotados = etp.valoresAdotados || {};
   const pca = etp.pca;
@@ -1165,13 +1276,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>ETP</title>
 <style>
-  @page Section1 {
-    size: 8.5in 11.0in;
-    margin: 1.1in 1.0in 1.0in 1.0in;
-    mso-header-margin: 0.4in;
-    mso-header: h1;
-  }
-  div.Section1 { page: Section1; }
+${cssPaginaWord(tamanhoTimbre)}
   body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
   h1 { font-size: 16pt; text-align: center; margin-bottom: 2pt; letter-spacing: 0.3pt; }
   .subtitulo { text-align: center; font-size: 10.5pt; font-style: italic; margin-bottom: 20pt; }
@@ -1188,12 +1293,10 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
   h6 { font-size: 10.5pt; font-weight: bold; text-transform: uppercase; margin: 8pt 0 4pt; }
   blockquote { margin: 8pt 20pt; padding-left: 10pt; border-left: 2pt solid #000; font-style: italic; }
   hr { border: none; border-top: 1pt solid #000; margin: 10pt 0; }
-  .timbre { display: block; margin: 0 auto; max-height: 80px; }
   .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; mso-pagination: widow-orphan; }
 </style>
 </head>
 <body>
-  ${timbreDataUrl ? `<div style="mso-element:header" id="h1"><p class="MsoHeader" align="center" style="text-align:center; margin:0; border-bottom:1px solid #000; padding-bottom:6pt;"><img class="timbre" src="${timbreDataUrl}" align="middle" /></p></div>` : ""}
   <div class="Section1">
   <h1>ESTUDO TÉCNICO PRELIMINAR</h1>
   <p class="subtitulo">Lei nº 14.133/2021 · art. 18</p>
@@ -1214,6 +1317,7 @@ function gerarDocumentoWord(etp, timbreDataUrl) {
       : `<p style="margin-top: 40pt">_______________________________________</p><p><b>[Responsável técnico]</b></p>`}
   </div>
   </div>
+${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
 </body>
 </html>`;
 
@@ -1616,6 +1720,8 @@ export default function App() {
   const [etps, setEtps] = useState([]);
   const [justificativas, setJustificativas] = useState([]);
   const [declaracoes, setDeclaracoes] = useState([]);
+  const [secretarias, setSecretarias] = useState([]);
+  const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
   const [currentDecl, setCurrentDecl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1648,14 +1754,28 @@ export default function App() {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
+      carregarColecao("sec:"),
     ]);
+
+    // Primeiro acesso: cria a secretaria padrão para que todo documento tenha onde se apoiar.
+    // Documentos antigos, sem secretariaId, passam a pertencer a ela automaticamente.
+    let secretariasFinais = listaSec.sort((a, b) => a.createdAt - b.createdAt);
+    if (secretariasFinais.length === 0) {
+      const padrao = emptySecretaria("Secretaria Municipal de Assistência Social", "SEMAS");
+      try {
+        await storage.set("sec:" + padrao.id, JSON.stringify(padrao), false);
+        secretariasFinais = [padrao];
+      } catch (e) { console.error("Erro ao criar secretaria padrão", e); }
+    }
+
     setEtps(listaEtps);
     setJustificativas(listaJust);
     setDeclaracoes(listaDecl);
+    setSecretarias(secretariasFinais);
     setLoading(false);
   }, [carregarColecao]);
 
@@ -1682,12 +1802,25 @@ export default function App() {
     setView("editor");
   }
 
+  // Secretaria que um documento novo deve receber: a que está selecionada no painel,
+  // ou a primeira cadastrada quando o filtro está em "todas".
+  function secretariaParaNovoDoc() {
+    if (secretariaAtiva !== "todas") return secretarias.find(s => s.id === secretariaAtiva) || secretarias[0];
+    return secretarias[0];
+  }
+
   function newEtp() {
     const etp = emptyEtp();
+    const sec = secretariaParaNovoDoc();
+    if (sec) {
+      etp.secretariaId = sec.id;
+      etp.meta.orgao = sec.nome; // evita redigitar o órgão a cada novo documento
+    }
     setCurrent(etp);
     setCurrentId(etp.id);
     setActiveSection("itens");
     setView("editor");
+    setEtps(prev => [etp, ...prev]);
     storage.set("etp:" + etp.id, JSON.stringify(etp), false).catch(() => {});
   }
 
@@ -1699,6 +1832,37 @@ export default function App() {
     } catch (err) { console.error(err); }
   }
 
+  function duplicarEtp(etp, e) {
+    e?.stopPropagation();
+    const copia = duplicarDocumento(etp, "etp");
+    setEtps(prev => [copia, ...prev]);
+    storage.set("etp:" + copia.id, JSON.stringify(copia), false).catch(() => {});
+  }
+
+  // ----- Secretarias -----
+  function salvarSecretaria(sec) {
+    const atualizada = { ...sec, updatedAt: Date.now() };
+    setSecretarias(prev => {
+      const existe = prev.some(s => s.id === atualizada.id);
+      return existe ? prev.map(s => (s.id === atualizada.id ? atualizada : s)) : [...prev, atualizada];
+    });
+    storage.set("sec:" + atualizada.id, JSON.stringify(atualizada), false).catch(() => {});
+  }
+
+  function novaSecretaria() {
+    salvarSecretaria(emptySecretaria("", ""));
+  }
+
+  async function excluirSecretaria(id) {
+    // A última secretaria não pode ser removida — todo documento precisa de uma referência
+    if (secretarias.length <= 1) return;
+    try {
+      await storage.delete("sec:" + id, false);
+      setSecretarias(prev => prev.filter(s => s.id !== id));
+      if (secretariaAtiva === id) setSecretariaAtiva("todas");
+    } catch (err) { console.error(err); }
+  }
+
   // ----- Justificativas de Aquisição -----
   function abrirJustificativa(doc) {
     setCurrentJust(doc);
@@ -1706,11 +1870,24 @@ export default function App() {
   }
   function novaJustificativa(dadosIniciais) {
     const doc = emptyJustificativa();
+    const sec = secretariaParaNovoDoc();
+    if (sec) {
+      doc.secretariaId = sec.id;
+      doc.campos.orgao = sec.nome;
+    }
     if (dadosIniciais?.objeto) doc.campos.objeto = dadosIniciais.objeto;
     if (dadosIniciais?.orgao) doc.campos.orgao = dadosIniciais.orgao;
+    if (dadosIniciais?.secretariaId) doc.secretariaId = dadosIniciais.secretariaId;
     storage.set("just:" + doc.id, JSON.stringify(doc), false).catch(() => {});
     setJustificativas(prev => [doc, ...prev]);
     abrirJustificativa(doc);
+  }
+
+  function duplicarJustificativa(doc, e) {
+    e?.stopPropagation();
+    const copia = duplicarDocumento(doc, "just");
+    setJustificativas(prev => [copia, ...prev]);
+    storage.set("just:" + copia.id, JSON.stringify(copia), false).catch(() => {});
   }
   function salvarJustificativa(doc) {
     const atualizado = { ...doc, updatedAt: Date.now() };
@@ -1733,9 +1910,21 @@ export default function App() {
   }
   function novaDeclaracao() {
     const doc = emptyDeclaracao();
+    const sec = secretariaParaNovoDoc();
+    if (sec) {
+      doc.secretariaId = sec.id;
+      doc.orgao = sec.nome;
+    }
     storage.set("decl:" + doc.id, JSON.stringify(doc), false).catch(() => {});
     setDeclaracoes(prev => [doc, ...prev]);
     abrirDeclaracao(doc);
+  }
+
+  function duplicarDeclaracao(doc, e) {
+    e?.stopPropagation();
+    const copia = duplicarDocumento(doc, "decl");
+    setDeclaracoes(prev => [copia, ...prev]);
+    storage.set("decl:" + copia.id, JSON.stringify(copia), false).catch(() => {});
   }
   function salvarDeclaracao(doc) {
     const atualizado = { ...doc, updatedAt: Date.now() };
@@ -1812,7 +2001,19 @@ export default function App() {
     setView("list");
   }
 
-  const filteredEtps = etps.filter(e => {
+  // Filtro por secretaria — vale para as três coleções. Documentos antigos (sem secretariaId)
+  // pertencem à primeira secretaria cadastrada, conforme secretariaDoDoc.
+  function pertenceASecretariaAtiva(doc) {
+    if (secretariaAtiva === "todas") return true;
+    const sec = secretariaDoDoc(doc, secretarias);
+    return sec?.id === secretariaAtiva;
+  }
+
+  const etpsDaSecretaria = etps.filter(pertenceASecretariaAtiva);
+  const justificativasDaSecretaria = justificativas.filter(pertenceASecretariaAtiva);
+  const declaracoesDaSecretaria = declaracoes.filter(pertenceASecretariaAtiva);
+
+  const filteredEtps = etpsDaSecretaria.filter(e => {
     const nomesResponsaveis = listaResponsaveis(e).map(r => r.nome).join(" ");
     return (e.meta.titulo + " " + e.meta.orgao + " " + e.meta.processo + " " + nomesResponsaveis)
       .toLowerCase().includes(search.toLowerCase());
@@ -1864,24 +2065,35 @@ export default function App() {
 
       {view === "list" && (
         <ListView
-          etps={filteredEtps} todosEtps={etps}
-          justificativas={justificativas} declaracoes={declaracoes}
+          etps={filteredEtps} todosEtps={etpsDaSecretaria}
+          justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
+          secretarias={secretarias} secretariaAtiva={secretariaAtiva} setSecretariaAtiva={setSecretariaAtiva}
           loading={loading} search={search} setSearch={setSearch}
-          onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp}
-          onAbrirDeclaracao={abrirDeclaracao} onNovaDeclaracao={novaDeclaracao} onExcluirDeclaracao={excluirDeclaracao}
-          onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa} onExcluirJustificativa={excluirJustificativa}
+          onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp} onDuplicar={duplicarEtp}
+          onAbrirDeclaracao={abrirDeclaracao} onNovaDeclaracao={novaDeclaracao}
+          onExcluirDeclaracao={excluirDeclaracao} onDuplicarDeclaracao={duplicarDeclaracao}
+          onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa}
+          onExcluirJustificativa={excluirJustificativa} onDuplicarJustificativa={duplicarJustificativa}
+          onGerenciarSecretarias={() => setView("secretarias")}
           onSettings={() => setView("settings")}
         />
       )}
 
       {view === "settings" && <SettingsView onBack={() => setView("list")} />}
 
+      {view === "secretarias" && (
+        <SecretariasView secretarias={secretarias} onSalvar={salvarSecretaria}
+          onNova={novaSecretaria} onExcluir={excluirSecretaria} onBack={() => setView("list")} />
+      )}
+
       {view === "justificativa" && currentJust && (
-        <JustificativaView doc={currentJust} onSalvar={salvarJustificativa} onBack={() => setView("list")} />
+        <JustificativaView doc={currentJust} secretarias={secretarias}
+          onSalvar={salvarJustificativa} onBack={backToList} />
       )}
 
       {view === "declaracao" && currentDecl && (
-        <DeclaracaoView doc={currentDecl} onSalvar={salvarDeclaracao} onBack={() => setView("list")}
+        <DeclaracaoView doc={currentDecl} secretarias={secretarias}
+          onSalvar={salvarDeclaracao} onBack={backToList}
           onGerarJustificativa={(dados) => novaJustificativa(dados)} />
       )}
 
@@ -1896,7 +2108,7 @@ export default function App() {
       )}
 
       {view === "preview" && current && (
-        <PreviewView etp={current} onBack={() => setView("editor")} />
+        <PreviewView etp={current} secretarias={secretarias} onBack={() => setView("editor")} />
       )}
     </div>
   );
@@ -1972,9 +2184,126 @@ function SettingsView({ onBack }) {
   );
 }
 
+// ---------- Cadastro de Secretarias ----------
+function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
+  const [confirmId, setConfirmId] = useState(null);
+  const fileRefs = useRef({});
+
+  async function trocarTimbre(sec, e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const redimensionado = await redimensionarImagem(dataUrl, 1200);
+      onSalvar({ ...sec, timbre: redimensionado });
+    } catch (err) { console.error(err); }
+    e.target.value = "";
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-6 py-10">
+      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+        <ArrowLeft size={16} /> Voltar
+      </button>
+
+      <div className="flex items-start justify-between gap-4 mb-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+            <Building2 size={16} />
+            <span className="text-xs font-semibold tracking-widest uppercase">Organização</span>
+          </div>
+          <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Secretarias</h1>
+        </div>
+        <button onClick={onNova}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
+          style={{ background: C.navy, color: C.paper }}>
+          <Plus size={15} /> Nova Secretaria
+        </button>
+      </div>
+
+      <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
+        Cada documento pertence a uma secretaria. O nome cadastrado aqui já entra preenchido no campo
+        "Órgão/Secretaria" dos documentos novos, e o timbre de cada uma é usado nos arquivos gerados.
+      </p>
+
+      <div className="space-y-3">
+        {secretarias.map(sec => (
+          <div key={sec.id} className="p-4 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
+            <div className="grid sm:grid-cols-[1fr,140px] gap-3 mb-3">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Nome</span>
+                <input value={sec.nome} onChange={e => onSalvar({ ...sec, nome: e.target.value })}
+                  placeholder="Ex.: Secretaria Municipal de Assistência Social"
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Sigla</span>
+                <input value={sec.sigla} onChange={e => onSalvar({ ...sec, sigla: e.target.value })}
+                  placeholder="Ex.: SEMAS"
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap pt-3 border-t" style={{ borderColor: C.border }}>
+              {sec.timbre ? (
+                <img src={sec.timbre} alt="Timbre" className="rounded border" style={{ maxHeight: "44px", borderColor: C.border }} />
+              ) : (
+                <span className="text-xs" style={{ color: C.inkMuted }}>Sem timbre próprio — usará o timbre geral do app</span>
+              )}
+              <input type="file" accept="image/*" className="hidden"
+                ref={el => { fileRefs.current[sec.id] = el; }}
+                onChange={e => trocarTimbre(sec, e)} />
+              <button onClick={() => fileRefs.current[sec.id]?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium"
+                style={{ background: C.paperDark, color: C.navy }}>
+                <Upload size={12} /> {sec.timbre ? "Trocar timbre" : "Definir timbre"}
+              </button>
+              {sec.timbre && (
+                <button onClick={() => onSalvar({ ...sec, timbre: null })}
+                  className="text-xs font-medium" style={{ color: C.red }}>Remover</button>
+              )}
+
+              <div className="ml-auto">
+                {secretarias.length <= 1 ? (
+                  <span className="text-[10px]" style={{ color: C.inkMuted }}>A última secretaria não pode ser excluída</span>
+                ) : confirmId === sec.id ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px]" style={{ color: C.red }}>Excluir?</span>
+                    <button onClick={() => { onExcluir(sec.id); setConfirmId(null); }}
+                      className="px-2 py-1 rounded text-[10px] font-semibold" style={{ background: C.red, color: "white" }}>Sim</button>
+                    <button onClick={() => setConfirmId(null)}
+                      className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmId(sec.id)} style={{ color: C.red }} title="Excluir secretaria">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 flex items-start gap-2 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
+        <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+        <span>
+          Excluir uma secretaria não apaga os documentos dela — eles passam a aparecer sob a primeira
+          secretaria da lista. As alterações desta tela são salvas automaticamente.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Lista de documentos avulsos (declarações e justificativas) ----------
 // Mesmo comportamento das duas listas: abrir, excluir com confirmação e criar novo.
-function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onNovo, icone: Icone, vazio }) {
+function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo, icone: Icone, vazio, secretarias, mostrarSecretaria }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleExcluir(id, e) {
@@ -2013,7 +2342,12 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onNovo, icone: Icon
                 <Icone size={15} className="shrink-0" style={{ color: C.brass }} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate" style={{ color: C.navy }}>{tituloDocumento(doc)}</p>
-                  <p className="text-xs" style={{ color: C.inkMuted }}>
+                  <p className="text-xs flex items-center gap-1.5" style={{ color: C.inkMuted }}>
+                    {mostrarSecretaria && secretariaDoDoc(doc, secretarias)?.sigla && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: C.paperDark, color: C.brass }}>
+                        {secretariaDoDoc(doc, secretarias).sigla}
+                      </span>
+                    )}
                     editado {fmtDateRelativa(doc.updatedAt)}
                   </p>
                 </div>
@@ -2026,11 +2360,16 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onNovo, icone: Icon
                       className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
                   </div>
                 ) : (
-                  <button onClick={e => handleExcluir(doc.id, e)}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                    style={{ color: C.red }} title="Excluir">
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={e => { e.stopPropagation(); onDuplicar(doc, e); }}
+                      className="p-1" style={{ color: C.inkMuted }} title="Duplicar">
+                      <Copy size={14} />
+                    </button>
+                    <button onClick={e => handleExcluir(doc.id, e)}
+                      className="p-1" style={{ color: C.red }} title="Excluir">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -2042,10 +2381,13 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onNovo, icone: Icon
 }
 
 // ---------- List View ----------
-function ListView({ etps, todosEtps, justificativas, declaracoes, loading, search, setSearch,
-  onOpen, onNew, onDelete,
-  onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao,
-  onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onSettings }) {
+function ListView({ etps, todosEtps, justificativas, declaracoes,
+  secretarias, secretariaAtiva, setSecretariaAtiva,
+  loading, search, setSearch,
+  onOpen, onNew, onDelete, onDuplicar,
+  onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
+  onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
+  onGerenciarSecretarias, onSettings }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleDeleteClick(id, e) {
@@ -2092,7 +2434,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes, loading, searc
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
-      <div className="flex items-start justify-between gap-4 mb-7">
+      <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
             <ClipboardList size={18} />
@@ -2105,6 +2447,23 @@ function ListView({ etps, todosEtps, justificativas, declaracoes, loading, searc
           className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border shrink-0"
           style={{ borderColor: C.border, color: C.navy, background: "white" }} title="Configurações">
           <Settings size={16} />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 mb-6 flex-wrap p-3 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
+        <Building2 size={16} className="shrink-0" style={{ color: C.brass }} />
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Secretaria</span>
+        <select value={secretariaAtiva} onChange={e => setSecretariaAtiva(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border text-sm bg-white flex-1 min-w-[200px]" style={{ borderColor: C.border, color: C.navy }}>
+          <option value="todas">Todas as Secretarias</option>
+          {secretarias.map(s => (
+            <option key={s.id} value={s.id}>{s.sigla ? `${s.sigla} — ${s.nome}` : (s.nome || "Secretaria sem nome")}</option>
+          ))}
+        </select>
+        <button onClick={onGerenciarSecretarias}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium shrink-0"
+          style={{ background: C.paperDark, color: C.navy }}>
+          <Settings size={13} /> Gerenciar
         </button>
       </div>
 
@@ -2215,9 +2574,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes, loading, searc
         docs={declaracoes}
         onAbrir={onAbrirDeclaracao}
         onExcluir={onExcluirDeclaracao}
+        onDuplicar={onDuplicarDeclaracao}
         onNovo={onNovaDeclaracao}
         icone={ListChecks}
         vazio="Nenhuma declaração criada ainda."
+        secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
       />
 
       <ListaDocumentos
@@ -2225,9 +2586,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes, loading, searc
         docs={justificativas}
         onAbrir={onAbrirJustificativa}
         onExcluir={onExcluirJustificativa}
+        onDuplicar={onDuplicarJustificativa}
         onNovo={() => onNovaJustificativa(null)}
         icone={FileEdit}
         vazio="Nenhuma justificativa criada ainda."
+        secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
       />
 
       <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
@@ -2282,17 +2645,29 @@ function ListView({ etps, todosEtps, justificativas, declaracoes, loading, searc
                     </button>
                   </div>
                 ) : (
-                  <button onClick={(e) => handleDeleteClick(etp.id, e)}
-                    className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md"
-                    style={{ color: C.red }} title="Excluir">
-                    <Trash2 size={15} />
-                  </button>
+                  <div className="absolute top-4 right-4 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={(e) => { e.stopPropagation(); onDuplicar(etp, e); }}
+                      className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
+                      <Copy size={15} />
+                    </button>
+                    <button onClick={(e) => handleDeleteClick(etp.id, e)}
+                      className="p-1.5 rounded-md" style={{ color: C.red }} title="Excluir">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 )}
-                <h3 className="serif text-lg font-semibold pr-8 mb-1" style={{ color: C.navy }}>
+                <h3 className="serif text-lg font-semibold pr-16 mb-1" style={{ color: C.navy }}>
                   {etp.meta.titulo || "ETP sem título"}
                 </h3>
-                <p className="text-xs mb-3 flex items-center gap-1" style={{ color: C.inkMuted }}>
-                  <Building2 size={12} /> {etp.meta.orgao || "Órgão não informado"} {etp.meta.processo && `· Proc. ${etp.meta.processo}`}
+                <p className="text-xs mb-3 flex items-center gap-1.5 flex-wrap" style={{ color: C.inkMuted }}>
+                  {secretariaAtiva === "todas" && secretariaDoDoc(etp, secretarias)?.sigla && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: C.paperDark, color: C.brass }}>
+                      {secretariaDoDoc(etp, secretarias).sigla}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1">
+                    <Building2 size={12} /> {etp.meta.orgao || "Órgão não informado"} {etp.meta.processo && `· Proc. ${etp.meta.processo}`}
+                  </span>
                 </p>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
@@ -2385,7 +2760,7 @@ function PromptIAView({ etp }) {
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
-function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
+function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificativa }) {
   const itens = doc.itens || [];
   const objeto = doc.objeto || "";
   const orgao = doc.orgao || "";
@@ -2394,9 +2769,10 @@ function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
   // A planilha do PCA é uma tabela de referência compartilhada entre todas as declarações —
   // fica numa chave própria para não duplicar milhares de linhas em cada documento.
   const [pca, setPca] = useState(null);
-  const [timbre, setTimbre] = useState(null);
+  const [timbreGlobal, setTimbreGlobal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
+  const timbre = resolverTimbre(doc, secretarias, timbreGlobal);
 
   const fileItensRef = useRef(null);
   const filePcaRef = useRef(null);
@@ -2411,7 +2787,7 @@ function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
       storage.get("timbre:padrao", false).catch(() => null),
     ]).then(([pcaRes, timbreRes]) => {
       if (pcaRes?.value) setPca(JSON.parse(pcaRes.value));
-      setTimbre(timbreRes?.value || TIMBRE_PADRAO);
+      setTimbreGlobal(timbreRes?.value || TIMBRE_PADRAO);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -2485,7 +2861,7 @@ function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
       const sequencialExibido = pcaRow ? (pcaRow.sequencial || "-") : manualSequencial;
       return `<tr><td>${idx + 1}</td><td>${escapeHtml(codigoExibido)}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(sequencialExibido)}</td></tr>`;
     }).join("");
-    gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela });
+    gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela }).catch(e => console.error(e));
   }
 
   function irParaJustificativa() {
@@ -2745,17 +3121,18 @@ function DeclaracaoView({ doc, onSalvar, onBack, onGerarJustificativa }) {
 }
 
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
-function JustificativaView({ doc, onSalvar, onBack }) {
+function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
   const campos = doc.campos;
   const conteudo = doc.conteudo || "";
-  const [timbre, setTimbre] = useState(null);
+  const [timbreGlobal, setTimbreGlobal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modoPreview, setModoPreview] = useState(false);
+  const timbre = resolverTimbre(doc, secretarias, timbreGlobal);
 
   useEffect(() => {
     storage.get("timbre:padrao", false)
-      .then(r => setTimbre(r?.value || TIMBRE_PADRAO))
-      .catch(() => setTimbre(TIMBRE_PADRAO))
+      .then(r => setTimbreGlobal(r?.value || TIMBRE_PADRAO))
+      .catch(() => setTimbreGlobal(TIMBRE_PADRAO))
       .finally(() => setLoading(false));
   }, []);
 
@@ -2771,7 +3148,7 @@ function JustificativaView({ doc, onSalvar, onBack }) {
   }
 
   function baixarDocumento() {
-    gerarDocumentoJustificativaWord({ conteudoHtml: conteudo, timbreDataUrl: timbre });
+    gerarDocumentoJustificativaWord({ conteudoHtml: conteudo, timbreDataUrl: timbre }).catch(e => console.error(e));
   }
 
   const camposPreenchidos = Object.values(campos).filter(v => v?.trim?.()).length;
@@ -4431,12 +4808,15 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
 }
 
 // ---------- Preview View ----------
-function PreviewView({ etp, onBack }) {
+function PreviewView({ etp, secretarias, onBack }) {
   const [copied, setCopied] = useState(false);
-  const [timbre, setTimbre] = useState(null);
+  const [timbreGlobal, setTimbre] = useState(null);
   const [timbreLoading, setTimbreLoading] = useState(true);
   const [timbreError, setTimbreError] = useState("");
   const timbreFileRef = useRef(null);
+  // O timbre da secretaria do ETP tem prioridade; o gerenciado nesta tela é o timbre geral
+  const secretariaDoEtp = secretariaDoDoc(etp, secretarias);
+  const timbre = secretariaDoEtp?.timbre || timbreGlobal;
 
   useEffect(() => {
     storage.get("timbre:padrao", false)
@@ -4565,7 +4945,7 @@ function PreviewView({ etp, onBack }) {
             style={{ background: C.paperDark, color: C.navy }}>
             <Copy size={13} /> {copied ? "Copiado!" : "Copiar texto"}
           </button>
-          <button onClick={() => gerarDocumentoWord(etp, timbre)}
+          <button onClick={() => gerarDocumentoWord(etp, timbre).catch(e => console.error(e))}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{ background: C.paperDark, color: C.navy }}>
             <Download size={13} /> Baixar Word (.doc)
