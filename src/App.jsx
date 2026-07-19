@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Sparkles, Loader2, TrendingUp, Info, Upload, Download, ChevronDown, ChevronRight, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, Settings } from "lucide-react";
-import { Key } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Loader2, Info, Upload, Download, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, Settings } from "lucide-react";
 import storage from "./storage";
-import { callClaude, getApiKey, setApiKey } from "./lib/anthropic";
 
 // ---------- Design tokens ----------
 const C = {
@@ -64,17 +62,28 @@ const ROMANOS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "X
 // s.id continua sendo o identificador original (usado para lógica interna, como o quadro do PCA);
 // numero é o algarismo que efetivamente aparece no relatório.
 function secoesParaRelatorio(etp) {
+  const excluidos = etp.incisosExcluidos || [];
   return SECOES
-    .filter(s => etp.sections[s.id]?.trim())
+    .filter(s => !excluidos.includes(s.id) && etp.sections[s.id]?.trim())
     .map((s, idx) => ({ ...s, numero: ROMANOS[idx] || String(idx + 1) }));
+}
+
+// Numeração que cada inciso terá no documento final, para mostrar na tela de edição.
+// Devolve { [id]: "III" } apenas para os que entram no documento.
+function numeracaoFinal(etp) {
+  const excluidos = etp.incisosExcluidos || [];
+  const mapa = {};
+  let pos = 0;
+  SECOES.forEach(s => {
+    if (excluidos.includes(s.id) || !etp.sections[s.id]?.trim()) return;
+    mapa[s.id] = ROMANOS[pos] || String(pos + 1);
+    pos++;
+  });
+  return mapa;
 }
 
 // Incisos V e VI usam editor com formatação (negrito, listas, tabelas) em vez de texto simples,
 // pois costumam incluir tabelas de quantitativos e valores.
-const RICH_SECTION_IDS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII"];
-function isRichSection(id) {
-  return RICH_SECTION_IDS.includes(id);
-}
 
 function emptyEtp() {
   const sections = {};
@@ -102,6 +111,7 @@ function emptyEtp() {
     valoresAdotados: {}, // { [itemId]: "12.34" } — valor unitário adotado após o levantamento de preços
     pca: null, // { nomeArquivo, importedAt, linhas: [...] } — última planilha do PCA importada
     solucoesMercado: [], // [{id, nome, selecionada}] — soluções de mercado pesquisadas para o inciso IV
+    incisosExcluidos: [], // ids dos incisos que o servidor optou por não incluir neste ETP
     sections,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -115,7 +125,9 @@ function emptySecretaria(nome, sigla) {
     id: "sec_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
     nome: nome || "",
     sigla: sigla || "",
-    timbre: null,
+    tipoTimbre: "imagem", // "imagem" | "texto" | "nenhum"
+    timbre: null,         // imagem, quando tipoTimbre = "imagem"
+    timbreHtml: "",       // texto formatado, quando tipoTimbre = "texto"
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -131,15 +143,31 @@ function secretariaDoDoc(doc, secretarias) {
 
 // Timbre a usar num documento: o da secretaria dele, se tiver um próprio;
 // senão, o timbre geral do app.
-function resolverTimbre(doc, secretarias, timbreGlobal) {
+// Cabeçalho a usar num documento, conforme a configuração da secretaria dele.
+// Três possibilidades: imagem, texto em HTML, ou nenhum cabeçalho.
+// Secretarias antigas (sem o campo tipoTimbre) seguem a regra anterior: imagem própria,
+// senão o timbre geral do app.
+function resolverCabecalho(doc, secretarias, timbreGlobal) {
   const sec = secretariaDoDoc(doc, secretarias);
-  return sec?.timbre || timbreGlobal || TIMBRE_PADRAO;
+  const tipo = sec?.tipoTimbre;
+
+  if (tipo === "nenhum") return { tipo: "nenhum" };
+  if (tipo === "texto") return { tipo: "texto", html: sec.timbreHtml || "" };
+  if (tipo === "imagem") return { tipo: "imagem", dataUrl: sec.timbre || timbreGlobal || TIMBRE_PADRAO };
+  return { tipo: "imagem", dataUrl: sec?.timbre || timbreGlobal || TIMBRE_PADRAO };
 }
 
-// ---------- Cabeçalho dos documentos do Word ----------
-// A4 em pontos (unidade que o Word entende de forma confiável): 210mm x 297mm.
+// Completa o cabeçalho com as dimensões da imagem, prontas para o .docx
+async function prepararCabecalho(cabecalho) {
+  if (cabecalho?.tipo !== "imagem" || !cabecalho.dataUrl) return cabecalho;
+  const tamanho = dimensionarTimbre(await medirImagem(cabecalho.dataUrl));
+  return { ...cabecalho, tamanho };
+}
+
+// ---------- Dimensionamento do timbre ----------
+// A4 em pontos: 210mm x 297mm. Largura útil = página menos as margens laterais.
 const PAGINA = { largura: 595.3, altura: 841.9, margemLateral: 72, margemCabecalho: 35.4 };
-const LARGURA_UTIL = PAGINA.largura - PAGINA.margemLateral * 2; // espaço entre as margens
+const LARGURA_UTIL = PAGINA.largura - PAGINA.margemLateral * 2;
 const ALTURA_MAX_TIMBRE = 80;
 
 // Lê as dimensões naturais da imagem (o timbre é um data URL já carregado na memória)
@@ -166,39 +194,391 @@ function dimensionarTimbre(medida) {
   };
 }
 
-// Bloco de cabeçalho no formato que o Word reconhece como cabeçalho de seção — precisa estar
-// envolvido em "header-footer-group" e vir DEPOIS do corpo, senão o Word trata como texto
-// comum e a imagem só aparece na primeira página.
-function blocoCabecalhoWord(timbreDataUrl, tamanho) {
-  if (!timbreDataUrl) return "";
-  const dim = tamanho ? `width:${tamanho.largura}pt;height:${tamanho.altura}pt;` : "";
-  return `
-<div style='mso-element:header-footer-group'>
-  <div style='mso-element:header' id="h1">
-    <p class="MsoHeader" align="center" style="text-align:center;margin:0;border:none;border-bottom:solid windowtext 1.0pt;padding:0 0 6.0pt 0;">
-      <img src="${timbreDataUrl}" style="${dim}" />
-    </p>
-  </div>
-</div>`;
+// ============================================================================
+// Geração de arquivos .docx nativos do Word
+// ----------------------------------------------------------------------------
+// Um .docx é um pacote ZIP com arquivos XML dentro. Gerar o formato real, em vez
+// de HTML renomeado para .doc, evita a recusa do Word ("arquivo corrompido") e
+// permite cabeçalho nativo, que se repete em todas as páginas.
+// ============================================================================
+
+// ---------- Compactador ZIP (método "armazenado", sem compressão) ----------
+const TABELA_CRC = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = TABELA_CRC[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
 }
 
-// Regras de página compartilhadas pelos documentos. A margem superior acompanha a altura do
-// timbre, para que o texto nunca comece por cima do cabeçalho.
-function cssPaginaWord(tamanhoTimbre) {
-  const margemTopo = tamanhoTimbre
-    ? Math.max(72, PAGINA.margemCabecalho + tamanhoTimbre.altura + 24)
-    : 72;
-  return `
-  @page Section1 {
-    size: ${PAGINA.largura}pt ${PAGINA.altura}pt;
-    margin: ${margemTopo}pt ${PAGINA.margemLateral}pt ${PAGINA.margemLateral}pt ${PAGINA.margemLateral}pt;
-    mso-header-margin: ${PAGINA.margemCabecalho}pt;
-    mso-footer-margin: ${PAGINA.margemCabecalho}pt;
-    mso-paper-source: 0;
-    mso-header: h1;
+function textoParaBytes(txt) {
+  return new TextEncoder().encode(txt);
+}
+
+// Monta o pacote ZIP. Recebe [{ nome, dados: Uint8Array }] e devolve Uint8Array.
+function criarZip(arquivos) {
+  const pedacos = [];
+  const central = [];
+  let deslocamento = 0;
+
+  const num16 = n => [n & 0xFF, (n >>> 8) & 0xFF];
+  const num32 = n => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+
+  arquivos.forEach(arq => {
+    const nome = textoParaBytes(arq.nome);
+    const dados = arq.dados;
+    const crc = crc32(dados);
+
+    const cabecalhoLocal = new Uint8Array([
+      0x50, 0x4B, 0x03, 0x04,       // assinatura
+      20, 0, 0, 0, 0, 0,            // versão, flags, método (0 = armazenado)
+      0, 0, 0, 0,                   // data/hora
+      ...num32(crc), ...num32(dados.length), ...num32(dados.length),
+      ...num16(nome.length), 0, 0,
+      ...nome,
+    ]);
+    pedacos.push(cabecalhoLocal, dados);
+
+    central.push(new Uint8Array([
+      0x50, 0x4B, 0x01, 0x02,
+      20, 0, 20, 0, 0, 0, 0, 0,
+      0, 0, 0, 0,
+      ...num32(crc), ...num32(dados.length), ...num32(dados.length),
+      ...num16(nome.length), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ...num32(deslocamento),
+      ...nome,
+    ]));
+
+    deslocamento += cabecalhoLocal.length + dados.length;
+  });
+
+  const tamanhoCentral = central.reduce((s, c) => s + c.length, 0);
+  const fim = new Uint8Array([
+    0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0,
+    ...num16(arquivos.length), ...num16(arquivos.length),
+    ...num32(tamanhoCentral), ...num32(deslocamento), 0, 0,
+  ]);
+
+  const total = [...pedacos, ...central, fim];
+  const tamanho = total.reduce((s, p) => s + p.length, 0);
+  const saida = new Uint8Array(tamanho);
+  let pos = 0;
+  total.forEach(p => { saida.set(p, pos); pos += p.length; });
+  return saida;
+}
+
+// ---------- Conversão do conteúdo em HTML para o formato interno do Word ----------
+const PT_PARA_EMU = 12700;   // 1 ponto = 12700 EMU
+const PT_PARA_TWIP = 20;     // 1 ponto = 20 twips
+
+function escXml(txt) {
+  return String(txt ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+// Converte um trecho de texto com a formatação acumulada (negrito, itálico etc.)
+function trecho(texto, fmt) {
+  if (!texto) return "";
+  const props = [
+    fmt.b ? "<w:b/>" : "",
+    fmt.i ? "<w:i/>" : "",
+    fmt.u ? '<w:u w:val="single"/>' : "",
+    fmt.s ? "<w:strike/>" : "",
+    `<w:sz w:val="${fmt.sz || 22}"/>`,
+  ].join("");
+  return `<w:r><w:rPr>${props}</w:rPr><w:t xml:space="preserve">${escXml(texto)}</w:t></w:r>`;
+}
+
+// Percorre os nós de um bloco reunindo o texto já formatado
+function trechosDoNo(no, fmt, doc) {
+  const TEXTO = 3, ELEMENTO = 1;
+  if (no.nodeType === TEXTO) {
+    const t = no.nodeValue.replace(/\s+/g, " ");
+    return t.trim() === "" && t !== " " ? "" : trecho(t, fmt);
   }
-  div.Section1 { page: Section1; }
-  p.MsoHeader { margin: 0; }`;
+  if (no.nodeType !== ELEMENTO) return "";
+
+  const tag = no.tagName.toLowerCase();
+  if (tag === "br") return '<w:r><w:br/></w:r>';
+
+  const novo = { ...fmt };
+  if (tag === "b" || tag === "strong") novo.b = true;
+  if (tag === "i" || tag === "em") novo.i = true;
+  if (tag === "u") novo.u = true;
+  if (tag === "s" || tag === "strike" || tag === "del") novo.s = true;
+
+  let saida = "";
+  no.childNodes.forEach(f => { saida += trechosDoNo(f, novo, doc); });
+  return saida;
+}
+
+// Alinhamento declarado no atributo style do elemento
+function alinhamentoDoNo(no, padrao) {
+  const estilo = (no.getAttribute && no.getAttribute("style")) || "";
+  const m = estilo.match(/text-align:\s*(left|center|right|justify)/i);
+  if (!m) return padrao;
+  return { left: "left", center: "center", right: "right", justify: "both" }[m[1].toLowerCase()];
+}
+
+function paragrafo(conteudo, { align = "both", espacoDepois = 200, indent = 0, lista = null, estilo = null } = {}) {
+  if (!conteudo) conteudo = "";
+  const numeracao = lista ? `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="${lista}"/></w:numPr>` : "";
+  const rec = indent ? `<w:ind w:left="${indent}"/>` : "";
+  const est = estilo ? `<w:pStyle w:val="${estilo}"/>` : "";
+  return `<w:p><w:pPr>${est}${numeracao}<w:jc w:val="${align}"/>` +
+         `<w:spacing w:after="${espacoDepois}" w:line="276" w:lineRule="auto"/>${rec}</w:pPr>${conteudo}</w:p>`;
+}
+
+// Converte uma tabela HTML para tabela do Word
+function tabelaParaOoxml(tabela, larguraTotal) {
+  const linhas = [...tabela.querySelectorAll("tr")];
+  if (linhas.length === 0) return "";
+  const colunas = Math.max(...linhas.map(l => l.querySelectorAll("td,th").length));
+  const larguraCol = Math.floor(larguraTotal / colunas);
+
+  const grade = `<w:tblGrid>${Array(colunas).fill(`<w:gridCol w:w="${larguraCol}"/>`).join("")}</w:tblGrid>`;
+  const borda = ["top", "left", "bottom", "right", "insideH", "insideV"]
+    .map(l => `<w:${l} w:val="single" w:sz="4" w:space="0" w:color="000000"/>`).join("");
+
+  const corpo = linhas.map(linha => {
+    const celulas = [...linha.querySelectorAll("td,th")];
+    const tds = celulas.map(c => {
+      const cabecalho = c.tagName.toLowerCase() === "th";
+      const span = parseInt(c.getAttribute("colspan") || "1", 10);
+      const conteudo = trechosDoNo(c, { b: cabecalho, sz: 19 }, null)
+        || trecho(c.textContent || "", { b: cabecalho, sz: 19 });
+      const props = `<w:tcPr><w:tcW w:w="${larguraCol * span}" w:type="dxa"/>` +
+        (span > 1 ? `<w:gridSpan w:val="${span}"/>` : "") +
+        (cabecalho ? '<w:shd w:val="clear" w:color="auto" w:fill="ECECEC"/>' : "") +
+        `</w:tcPr>`;
+      return `<w:tc>${props}${paragrafo(conteudo, { align: "left", espacoDepois: 0 })}</w:tc>`;
+    }).join("");
+    return `<w:tr>${tds}</w:tr>`;
+  }).join("");
+
+  return `<w:tbl><w:tblPr><w:tblW w:w="${larguraTotal}" w:type="dxa"/>` +
+         `<w:tblBorders>${borda}</w:tblBorders></w:tblPr>${grade}${corpo}</w:tbl>` +
+         paragrafo("", { espacoDepois: 120 });
+}
+
+// Converte o HTML dos incisos (vindo do editor) para parágrafos do Word
+function htmlParaOoxml(html, larguraTabela = 9070) {
+  if (!html || !html.trim()) return "";
+  const doc = new DOMParser().parseFromString(`<div id="raiz">${html}</div>`, "text/html");
+  const raiz = doc.getElementById("raiz");
+  let saida = "";
+
+  const blocos = ["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "hr"];
+
+  function percorrer(no) {
+    no.childNodes.forEach(filho => {
+      if (filho.nodeType === 3) {
+        const t = filho.nodeValue.trim();
+        if (t) saida += paragrafo(trecho(filho.nodeValue.replace(/\s+/g, " "), {}));
+        return;
+      }
+      if (filho.nodeType !== 1) return;
+      const tag = filho.tagName.toLowerCase();
+
+      if (tag === "hr") { saida += paragrafo("", { espacoDepois: 120 }); return; }
+
+      if (tag === "table") { saida += tabelaParaOoxml(filho, larguraTabela); return; }
+
+      if (tag === "ul" || tag === "ol") {
+        const numId = tag === "ul" ? 1 : 2;
+        filho.querySelectorAll("li").forEach(li => {
+          saida += paragrafo(trechosDoNo(li, {}, doc), { align: "both", lista: numId, espacoDepois: 80 });
+        });
+        return;
+      }
+
+      if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
+        const tamanhos = { h1: 30, h2: 26, h3: 24, h4: 23, h5: 22, h6: 21 };
+        saida += paragrafo(trechosDoNo(filho, { b: true, sz: tamanhos[tag] }, doc),
+          { align: alinhamentoDoNo(filho, "left"), espacoDepois: 120 });
+        return;
+      }
+
+      if (tag === "blockquote") {
+        saida += paragrafo(trechosDoNo(filho, { i: true }, doc), { align: "both", indent: 567 });
+        return;
+      }
+
+      if (blocos.includes(tag)) {
+        const conteudo = trechosDoNo(filho, {}, doc);
+        if (conteudo) saida += paragrafo(conteudo, { align: alinhamentoDoNo(filho, "both") });
+        return;
+      }
+
+      // Elemento solto (texto sem bloco em volta) — vira um parágrafo próprio
+      const conteudo = trechosDoNo(filho, {}, doc);
+      if (conteudo) saida += paragrafo(conteudo);
+    });
+  }
+
+  percorrer(raiz);
+  return saida;
+}
+
+// ---------- Montagem do pacote .docx ----------
+function xmlContentTypes(temImagem) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>${temImagem ? `
+<Default Extension="png" ContentType="image/png"/>
+<Default Extension="jpeg" ContentType="image/jpeg"/>
+<Default Extension="jpg" ContentType="image/jpeg"/>` : ""}
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+</Types>`;
+}
+
+const XML_RELS_RAIZ = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`;
+
+const XML_ESTILOS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults><w:rPrDefault><w:rPr>
+<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:lang w:val="pt-BR"/>
+</w:rPr></w:rPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+</w:styles>`;
+
+// Duas listas: marcadores e numerada
+const XML_NUMERACAO = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0">
+<w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/>
+<w:pPr><w:ind w:left="567" w:hanging="283"/></w:pPr>
+<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr></w:lvl></w:abstractNum>
+<w:abstractNum w:abstractNumId="2"><w:lvl w:ilvl="0">
+<w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/>
+<w:pPr><w:ind w:left="567" w:hanging="283"/></w:pPr></w:lvl></w:abstractNum>
+<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>
+</w:numbering>`;
+
+// Cabeçalho: imagem, texto em HTML, ou vazio
+function xmlCabecalho(cabecalho) {
+  let conteudo;
+  if (cabecalho?.tipo === "imagem" && cabecalho.tamanho) {
+    const cx = Math.round(cabecalho.tamanho.largura * PT_PARA_EMU);
+    const cy = Math.round(cabecalho.tamanho.altura * PT_PARA_EMU);
+    conteudo = `<w:p><w:pPr><w:jc w:val="center"/>
+<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="000000"/></w:pBdr></w:pPr>
+<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">
+<wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="1" name="Timbre"/>
+<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="timbre"/><pic:cNvPicPr/></pic:nvPicPr>
+<pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>
+<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+  } else if (cabecalho?.tipo === "texto" && cabecalho.html) {
+    conteudo = htmlParaOoxml(cabecalho.html).replace(/<w:jc w:val="both"\/>/g, '<w:jc w:val="center"/>')
+      + `<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="000000"/></w:pBdr>
+<w:spacing w:after="0"/></w:pPr></w:p>`;
+  } else {
+    conteudo = `<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${conteudo}</w:hdr>`;
+}
+
+// Documento principal, com a definição de página e a referência ao cabeçalho
+function xmlDocumento(corpoOoxml, margemTopoPt) {
+  const tw = pt => Math.round(pt * PT_PARA_TWIP);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+<w:body>${corpoOoxml}
+<w:sectPr>
+<w:headerReference w:type="default" r:id="rId10"/>
+<w:pgSz w:w="11906" w:h="16838"/>
+<w:pgMar w:top="${tw(margemTopoPt)}" w:right="${tw(72)}" w:bottom="${tw(72)}" w:left="${tw(72)}"
+ w:header="${tw(35.4)}" w:footer="${tw(35.4)}" w:gutter="0"/>
+</w:sectPr></w:body></w:document>`;
+}
+
+// Converte um data URL em bytes
+function dataUrlParaBytes(dataUrl) {
+  const base64 = dataUrl.split(",")[1];
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function extensaoDoDataUrl(dataUrl) {
+  const m = /^data:image\/(png|jpe?g)/i.exec(dataUrl || "");
+  if (!m) return "png";
+  return m[1].toLowerCase() === "jpg" ? "jpeg" : m[1].toLowerCase();
+}
+
+// Ponto de entrada: monta e baixa o .docx
+function baixarDocx({ corpoOoxml, cabecalho, nomeArquivo }) {
+  const temImagem = cabecalho?.tipo === "imagem" && cabecalho.dataUrl;
+  const ext = temImagem ? extensaoDoDataUrl(cabecalho.dataUrl) : "png";
+
+  const margemTopo = cabecalho?.tipo === "imagem" && cabecalho.tamanho
+    ? Math.max(72, 35.4 + cabecalho.tamanho.altura + 24)
+    : cabecalho?.tipo === "texto" ? 108 : 72;
+
+  const arquivos = [
+    { nome: "[Content_Types].xml", dados: textoParaBytes(xmlContentTypes(temImagem)) },
+    { nome: "_rels/.rels", dados: textoParaBytes(XML_RELS_RAIZ) },
+    { nome: "word/document.xml", dados: textoParaBytes(xmlDocumento(corpoOoxml, margemTopo)) },
+    { nome: "word/styles.xml", dados: textoParaBytes(XML_ESTILOS) },
+    { nome: "word/numbering.xml", dados: textoParaBytes(XML_NUMERACAO) },
+    { nome: "word/header1.xml", dados: textoParaBytes(xmlCabecalho(cabecalho)) },
+    { nome: "word/_rels/document.xml.rels", dados: textoParaBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+<Relationship Id="rId11" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId12" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+</Relationships>`) },
+    { nome: "word/_rels/header1.xml.rels", dados: textoParaBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${temImagem ? `
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.${ext}"/>` : ""}
+</Relationships>`) },
+  ];
+
+  if (temImagem) {
+    arquivos.push({ nome: `word/media/image1.${ext}`, dados: dataUrlParaBytes(cabecalho.dataUrl) });
+  }
+
+  const zip = criarZip(arquivos);
+  const blob = new Blob([zip], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Justificativa de Aquisição — documento próprio, salvo em lista (chave "just:<id>"), como os ETPs
@@ -1130,48 +1510,27 @@ function textoParaHtml(texto) {
 // Gera um documento .doc (HTML compatível com o Word) editável, com o timbre no cabeçalho
 // Documento avulso "Demonstração da Previsão da Contratação no PCA" — usa o cruzamento de itens já
 // feito na ferramenta "Verificar PCA", independente de qualquer ETP específico.
-async function gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl, linhasTabela }) {
-  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>Demonstração da Previsão no PCA</title>
-<style>
-${cssPaginaWord(tamanhoTimbre)}
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
-  h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
-  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
-  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 10pt 0; }
-  td, th { border: 1px solid #000; padding: 5px 7px; text-align: left; }
-  th { background: #ececec; font-weight: bold; }
-  .assinatura { text-align: center; margin-top: 40pt; font-style: italic; page-break-inside: avoid; }
-</style>
-</head>
-<body>
-  <div class="Section1">
-  <h1>Demonstração da Previsão da Contratação no Plano de Contratações Anual</h1>
-  <p>A presente contratação, que visa à "${escapeHtml(objeto)}", destinados a atender às demandas da ${escapeHtml(orgao)}, encontra-se devidamente alinhada aos objetivos estratégicos da Administração Municipal.</p>
-  <p>O fornecimento desses itens é essencial para o adequado funcionamento das unidades administrativas e operacionais do Município, garantindo suporte às atividades institucionais desenvolvidas no âmbito da Prefeitura, bem como assegurando a continuidade e a eficiência dos serviços públicos prestados.</p>
-  <p>A demanda encontra-se regularmente prevista no Plano de Contratações Anual (PCA), conforme os sequenciais e respectivos IDs constantes na tabela a seguir, os quais identificam precisamente os itens a serem contratados:</p>
-  <table>
-    <tr><th>Item</th><th>ID</th><th>Descrição</th><th>Sequencial do PCA</th></tr>
-    ${linhasTabela}
-  </table>
-  <p>Dessa forma, resta evidenciado que a contratação encontra-se compatível com o planejamento anual das contratações, atendendo ao disposto no artigo 12 da Lei nº 14.133/2021, assegurando a adequada vinculação entre a demanda identificada, o Plano de Contratações Anual e a futura contratação.</p>
-  <p class="assinatura">[DATADO E ASSINADO DIGITALMENTE]</p>
-  </div>
-${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
-</body>
-</html>`;
+// Documento avulso "Demonstração da Previsão da Contratação no PCA", em .docx nativo
+async function gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }) {
+  const cab = await prepararCabecalho(cabecalho);
+  const html = `
+<h2 style="text-align:center">Demonstração da Previsão da Contratação no Plano de Contratações Anual</h2>
+<p>A presente contratação, que visa à "${escapeHtml(objeto)}", destinados a atender às demandas da ${escapeHtml(orgao)}, encontra-se devidamente alinhada aos objetivos estratégicos da Administração Municipal.</p>
+<p>O fornecimento desses itens é essencial para o adequado funcionamento das unidades administrativas e operacionais do Município, garantindo suporte às atividades institucionais desenvolvidas no âmbito da Prefeitura, bem como assegurando a continuidade e a eficiência dos serviços públicos prestados.</p>
+<p>A demanda encontra-se regularmente prevista no Plano de Contratações Anual (PCA), conforme os sequenciais e respectivos IDs constantes na tabela a seguir, os quais identificam precisamente os itens a serem contratados:</p>
+<table>
+  <tr><th>Item</th><th>ID</th><th>Descrição</th><th>Sequencial do PCA</th></tr>
+  ${linhasTabela}
+</table>
+<p>Dessa forma, resta evidenciado que a contratação encontra-se compatível com o planejamento anual das contratações, atendendo ao disposto no artigo 12 da Lei nº 14.133/2021, assegurando a adequada vinculação entre a demanda identificada, o Plano de Contratações Anual e a futura contratação.</p>
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center"><i>[DATADO E ASSINADO DIGITALMENTE]</i></p>`;
 
-  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `demonstracao_previsao_pca_${todayISO()}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  baixarDocx({
+    corpoOoxml: htmlParaOoxml(html),
+    cabecalho: cab,
+    nomeArquivo: `demonstracao_previsao_pca_${todayISO()}.docx`,
+  });
 }
 
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
@@ -1203,46 +1562,28 @@ ${listaProgramas}
 }
 
 // Exporta a Justificativa como .doc, com timbre e assinatura, no mesmo padrão dos demais documentos
-async function gerarDocumentoJustificativaWord({ conteudoHtml, timbreDataUrl }) {
-  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>Justificativa de Aquisição</title>
-<style>
-${cssPaginaWord(tamanhoTimbre)}
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
-  h1 { font-size: 13pt; text-align: center; text-transform: uppercase; margin-bottom: 16pt; letter-spacing: 0.3pt; }
-  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
-  ul { margin: 0 0 10pt 20pt; }
-  .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; }
-</style>
-</head>
-<body>
-  <div class="Section1">
-  <h1>Justificativa</h1>
-  ${conteudoHtml}
-  <p class="assinatura">Atenciosamente,</p>
-  <p class="assinatura" style="margin-top:60pt;">[DATADO E ASSINADO DIGITALMENTE]</p>
-  </div>
-${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
-</body>
-</html>`;
+// Justificativa de Aquisição em .docx nativo
+async function gerarDocumentoJustificativaWord({ conteudoHtml, cabecalho }) {
+  const cab = await prepararCabecalho(cabecalho);
+  const html = `
+<h2 style="text-align:center">Justificativa</h2>
+${conteudoHtml}
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center">Atenciosamente,</p>
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center"><i>[DATADO E ASSINADO DIGITALMENTE]</i></p>`;
 
-  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `justificativa_aquisicao_${todayISO()}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  baixarDocx({
+    corpoOoxml: htmlParaOoxml(html),
+    cabecalho: cab,
+    nomeArquivo: `justificativa_aquisicao_${todayISO()}.docx`,
+  });
 }
 
-async function gerarDocumentoWord(etp, timbreDataUrl) {
-  const tamanhoTimbre = dimensionarTimbre(await medirImagem(timbreDataUrl));
+// Estudo Técnico Preliminar completo, em .docx nativo
+async function gerarDocumentoWord(etp, cabecalho) {
+  const cab = await prepararCabecalho(cabecalho);
   const itens = etp.itens || [];
-  const valoresAdotados = etp.valoresAdotados || {};
   const pca = etp.pca;
   const responsaveis = listaResponsaveis(etp);
   const resumoResponsaveis = responsaveis.length > 0
@@ -1265,71 +1606,45 @@ async function gerarDocumentoWord(etp, timbreDataUrl) {
   const relatorioEstimativa = gerarRelatorioEstimativaHtml(etp);
 
   const secoesHtml = secoesParaRelatorio(etp).map(s => `
-    <h2>${s.numero} — ${escapeHtml(s.titulo)}</h2>
+    <h2 style="text-align:center">${s.numero} — ${escapeHtml(s.titulo)}</h2>
     ${etp.sections[s.id]}
     ${s.id === "II" && pca ? `<h3>Quadro de alinhamento ao PCA</h3><table><tr><th>Item</th><th>Descrição</th><th>Consta no PCA?</th><th>Sequencial</th></tr>${linhasPca}</table>` : ""}
     ${s.id === "V" ? quadroQuantitativos : ""}
     ${s.id === "VI" ? relatorioEstimativa : ""}
   `).join("");
 
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>ETP</title>
-<style>
-${cssPaginaWord(tamanhoTimbre)}
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
-  h1 { font-size: 16pt; text-align: center; margin-bottom: 2pt; letter-spacing: 0.3pt; }
-  .subtitulo { text-align: center; font-size: 10.5pt; font-style: italic; margin-bottom: 20pt; }
-  h2 { font-size: 12.5pt; text-align: center; margin-top: 20pt; margin-bottom: 8pt; text-transform: uppercase; letter-spacing: 0.3pt; }
-  h3 { font-size: 11pt; margin-top: 10pt; margin-bottom: 4pt; font-weight: bold; }
-  p { text-align: justify; text-justify: inter-word; margin: 0 0 10pt; }
-  .assinatura p { text-align: center; margin: 3pt 0; }
-  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 12pt; }
-  td, th { border: 1px solid #000; padding: 5px 7px; text-align: left; }
-  th { background: #ececec; font-weight: bold; }
-  .meta-table td { border: none; padding: 2.5px 0; font-size: 10.5pt; }
-  h4 { font-size: 11.5pt; font-weight: bold; margin: 10pt 0 4pt; }
-  h5 { font-size: 11pt; font-weight: bold; font-style: italic; margin: 8pt 0 4pt; }
-  h6 { font-size: 10.5pt; font-weight: bold; text-transform: uppercase; margin: 8pt 0 4pt; }
-  blockquote { margin: 8pt 20pt; padding-left: 10pt; border-left: 2pt solid #000; font-style: italic; }
-  hr { border: none; border-top: 1pt solid #000; margin: 10pt 0; }
-  .assinatura { text-align: center; margin-top: 40pt; page-break-inside: avoid; mso-pagination: widow-orphan; }
-</style>
-</head>
-<body>
-  <div class="Section1">
-  <h1>ESTUDO TÉCNICO PRELIMINAR</h1>
-  <p class="subtitulo">Lei nº 14.133/2021 · art. 18</p>
-  <table class="meta-table">
-    <tr><td width="140"><b>Objeto:</b></td><td>${escapeHtml(objetoCompleto(etp) || "-")}</td></tr>
-    <tr><td><b>Órgão:</b></td><td>${escapeHtml(etp.meta.orgao || "-")}</td></tr>
-    <tr><td><b>Setor:</b></td><td>${escapeHtml(etp.meta.setor || "-")}</td></tr>
-    <tr><td><b>Responsável:</b></td><td>${escapeHtml(resumoResponsaveis)}</td></tr>
-    <tr><td><b>Processo:</b></td><td>${escapeHtml(etp.meta.processo || "-")}</td></tr>
-    <tr><td><b>Data:</b></td><td>${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}</td></tr>
-  </table>
-  ${etp.meta.introducao?.trim() ? `<h2>Introdução</h2><p>${escapeHtml(etp.meta.introducao).replace(/\n/g, "<br/>")}</p>` : ""}
-  ${secoesHtml}
-  <div class="assinatura">
-    <p>${escapeHtml(linhaAssinaturaData(etp))}</p>
-    ${responsaveis.length > 0
-      ? responsaveis.map(r => `<p style="margin-top: 40pt">_______________________________________</p><p><b>${escapeHtml(r.nome)}</b></p><p>${escapeHtml(r.cargo || "")}</p>`).join("")
-      : `<p style="margin-top: 40pt">_______________________________________</p><p><b>[Responsável técnico]</b></p>`}
-  </div>
-  </div>
-${blocoCabecalhoWord(timbreDataUrl, tamanhoTimbre)}
-</body>
-</html>`;
+  const assinaturas = responsaveis.length > 0
+    ? responsaveis.map(r =>
+        `<p style="text-align:center">&nbsp;</p>
+         <p style="text-align:center">_______________________________________</p>
+         <p style="text-align:center"><b>${escapeHtml(r.nome)}</b></p>
+         ${r.cargo ? `<p style="text-align:center">${escapeHtml(r.cargo)}</p>` : ""}`).join("")
+    : `<p style="text-align:center">&nbsp;</p>
+       <p style="text-align:center">_______________________________________</p>
+       <p style="text-align:center"><b>[Responsável técnico]</b></p>`;
 
-  const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `ETP_${(etp.meta.titulo || "documento").trim().replace(/[^\w\-]+/g, "_").slice(0, 50) || "documento"}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const html = `
+<h1 style="text-align:center">ESTUDO TÉCNICO PRELIMINAR</h1>
+<p style="text-align:center"><i>Lei nº 14.133/2021 · art. 18</i></p>
+<table>
+  <tr><td><b>Objeto</b></td><td>${escapeHtml(objetoCompleto(etp) || "-")}</td></tr>
+  <tr><td><b>Órgão</b></td><td>${escapeHtml(etp.meta.orgao || "-")}</td></tr>
+  <tr><td><b>Setor</b></td><td>${escapeHtml(etp.meta.setor || "-")}</td></tr>
+  <tr><td><b>Responsável</b></td><td>${escapeHtml(resumoResponsaveis)}</td></tr>
+  <tr><td><b>Processo</b></td><td>${escapeHtml(etp.meta.processo || "-")}</td></tr>
+  <tr><td><b>Data</b></td><td>${fmtDateISO(etp.meta.data) || fmtDate(Date.now())}</td></tr>
+</table>
+${etp.meta.introducao?.trim() ? `<h2 style="text-align:center">Introdução</h2><p>${escapeHtml(etp.meta.introducao).replace(/\n/g, "<br/>")}</p>` : ""}
+${secoesHtml}
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center">${escapeHtml(linhaAssinaturaData(etp))}</p>
+${assinaturas}`;
+
+  baixarDocx({
+    corpoOoxml: htmlParaOoxml(html),
+    cabecalho: cab,
+    nomeArquivo: `ETP_${(etp.meta.processo || todayISO()).replace(/[^\w-]/g, "_")}.docx`,
+  });
 }
 
 // Estatísticas de uma lista de cotações (art. 23, §1º, II da Lei 14.133/2021)
@@ -1398,75 +1713,7 @@ ${linhas}
 `.trim();
 }
 
-// Chamada à API da Anthropic para gerar rascunho de texto de uma seção
-async function gerarRascunhoIA({ etp, section, instrucoes }) {
-  const itensResumo = (etp.itens || []).slice(0, 15).map(i => `- ${i.descricao || "(sem descrição)"} (${i.quantidade || "?"} ${i.unidade})`).join("\n");
 
-  let pcaResumo = "";
-  if (section.id === "II" && etp.pca) {
-    const itens = etp.itens || [];
-    const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
-    pcaResumo = `\nAlinhamento ao PCA (já verificado no app): ${encontrados} de ${itens.length} itens localizados no Plano de Contratações Anual (planilha "${etp.pca.nomeArquivo}", importada em ${fmtDate(etp.pca.importedAt)}).`;
-  }
-
-  const contexto = `
-Você é um servidor público brasileiro especializado em licitações, redigindo a minuta de um Estudo Técnico Preliminar (ETP) nos termos do art. 18 da Lei nº 14.133/2021.
-
-Dados do processo:
-- Objeto: ${objetoCompleto(etp) || "(não informado)"}
-- Órgão/Secretaria: ${etp.meta.orgao || "(não informado)"}
-- Setor requisitante: ${etp.meta.setor || "(não informado)"}
-- Tipo de objeto: ${etp.meta.tipo}
-- Nº do processo: ${etp.meta.processo || "(não informado)"}
-${itensResumo ? `\nItens envolvidos:\n${itensResumo}` : ""}${pcaResumo}
-
-Redija o texto do inciso ${section.id} — "${section.titulo}" deste ETP.
-Orientação sobre o conteúdo esperado deste inciso: ${section.ajuda}
-${instrucoes ? `\nInstruções adicionais do servidor responsável: ${instrucoes}` : ""}
-
-Escreva em português formal, redação de documento administrativo, de forma objetiva (2 a 4 parágrafos), citando dispositivos legais quando pertinente. Não use markdown, apenas texto corrido em parágrafos. Não invente dados numéricos específicos que não foram fornecidos — quando faltar um dado concreto, use uma indicação genérica entre colchetes, por ex. [inserir valor], para o servidor completar.`.trim();
-
-  const text = (await callClaude(contexto, 1000)).trim();
-  if (!text) throw new Error("Resposta vazia da IA");
-
-  // Nas seções V/VI o conteúdo é HTML (editor com formatação) — converte os parágrafos em <p>
-  if (isRichSection(section.id)) {
-    return text.split(/\n{2,}/).map(par => `<p>${escapeHtml(par.trim()).replace(/\n/g, "<br/>")}</p>`).join("\n");
-  }
-  return text;
-}
-
-// Gera um título de objeto resumido a partir da planilha de itens já cadastrada
-async function gerarObjetoIA({ etp }) {
-  const itens = etp.itens || [];
-  if (itens.length === 0) throw new Error("Cadastre os itens antes de gerar o objeto.");
-  const classificacoes = [...new Set(itens.map(i => i.classificacao).filter(Boolean))];
-  const listaItens = itens.slice(0, 60).map(i => `- ${i.descricao}${i.classificacao ? ` (${i.classificacao})` : ""}`).join("\n");
-  const verbo = etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI" ? "Contratação" : "Aquisição";
-
-  const contexto = `
-Você é um servidor público brasileiro especializado em licitações. Sua tarefa é LER a lista de itens abaixo com
-atenção — perceba do que eles realmente se tratam (tipo de material, finalidade, área de uso) — e escrever o
-TÍTULO DO OBJETO de uma contratação pública em UMA única frase curta.
-
-FORMATO OBRIGATÓRIO: comece exatamente com "${verbo} de" e descreva de forma sintética e específica a natureza
-dos itens listados (ex.: "Aquisição de materiais de copa e cozinha e utensílios domésticos", "Aquisição de
-brinquedos e materiais recreativos", "Aquisição de equipamentos de informática"). NÃO inclua o nome do órgão, do
-setor, nem a expressão "para atender às necessidades de..." — isso é acrescentado depois, em outra etapa. Não
-liste os itens um a um; sintetize a categoria predominante em poucas palavras.
-
-Tipo de objeto: ${etp.meta.tipo}
-${classificacoes.length ? `Classificações presentes nos itens: ${classificacoes.join(", ")}` : ""}
-
-Itens que compõem a contratação:
-${listaItens}${itens.length > 60 ? `\n(+ ${itens.length - 60} outros itens)` : ""}
-
-Responda APENAS com a frase do objeto (começando com "${verbo} de"), sem aspas, sem explicações, sem markdown.`.trim();
-
-  const text = (await callClaude(contexto, 300)).trim().replace(/^["']|["']$/g, "");
-  if (!text) throw new Error("Resposta vazia da IA");
-  return text;
-}
 
 // Modelo padrão do inciso II (alinhamento ao PCA), sem chamada de IA — usa o resultado do cruzamento
 // já feito na etapa "2. Alinhamento ao PCA" (mesmos dados, nenhuma nova ingestão).
@@ -1964,6 +2211,14 @@ export default function App() {
     });
   }
 
+  function updateExcluidos(incisosExcluidos) {
+    setCurrent(prev => {
+      const next = { ...prev, incisosExcluidos, updatedAt: Date.now() };
+      persist(next);
+      return next;
+    });
+  }
+
   function updateSolucoesMercado(solucoesMercado) {
     setCurrent(prev => {
       const next = { ...prev, solucoesMercado, updatedAt: Date.now() };
@@ -2075,11 +2330,8 @@ export default function App() {
           onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa}
           onExcluirJustificativa={excluirJustificativa} onDuplicarJustificativa={duplicarJustificativa}
           onGerenciarSecretarias={() => setView("secretarias")}
-          onSettings={() => setView("settings")}
         />
       )}
-
-      {view === "settings" && <SettingsView onBack={() => setView("list")} />}
 
       {view === "secretarias" && (
         <SecretariasView secretarias={secretarias} onSalvar={salvarSecretaria}
@@ -2101,7 +2353,7 @@ export default function App() {
         <EditorView
           etp={current} activeSection={activeSection} setActiveSection={setActiveSection}
           onMeta={updateMeta} onSection={updateSection} onItens={updateItens} onCotacoes={updateCotacoes}
-          onSolucoesMercado={updateSolucoesMercado}
+          onSolucoesMercado={updateSolucoesMercado} onExcluidos={updateExcluidos} secretarias={secretarias}
           onValoresAdotados={updateValoresAdotados} onPca={updatePca}
           saveState={saveState} onBack={backToList} onPreview={() => setView("preview")}
         />
@@ -2110,76 +2362,6 @@ export default function App() {
       {view === "preview" && current && (
         <PreviewView etp={current} secretarias={secretarias} onBack={() => setView("editor")} />
       )}
-    </div>
-  );
-}
-
-// ---------- Configurações ----------
-function SettingsView({ onBack }) {
-  const [key, setKey] = useState(() => getApiKey());
-  const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null); // "ok" | "erro" | null
-
-  function handleSave() {
-    setApiKey(key);
-    setSaved(true);
-    setTestResult(null);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  async function handleTest() {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      await callClaude("Responda apenas: ok", 10);
-      setTestResult("ok");
-    } catch (e) {
-      console.error(e);
-      setTestResult("erro");
-    }
-    setTesting(false);
-  }
-
-  return (
-    <div className="max-w-2xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
-      <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Configurações</h1>
-      <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
-        Necessário só para o botão "Gerar com IA" do título do objeto, em Dados do Processo. Os 13 incisos do ETP
-        não usam mais chamada de API — usam prompts prontos pra copiar em ferramentas gratuitas.
-      </p>
-
-      <div className="p-5 rounded-xl border bg-white" style={{ borderColor: C.border }}>
-        <label className="block mb-2">
-          <span className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5" style={{ color: C.inkMuted }}>
-            <Key size={13} /> Chave de API da Anthropic
-          </span>
-          <input type="password" value={key} onChange={e => setKey(e.target.value)}
-            placeholder="sk-ant-..."
-            className="mt-2 w-full px-3 py-2.5 rounded-lg border text-sm font-mono" style={{ borderColor: C.border }} />
-        </label>
-
-        <div className="flex items-center gap-2 mt-3">
-          <button onClick={handleSave}
-            className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: C.navy, color: C.paper }}>
-            {saved ? "Salvo!" : "Salvar"}
-          </button>
-          <button onClick={handleTest} disabled={testing || !key}
-            className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ background: C.paperDark, color: C.navy }}>
-            {testing ? "Testando..." : "Testar chave"}
-          </button>
-          {testResult === "ok" && <span className="text-xs flex items-center gap-1" style={{ color: C.green }}><Check size={13} /> Funcionando</span>}
-          {testResult === "erro" && <span className="text-xs flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={13} /> Chave inválida ou sem acesso</span>}
-        </div>
-
-        <p className="text-xs mt-4 leading-relaxed" style={{ color: C.inkMuted }}>
-          Crie uma chave em <b>console.anthropic.com</b> → API Keys. Ela fica salva só neste navegador
-          (localStorage), nunca é enviada a nenhum servidor além da própria Anthropic.
-        </p>
-      </div>
     </div>
   );
 }
@@ -2249,26 +2431,80 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
               </label>
             </div>
 
-            <div className="flex items-center gap-3 flex-wrap pt-3 border-t" style={{ borderColor: C.border }}>
-              {sec.timbre ? (
-                <img src={sec.timbre} alt="Timbre" className="rounded border" style={{ maxHeight: "44px", borderColor: C.border }} />
-              ) : (
-                <span className="text-xs" style={{ color: C.inkMuted }}>Sem timbre próprio — usará o timbre geral do app</span>
-              )}
-              <input type="file" accept="image/*" className="hidden"
-                ref={el => { fileRefs.current[sec.id] = el; }}
-                onChange={e => trocarTimbre(sec, e)} />
-              <button onClick={() => fileRefs.current[sec.id]?.click()}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium"
-                style={{ background: C.paperDark, color: C.navy }}>
-                <Upload size={12} /> {sec.timbre ? "Trocar timbre" : "Definir timbre"}
-              </button>
-              {sec.timbre && (
-                <button onClick={() => onSalvar({ ...sec, timbre: null })}
-                  className="text-xs font-medium" style={{ color: C.red }}>Remover</button>
+            <div className="pt-3 border-t" style={{ borderColor: C.border }}>
+              <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
+                Timbre desta secretaria
+              </span>
+
+              <div className="inline-flex p-1 rounded-lg mb-3" style={{ background: C.paperDark }}>
+                {[
+                  { v: "imagem", r: "Imagem" },
+                  { v: "texto", r: "Texto" },
+                  { v: "nenhum", r: "Nenhum" },
+                ].map(op => {
+                  const ativo = (sec.tipoTimbre || "imagem") === op.v;
+                  return (
+                    <button key={op.v} onClick={() => onSalvar({ ...sec, tipoTimbre: op.v })}
+                      className="px-3 py-1 rounded-md text-xs font-semibold"
+                      style={{
+                        background: ativo ? "white" : "transparent",
+                        color: ativo ? C.navy : C.inkMuted,
+                        boxShadow: ativo ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                      }}>
+                      {op.r}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {(sec.tipoTimbre || "imagem") === "imagem" && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  {sec.timbre ? (
+                    <img src={sec.timbre} alt="Timbre" className="rounded border" style={{ maxHeight: "44px", borderColor: C.border }} />
+                  ) : (
+                    <span className="text-xs" style={{ color: C.inkMuted }}>Sem imagem própria — usará o timbre geral do app</span>
+                  )}
+                  <input type="file" accept="image/*" className="hidden"
+                    ref={el => { fileRefs.current[sec.id] = el; }}
+                    onChange={e => trocarTimbre(sec, e)} />
+                  <button onClick={() => fileRefs.current[sec.id]?.click()}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium"
+                    style={{ background: C.paperDark, color: C.navy }}>
+                    <Upload size={12} /> {sec.timbre ? "Trocar imagem" : "Enviar imagem"}
+                  </button>
+                  {sec.timbre && (
+                    <button onClick={() => onSalvar({ ...sec, timbre: null })}
+                      className="text-xs font-medium" style={{ color: C.red }}>Remover</button>
+                  )}
+                </div>
               )}
 
-              <div className="ml-auto">
+              {(sec.tipoTimbre || "imagem") === "texto" && (
+                <div>
+                  <RichTextEditor value={sec.timbreHtml || ""} onChange={v => onSalvar({ ...sec, timbreHtml: v })} />
+                  <p className="text-[10px] mt-1.5" style={{ color: C.inkMuted }}>
+                    Escreva o cabeçalho como texto formatado. Ele entra no cabeçalho de todas as páginas do
+                    documento, centralizado e com uma linha embaixo.
+                  </p>
+                  {!sec.timbreHtml?.trim() && (
+                    <button onClick={() => onSalvar({ ...sec, timbreHtml:
+                      `<p style="text-align:center"><b>PREFEITURA MUNICIPAL DE RIO VERDE</b></p><p style="text-align:center">${escapeHtml(sec.nome || "[nome da secretaria]")}</p>` })}
+                      className="mt-2 px-2.5 py-1.5 rounded-md text-xs font-medium"
+                      style={{ background: C.brass, color: C.navyDark }}>
+                      Usar modelo padrão
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {(sec.tipoTimbre || "imagem") === "nenhum" && (
+                <p className="text-xs" style={{ color: C.inkMuted }}>
+                  Os documentos desta secretaria sairão sem cabeçalho — útil quando o timbre é aplicado
+                  depois, por outro sistema ou em papel timbrado impresso.
+                </p>
+              )}
+
+              <div className="flex justify-end mt-3">
                 {secretarias.length <= 1 ? (
                   <span className="text-[10px]" style={{ color: C.inkMuted }}>A última secretaria não pode ser excluída</span>
                 ) : confirmId === sec.id ? (
@@ -2387,7 +2623,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onOpen, onNew, onDelete, onDuplicar,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
-  onGerenciarSecretarias, onSettings }) {
+  onGerenciarSecretarias }) {
   const [confirmId, setConfirmId] = useState(null);
 
   function handleDeleteClick(id, e) {
@@ -2443,11 +2679,6 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           <h1 className="serif text-3xl font-semibold" style={{ color: C.navy }}>Gerador de ETP</h1>
           <p className="text-sm mt-1" style={{ color: C.inkMuted }}>Estudos Técnicos Preliminares — organizados, completos e salvos automaticamente.</p>
         </div>
-        <button onClick={onSettings}
-          className="flex items-center gap-2 px-3 py-2.5 rounded-lg font-medium text-sm border shrink-0"
-          style={{ borderColor: C.border, color: C.navy, background: "white" }} title="Configurações">
-          <Settings size={16} />
-        </button>
       </div>
 
       <div className="flex items-center gap-2 mb-6 flex-wrap p-3 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
@@ -2691,72 +2922,6 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   );
 }
 
-// ---------- Editor View ----------
-// ---------- Prompt de IA ----------
-function PromptIAView({ etp }) {
-  const [promptGerado, setPromptGerado] = useState("");
-  const [copied, setCopied] = useState(false);
-  const totalPreenchidos = SECOES.filter(s => etp.sections[s.id]?.trim()).length;
-
-  function gerar() {
-    setPromptGerado(gerarPromptGeralIA(etp));
-    setCopied(false);
-  }
-
-  async function copiar() {
-    if (!promptGerado) return;
-    try {
-      await navigator.clipboard.writeText(promptGerado);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (e) { console.error(e); }
-  }
-
-  return (
-    <div>
-      <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>5. Prompt de IA</h2>
-      <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Monta um único prompt pedindo os 13 tópicos do ETP de uma vez — cada um com sua instrução técnica
-        específica, mais os dados já cadastrados neste processo — para colar em qualquer IA gratuita (ChatGPT,
-        Gemini, Claude etc.) e trazer as respostas de volta pro campo de texto de cada inciso.
-      </p>
-
-      <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
-        <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
-        Prefere gerar um tópico de cada vez? Cada inciso (I a XIII) já tem seu próprio botão
-        "Gerar prompt deste tópico" — mais rápido quando você só precisa de um.
-      </div>
-
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-xs" style={{ color: C.inkMuted }}>{totalPreenchidos}/13 incisos já preenchidos</span>
-      </div>
-
-      <button onClick={gerar}
-        className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
-        style={{ background: C.navy, color: C.paper }}>
-        <Sparkles size={15} /> Gerar prompt com os 13 tópicos
-      </button>
-
-      {promptGerado && (
-        <div className="mt-5 rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
-          <div className="flex items-center justify-between px-4 py-2.5 border-b flex-wrap gap-2" style={{ borderColor: C.border, background: C.paperDark }}>
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-              Prompt gerado — todos os incisos
-            </span>
-            <button onClick={copiar}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-              style={{ background: C.navy, color: C.paper }}>
-              <Copy size={13} /> {copied ? "Copiado!" : "Copiar"}
-            </button>
-          </div>
-          <textarea readOnly value={promptGerado} rows={14}
-            className="w-full px-4 py-3 text-xs font-mono leading-relaxed resize-y"
-            style={{ border: "none", outline: "none", color: C.ink }} />
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
@@ -2769,10 +2934,11 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
   // A planilha do PCA é uma tabela de referência compartilhada entre todas as declarações —
   // fica numa chave própria para não duplicar milhares de linhas em cada documento.
   const [pca, setPca] = useState(null);
-  const [timbreGlobal, setTimbreGlobal] = useState(null);
+  const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
-  const timbre = resolverTimbre(doc, secretarias, timbreGlobal);
+  const cabecalho = resolverCabecalho(doc, secretarias, timbreGlobal);
+  const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   const fileItensRef = useRef(null);
   const filePcaRef = useRef(null);
@@ -2861,7 +3027,7 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
       const sequencialExibido = pcaRow ? (pcaRow.sequencial || "-") : manualSequencial;
       return `<tr><td>${idx + 1}</td><td>${escapeHtml(codigoExibido)}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(sequencialExibido)}</td></tr>`;
     }).join("");
-    gerarDocumentoPCAAvulso({ objeto, orgao, timbreDataUrl: timbre, linhasTabela }).catch(e => console.error(e));
+    gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }).catch(e => console.error(e));
   }
 
   function irParaJustificativa() {
@@ -3124,10 +3290,11 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
 function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
   const campos = doc.campos;
   const conteudo = doc.conteudo || "";
-  const [timbreGlobal, setTimbreGlobal] = useState(null);
+  const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
   const [loading, setLoading] = useState(true);
   const [modoPreview, setModoPreview] = useState(false);
-  const timbre = resolverTimbre(doc, secretarias, timbreGlobal);
+  const cabecalho = resolverCabecalho(doc, secretarias, timbreGlobal);
+  const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   useEffect(() => {
     storage.get("timbre:padrao", false)
@@ -3148,7 +3315,7 @@ function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
   }
 
   function baixarDocumento() {
-    gerarDocumentoJustificativaWord({ conteudoHtml: conteudo, timbreDataUrl: timbre }).catch(e => console.error(e));
+    gerarDocumentoJustificativaWord({ conteudoHtml: conteudo, cabecalho }).catch(e => console.error(e));
   }
 
   const camposPreenchidos = Object.values(campos).filter(v => v?.trim?.()).length;
@@ -3267,25 +3434,60 @@ function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
   );
 }
 
-function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes, onValoresAdotados, onPca, onSolucoesMercado, saveState, onBack, onPreview }) {
+function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes,
+  onValoresAdotados, onPca, onSolucoesMercado, onExcluidos, secretarias, saveState, onBack, onPreview }) {
   const p = progress(etp);
+  const numeros = numeracaoFinal(etp);
+  const excluidos = etp.incisosExcluidos || [];
 
+  // Leva o documento até o inciso escolhido, em vez de trocar de tela
+  function irParaInciso(id) {
+    setActiveSection("documento");
+    requestAnimationFrame(() => {
+      const alvo = document.getElementById(`inciso-${id}`);
+      if (alvo) alvo.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  const etapas = [
+    { id: "itens", rotulo: "1. Planilha de Itens", pronto: (etp.itens || []).length > 0 },
+    { id: "pca", rotulo: "2. Alinhamento ao PCA", pronto: !!etp.pca },
+    { id: "meta", rotulo: "3. Dados do Processo", pronto: !!etp.meta.titulo?.trim() },
+    { id: "cotacoes", rotulo: "4. Levantamento de Preços", pronto: valorTotalEtp(etp) > 0 },
+  ];
+
+  const itemMenu = (ativo, conteudo, aoClicar, chave) => (
+    <button key={chave} onClick={aoClicar}
+      className="w-full text-left px-4 py-2.5 text-xs border-l-4 flex items-center gap-2"
+      style={{
+        borderColor: ativo ? C.brass : "transparent",
+        background: ativo ? "rgba(166,131,46,0.15)" : "transparent",
+        color: ativo ? C.brassLight : "#B7C0CC",
+      }}>
+      {conteudo}
+    </button>
+  );
 
   return (
     <div className="flex flex-col h-full min-h-screen">
-      <header className="no-print flex items-center justify-between px-6 py-3 border-b sticky top-0 z-10"
+      <header className="no-print flex items-center justify-between px-6 py-3 border-b sticky top-0 z-30"
         style={{ background: C.navy, borderColor: C.navyDark }}>
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-1.5 rounded-md hover:bg-white/10" style={{ color: C.paper }}>
+        <div className="flex items-center gap-3 min-w-0">
+          <button onClick={onBack} className="p-1.5 rounded-md hover:bg-white/10 shrink-0" style={{ color: C.paper }}>
             <ArrowLeft size={18} />
           </button>
-          <span className="serif text-sm font-medium" style={{ color: C.paper }}>
-            {etp.meta.titulo || "Novo ETP"}
-          </span>
+          <div className="min-w-0">
+            <span className="serif text-sm font-medium block truncate" style={{ color: C.paper }}>
+              {etp.meta.titulo || "Novo ETP"}
+            </span>
+            {etp.meta.processo && (
+              <span className="text-[10px]" style={{ color: "#B7C0CC" }}>Proc. {etp.meta.processo}</span>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-xs" style={{ color: C.brassLight }}>
-            {saveState === "saving" ? "Salvando..." : "Salvo"}
+        <div className="flex items-center gap-4 shrink-0">
+          <span className="text-xs" style={{ color: saveState === "saving" ? C.brassLight : "#9FE0B0" }}>
+            {saveState === "saving" ? "Salvando..." : "● Salvo"}
           </span>
           <button onClick={onPreview}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
@@ -3296,105 +3498,75 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar: dossiê index tabs */}
-        <nav className="no-print w-56 shrink-0 overflow-y-auto etp-scroll" style={{ background: C.navyDark }}>
-          <button
-            onClick={() => setActiveSection("itens")}
-            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4 flex items-center justify-between"
-            style={{
-              borderColor: activeSection === "itens" ? C.brass : "transparent",
-              background: activeSection === "itens" ? "rgba(166,131,46,0.15)" : "transparent",
-              color: activeSection === "itens" ? C.brassLight : "#B7C0CC",
-            }}>
-            <span>1. Planilha de Itens</span>
-            {etp.itens?.length > 0 && <span className="text-[10px] font-normal">{etp.itens.length}</span>}
-          </button>
-          <button
-            onClick={() => setActiveSection("pca")}
-            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4 flex items-center justify-between"
-            style={{
-              borderColor: activeSection === "pca" ? C.brass : "transparent",
-              background: activeSection === "pca" ? "rgba(166,131,46,0.15)" : "transparent",
-              color: activeSection === "pca" ? C.brassLight : "#B7C0CC",
-            }}>
-            <span>2. Alinhamento ao PCA</span>
-            {etp.pca && <Check size={12} style={{ color: C.green }} />}
-          </button>
-          <button
-            onClick={() => setActiveSection("meta")}
-            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4"
-            style={{
-              borderColor: activeSection === "meta" ? C.brass : "transparent",
-              background: activeSection === "meta" ? "rgba(166,131,46,0.15)" : "transparent",
-              color: activeSection === "meta" ? C.brassLight : "#B7C0CC",
-            }}>
-            3. Dados do Processo
-          </button>
-          <button
-            onClick={() => setActiveSection("cotacoes")}
-            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4"
-            style={{
-              borderColor: activeSection === "cotacoes" ? C.brass : "transparent",
-              background: activeSection === "cotacoes" ? "rgba(166,131,46,0.15)" : "transparent",
-              color: activeSection === "cotacoes" ? C.brassLight : "#B7C0CC",
-            }}>
-            4. Levantamento de Preços
-          </button>
-          <button
-            onClick={() => setActiveSection("promptia")}
-            className="w-full text-left px-4 py-3 text-xs font-semibold tracking-wide uppercase border-l-4"
-            style={{
-              borderColor: activeSection === "promptia" ? C.brass : "transparent",
-              background: activeSection === "promptia" ? "rgba(166,131,46,0.15)" : "transparent",
-              color: activeSection === "promptia" ? C.brassLight : "#B7C0CC",
-            }}>
-            5. Prompt de IA
-          </button>
-          <div className="h-px mx-4 my-2" style={{ background: "rgba(255,255,255,0.08)" }} />
+        {/* Índice lateral — agrupado, com rolagem até o inciso em vez de troca de tela */}
+        <nav className="no-print w-60 shrink-0 overflow-y-auto etp-scroll" style={{ background: C.navyDark }}>
+          <div className="px-4 pt-4 pb-1 text-[9.5px] font-bold tracking-widest uppercase" style={{ color: C.brass }}>
+            Preparação
+          </div>
+          {etapas.map(et => itemMenu(activeSection === et.id, (
+            <>
+              <span className="flex-1">{et.rotulo}</span>
+              {et.pronto && <Check size={12} className="shrink-0" style={{ color: C.green }} />}
+            </>
+          ), () => setActiveSection(et.id), et.id))}
+
+          <div className="px-4 pt-4 pb-1 text-[9.5px] font-bold tracking-widest uppercase" style={{ color: C.brass }}>
+            Documento — art. 18
+          </div>
+          {itemMenu(activeSection === "documento", (
+            <span className="flex-1 font-semibold">Abrir documento completo</span>
+          ), () => setActiveSection("documento"), "documento")}
+
           {SECOES.map(s => {
-            const filled = etp.sections[s.id]?.trim().length > 0;
-            const active = activeSection === s.id;
+            const fora = excluidos.includes(s.id);
+            const preenchido = !!etp.sections[s.id]?.trim();
             return (
-              <button key={s.id} onClick={() => setActiveSection(s.id)}
-                className="w-full text-left px-4 py-2.5 border-l-4 flex items-start gap-2"
-                style={{
-                  borderColor: active ? C.brass : "transparent",
-                  background: active ? "rgba(166,131,46,0.15)" : "transparent",
-                }}>
-                <span className="serif text-xs font-bold w-6 shrink-0 pt-0.5"
-                  style={{ color: active ? C.brassLight : "#8A93A3" }}>{s.id}</span>
-                <span className="text-xs leading-snug flex-1" style={{ color: active ? "#FFFFFF" : "#B7C0CC" }}>
-                  {s.titulo}
-                  {s.obrig && <span style={{ color: C.brassLight }}> *</span>}
+              <button key={s.id} onClick={() => irParaInciso(s.id)}
+                className="w-full text-left pl-6 pr-3 py-1.5 text-[11px] flex items-center gap-2 hover:bg-white/5"
+                style={{ color: fora ? "#5C6675" : "#B7C0CC", textDecoration: fora ? "line-through" : "none" }}>
+                <span className="serif font-bold w-7 shrink-0"
+                  style={{ color: fora ? "#5C6675" : (preenchido ? C.brassLight : "#8A93A3") }}>
+                  {numeros[s.id] || s.id}
                 </span>
-                {filled && <Check size={12} className="mt-0.5 shrink-0" style={{ color: C.green }} />}
+                <span className="flex-1 leading-tight truncate">{s.titulo}</span>
+                <span className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ background: fora ? "transparent" : preenchido ? C.green : (s.obrig ? C.red : "#4A5568") }} />
               </button>
             );
           })}
-          <div className="px-4 py-3 mt-2 text-xs" style={{ color: "#8A93A3" }}>
-            {p.filled}/{p.total} seções · {p.reqFilled}/{p.reqTotal} obrigatórias
+
+          <div className="px-4 py-3 mt-2 text-[11px]" style={{ color: "#8A93A3" }}>
+            {Object.keys(numeros).length}/13 no documento
+            {excluidos.length > 0 && ` · ${excluidos.length} fora`}
+            <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.1)" }}>
+              <div className="h-full rounded-full" style={{
+                width: `${Math.round((p.reqFilled / p.reqTotal) * 100)}%`,
+                background: p.reqFilled === p.reqTotal ? C.green : C.brass,
+              }} />
+            </div>
+            <div className="mt-1" style={{ color: p.reqFilled === p.reqTotal ? C.green : C.brassLight }}>
+              {p.reqFilled}/{p.reqTotal} obrigatórios
+            </div>
           </div>
         </nav>
 
-        {/* Main panel */}
         <main className="flex-1 overflow-y-auto etp-scroll" style={{ background: C.paper }}>
-          <div className="max-w-3xl mx-auto px-8 py-10">
-            {activeSection === "meta" ? (
-              <MetaForm etp={etp} onMeta={onMeta} />
-            ) : activeSection === "itens" ? (
-              <ItemsForm etp={etp} onItens={onItens} onMeta={onMeta} />
-            ) : activeSection === "pca" ? (
-              <PCAForm etp={etp} onPca={onPca} />
-            ) : activeSection === "cotacoes" ? (
-              <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
-            ) : activeSection === "promptia" ? (
-              <PromptIAView etp={etp} />
-            ) : (
-              <SectionForm etp={etp} section={SECOES.find(s => s.id === activeSection)} value={etp.sections[activeSection]}
-                onChange={v => onSection(activeSection, v)} onSolucoesMercado={onSolucoesMercado}
-                setActiveSection={setActiveSection} />
-            )}
-          </div>
+          {activeSection === "documento" ? (
+            <DocumentoIncisos etp={etp} onSection={onSection} onSolucoesMercado={onSolucoesMercado}
+              onExcluidos={onExcluidos} secretarias={secretarias} />
+          ) : (
+            <div className="max-w-3xl mx-auto px-8 py-10">
+              {activeSection === "meta" ? (
+                <MetaForm etp={etp} onMeta={onMeta} />
+              ) : activeSection === "itens" ? (
+                <ItemsForm etp={etp} onItens={onItens} onMeta={onMeta} />
+              ) : activeSection === "pca" ? (
+                <PCAForm etp={etp} onPca={onPca} />
+              ) : (
+                <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
+              )}
+            </div>
+          )}
         </main>
       </div>
     </div>
@@ -3420,17 +3592,36 @@ function MetaForm({ etp, onMeta }) {
     if (!etp.meta.data) onMeta("data", todayISO());
   }, [etp.id]);
 
-  async function handleGerarObjeto() {
-    setLoading(true);
+  // Sugere o título a partir das classificações dos itens já cadastrados, sem depender de IA
+  function handleSugerirObjeto() {
     setError("");
-    try {
-      const texto = await gerarObjetoIA({ etp });
-      onMeta("titulo", texto);
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "Não foi possível gerar o objeto agora.");
+    const itens = etp.itens || [];
+    if (itens.length === 0) {
+      setError('Cadastre os itens na etapa "1. Planilha de Itens" primeiro.');
+      return;
     }
-    setLoading(false);
+    const verbo = etp.meta.tipo === "Serviços comuns" || etp.meta.tipo === "Serviços de TI"
+      ? "Contratação de" : "Aquisição de";
+
+    // Agrupa pelas classificações mais frequentes da planilha
+    const contagem = {};
+    itens.forEach(i => {
+      const c = (i.classificacao || "").trim();
+      if (c) contagem[c] = (contagem[c] || 0) + 1;
+    });
+    const principais = Object.entries(contagem)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([c]) => c.toLowerCase());
+
+    if (principais.length === 0) {
+      setError("Os itens não têm classificação preenchida — escreva o objeto manualmente.");
+      return;
+    }
+    const lista = principais.length === 1
+      ? principais[0]
+      : principais.slice(0, -1).join(", ") + " e " + principais[principais.length - 1];
+    onMeta("titulo", `${verbo} ${lista}`);
   }
 
   return (
@@ -3445,17 +3636,16 @@ function MetaForm({ etp, onMeta }) {
         <input value={etp.meta.titulo} onChange={e => onMeta("titulo", e.target.value)}
           placeholder="Ex.: Aquisição de brinquedos e materiais recreativos"
           className="flex-1 px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border, background: "white" }} />
-        <button onClick={handleGerarObjeto} disabled={loading}
-          title="Gerar a partir da Planilha de Itens"
-          className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium shrink-0 disabled:opacity-60"
-          style={{ background: C.navy, color: C.paper }}>
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-          {loading ? "Gerando..." : "Gerar com IA"}
+        <button onClick={handleSugerirObjeto}
+          title="Monta o título a partir das classificações da Planilha de Itens"
+          className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium shrink-0"
+          style={{ background: C.brass, color: C.navyDark }}>
+          <FileEdit size={13} /> Sugerir
         </button>
       </div>
       <p className="text-xs mb-2" style={{ color: C.inkMuted }}>
-        Cadastre os itens na aba "Planilha de Itens" primeiro — o botão analisa o que está lá e resume só o
-        "Aquisição de...". O órgão entra depois, automaticamente, no objeto completo do documento.
+        O botão "Sugerir" monta o título a partir das classificações dos itens já cadastrados. O setor e o
+        órgão entram depois, automaticamente, no objeto completo do documento.
       </p>
       {etp.meta.titulo?.trim() && (
         <div className="mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.ink }}>
@@ -3641,28 +3831,20 @@ function MetaForm({ etp, onMeta }) {
 // ---------- Editor com formatação (negrito, listas, tabela) ----------
 // Usa contentEditable + document.execCommand — simples, sem dependências externas.
 // O conteúdo é guardado como HTML dentro de etp.sections[id].
-function RichTextEditor({ value, onChange }) {
-  const ref = useRef(null);
+// ---------- Barra de formatação ----------
+// Age sobre o campo que estiver em foco no momento, como no Word. Por isso pode ser
+// compartilhada por vários editores ao mesmo tempo — os botões nunca roubam o foco.
+function BarraFormatacao({ aoAlterar, rotuloAlvo }) {
   const [linhasTabela, setLinhasTabela] = useState(3);
   const [colunasTabela, setColunasTabela] = useState(3);
   const [showTabelaConfig, setShowTabelaConfig] = useState(false);
 
-  useEffect(() => {
-    // Só sincroniza o DOM quando o valor muda de fora (ex.: "Usar modelo padrão"),
-    // para não atropelar o cursor enquanto o usuário digita.
-    if (ref.current && ref.current.innerHTML !== (value || "")) {
-      ref.current.innerHTML = value || "";
-    }
-  }, [value]);
-
   function exec(cmd, arg = null) {
-    ref.current?.focus();
     document.execCommand(cmd, false, arg);
-    onChange(ref.current?.innerHTML || "");
+    aoAlterar?.();
   }
 
   function inserirTabela() {
-    ref.current?.focus();
     const linhas = Math.min(30, Math.max(1, Number(linhasTabela) || 3));
     const colunas = Math.min(12, Math.max(1, Number(colunasTabela) || 3));
     let html = '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><tbody>';
@@ -3675,83 +3857,144 @@ function RichTextEditor({ value, onChange }) {
     }
     html += "</tbody></table><p><br/></p>";
     document.execCommand("insertHTML", false, html);
-    onChange(ref.current?.innerHTML || "");
+    aoAlterar?.();
     setShowTabelaConfig(false);
   }
 
-  const btn = (label, onClick, title, active) => (
+  const btn = (label, onClick, title) => (
     <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClick} title={title}
       className="px-2.5 py-1.5 rounded text-xs font-medium hover:bg-black/5"
-      style={{ color: C.navy, background: active ? "rgba(166,131,46,0.15)" : "transparent" }}>
+      style={{ color: C.navy }}>
       {label}
     </button>
   );
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
-      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b flex-wrap" style={{ borderColor: C.border, background: C.paperDark }}>
-        <select onMouseDown={e => e.stopPropagation()} onChange={e => { exec("formatBlock", e.target.value); e.target.value = ""; }}
-          defaultValue="" className="px-2 py-1.5 rounded text-xs font-medium bg-white border mr-0.5" style={{ borderColor: C.border, color: C.navy }}
-          title="Estilo do parágrafo">
-          <option value="" disabled>Estilo</option>
-          <option value="<p>">Parágrafo normal</option>
-          <option value="<h4>">Título 1</option>
-          <option value="<h5>">Título 2</option>
-          <option value="<h6>">Título 3</option>
-          <option value="<blockquote>">Citação</option>
-        </select>
-        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn(<b>N</b>, () => exec("bold"), "Negrito")}
-        {btn(<i>I</i>, () => exec("italic"), "Itálico")}
-        {btn(<u>S</u>, () => exec("underline"), "Sublinhado")}
-        {btn(<span style={{ textDecoration: "line-through" }}>T</span>, () => exec("strikeThrough"), "Tachado")}
-        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn("⯇", () => exec("justifyLeft"), "Alinhar à esquerda")}
-        {btn("☰", () => exec("justifyCenter"), "Centralizar")}
-        {btn("⯈", () => exec("justifyRight"), "Alinhar à direita")}
-        {btn("☰☰", () => exec("justifyFull"), "Justificar")}
-        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn("• Lista", () => exec("insertUnorderedList"), "Lista com marcadores")}
-        {btn("1. Lista", () => exec("insertOrderedList"), "Lista numerada")}
-        {btn("⇥", () => exec("indent"), "Aumentar recuo")}
-        {btn("⇤", () => exec("outdent"), "Diminuir recuo")}
-        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        <div className="relative">
-          {btn(<span className="flex items-center gap-1"><TableIcon size={13} /> Tabela</span>, () => setShowTabelaConfig(v => !v), "Inserir tabela (tamanho configurável)")}
-          {showTabelaConfig && (
-            <div className="absolute top-full left-0 mt-1 z-20 flex items-center gap-2 p-2.5 rounded-lg border shadow-lg" style={{ background: "white", borderColor: C.border }}>
-              <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
-                Linhas
-                <input type="number" min="1" max="30" value={linhasTabela} onChange={e => setLinhasTabela(e.target.value)}
-                  className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
-              </label>
-              <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
-                Colunas
-                <input type="number" min="1" max="12" value={colunasTabela} onChange={e => setColunasTabela(e.target.value)}
-                  className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
-              </label>
-              <button type="button" onMouseDown={e => e.preventDefault()} onClick={inserirTabela}
-                className="px-2.5 py-1 rounded text-xs font-medium" style={{ background: C.navy, color: C.paper }}>
-                Inserir
-              </button>
-            </div>
-          )}
-        </div>
-        {btn("— Linha", () => exec("insertHorizontalRule"), "Inserir linha horizontal")}
-        <span className="w-px h-4 mx-1" style={{ background: C.border }} />
-        {btn("⌫ Limpar", () => exec("removeFormat"), "Limpar formatação")}
-        {btn("↶", () => exec("undo"), "Desfazer")}
-        {btn("↷", () => exec("redo"), "Refazer")}
+    <div className="flex items-center gap-0.5 px-3 py-1.5 flex-wrap">
+      <select onMouseDown={e => e.stopPropagation()}
+        onChange={e => { exec("formatBlock", e.target.value); e.target.value = ""; }}
+        defaultValue="" className="px-2 py-1.5 rounded text-xs font-medium bg-white border mr-1"
+        style={{ borderColor: C.border, color: C.navy }} title="Estilo do parágrafo">
+        <option value="" disabled>Estilo</option>
+        <option value="<p>">Parágrafo normal</option>
+        <option value="<h4>">Título 1</option>
+        <option value="<h5>">Título 2</option>
+        <option value="<h6>">Título 3</option>
+        <option value="<blockquote>">Citação</option>
+      </select>
+      <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+      {btn(<b>N</b>, () => exec("bold"), "Negrito")}
+      {btn(<i>I</i>, () => exec("italic"), "Itálico")}
+      {btn(<u>S</u>, () => exec("underline"), "Sublinhado")}
+      {btn(<span style={{ textDecoration: "line-through" }}>T</span>, () => exec("strikeThrough"), "Tachado")}
+      <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+      {btn("⯇", () => exec("justifyLeft"), "Alinhar à esquerda")}
+      {btn("☰", () => exec("justifyCenter"), "Centralizar")}
+      {btn("⯈", () => exec("justifyRight"), "Alinhar à direita")}
+      {btn("☰☰", () => exec("justifyFull"), "Justificar")}
+      <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+      {btn("• Lista", () => exec("insertUnorderedList"), "Lista com marcadores")}
+      {btn("1. Lista", () => exec("insertOrderedList"), "Lista numerada")}
+      {btn("⇥", () => exec("indent"), "Aumentar recuo")}
+      {btn("⇤", () => exec("outdent"), "Diminuir recuo")}
+      <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+      <div className="relative">
+        {btn(<span className="flex items-center gap-1"><TableIcon size={13} /> Tabela</span>,
+          () => setShowTabelaConfig(v => !v), "Inserir tabela")}
+        {showTabelaConfig && (
+          <div className="absolute top-full left-0 mt-1 z-30 flex items-center gap-2 p-2.5 rounded-lg border shadow-lg"
+            style={{ background: "white", borderColor: C.border }}>
+            <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
+              Linhas
+              <input type="number" min="1" max="30" value={linhasTabela} onChange={e => setLinhasTabela(e.target.value)}
+                className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
+            </label>
+            <label className="flex items-center gap-1 text-xs" style={{ color: C.inkMuted }}>
+              Colunas
+              <input type="number" min="1" max="12" value={colunasTabela} onChange={e => setColunasTabela(e.target.value)}
+                className="w-12 px-1 py-1 rounded border text-xs text-center" style={{ borderColor: C.border }} />
+            </label>
+            <button type="button" onMouseDown={e => e.preventDefault()} onClick={inserirTabela}
+              className="px-2.5 py-1 rounded text-xs font-medium" style={{ background: C.navy, color: C.paper }}>
+              Inserir
+            </button>
+          </div>
+        )}
       </div>
-      <div
-        ref={ref}
-        contentEditable
-        suppressContentEditableWarning
-        onInput={() => onChange(ref.current?.innerHTML || "")}
-        onBlur={() => onChange(ref.current?.innerHTML || "")}
+      {btn("— Linha", () => exec("insertHorizontalRule"), "Inserir linha horizontal")}
+      <span className="w-px h-4 mx-1" style={{ background: C.border }} />
+      {btn("⌫", () => exec("removeFormat"), "Limpar formatação")}
+      {btn("↶", () => exec("undo"), "Desfazer")}
+      {btn("↷", () => exec("redo"), "Refazer")}
+      {rotuloAlvo && (
+        <span className="ml-auto text-[11px] px-2.5 py-1 rounded-full"
+          style={{ background: C.paperDark, color: C.inkMuted }}>
+          {rotuloAlvo}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ---------- Campo de texto formatado ----------
+// Sincroniza o HTML só quando o valor muda de fora (ex.: "Usar modelo padrão"), para não
+// atropelar o cursor enquanto se digita.
+function CampoFormatado({ value, onChange, onFocus, placeholder, minHeight = "70px" }) {
+  const ref = useRef(null);
+  const [vazio, setVazio] = useState(!value);
+
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value || "")) {
+      ref.current.innerHTML = value || "";
+      setVazio(!ref.current.textContent.trim());
+    }
+  }, [value]);
+
+  function aoDigitar() {
+    const html = ref.current?.innerHTML || "";
+    setVazio(!ref.current?.textContent.trim());
+    onChange(html);
+  }
+
+  return (
+    <div className="relative">
+      {vazio && placeholder && (
+        <span className="absolute pointer-events-none px-2 py-1.5 text-sm italic"
+          style={{ color: "#B9B4A6" }}>{placeholder}</span>
+      )}
+      <div ref={ref} contentEditable suppressContentEditableWarning
+        onInput={aoDigitar} onBlur={aoDigitar} onFocus={onFocus}
+        className="px-2 py-1.5 text-sm leading-relaxed text-justify rounded-md"
+        style={{ minHeight, outline: "none", border: "1px solid transparent" }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = C.border; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = "transparent"; }} />
+    </div>
+  );
+}
+
+// Mantido para as telas que usam um editor isolado (timbre em texto da Secretaria)
+function RichTextEditor({ value, onChange }) {
+  const ref = useRef(null);
+  const [versao, setVersao] = useState(0);
+
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value || "")) ref.current.innerHTML = value || "";
+  }, [value]);
+
+  function sincronizar() {
+    onChange(ref.current?.innerHTML || "");
+    setVersao(v => v + 1);
+  }
+
+  return (
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+      <div className="border-b" style={{ borderColor: C.border, background: C.paperDark }}>
+        <BarraFormatacao aoAlterar={sincronizar} />
+      </div>
+      <div ref={ref} contentEditable suppressContentEditableWarning
+        onInput={sincronizar} onBlur={sincronizar}
         className="px-4 py-3 text-sm leading-relaxed"
-        style={{ minHeight: "280px", background: "white", outline: "none" }}
-      />
+        style={{ minHeight: "160px", background: "white", outline: "none" }} />
     </div>
   );
 }
@@ -3909,131 +4152,249 @@ function SolucoesMercadoManager({ solucoes, onChange }) {
   );
 }
 
-function SectionForm({ etp, section, value, onChange, onSolucoesMercado, setActiveSection }) {
-  const [promptGerado, setPromptGerado] = useState("");
-  const [showPromptModal, setShowPromptModal] = useState(false);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const rich = isRichSection(section.id);
+// ---------- Documento contínuo dos incisos ----------
+// Todos os 13 incisos numa página só, no formato do documento final. A barra de formatação
+// fica fixa no topo e age sobre o inciso em foco, como no Word.
+function DocumentoIncisos({ etp, onSection, onSolucoesMercado, onExcluidos, secretarias }) {
+  const [focado, setFocado] = useState(null);
+  const [promptAberto, setPromptAberto] = useState(null); // { id, texto }
+  const [copiado, setCopiado] = useState(false);
+  const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
 
-  function handleModeloPadrao() {
-    const gerar = MODELOS_PADRAO[section.id];
-    if (gerar) onChange(textoParaHtml(gerar(etp)));
+  useEffect(() => {
+    storage.get("timbre:padrao", false)
+      .then(r => setTimbreGlobal(r?.value || TIMBRE_PADRAO))
+      .catch(() => {});
+  }, []);
+
+  const excluidos = etp.incisosExcluidos || [];
+  const numeros = numeracaoFinal(etp);
+  const cabecalho = resolverCabecalho(etp, secretarias, timbreGlobal);
+
+  function alternarExclusao(id, obrigatorio) {
+    if (!excluidos.includes(id) && obrigatorio) {
+      const ok = window.confirm(
+        `O inciso ${id} é de preenchimento obrigatório pelo art. 18, §2º, da Lei nº 14.133/2021.\n\n` +
+        `Os demais podem ser dispensados justificadamente, mas este exige fundamentação específica.\n\n` +
+        `Deseja mesmo deixá-lo fora deste ETP?`);
+      if (!ok) return;
+    }
+    onExcluidos(excluidos.includes(id) ? excluidos.filter(x => x !== id) : [...excluidos, id]);
   }
 
-  function gerarPromptTopico() {
-    setPromptGerado(gerarPromptIA(etp, section.id));
-    setCopiedPrompt(false);
-    setShowPromptModal(true);
+  function usarModelo(id) {
+    const gerar = MODELOS_PADRAO[id];
+    if (gerar) onSection(id, textoParaHtml(gerar(etp)));
   }
 
-  async function copiarPromptTopico() {
-    if (!promptGerado) return;
+  function abrirPrompt(id) {
+    setPromptAberto({ id, texto: gerarPromptIA(etp, id) });
+    setCopiado(false);
+  }
+
+  async function copiarPrompt() {
     try {
-      await navigator.clipboard.writeText(promptGerado);
-      setCopiedPrompt(true);
-      setTimeout(() => setCopiedPrompt(false), 2000);
+      await navigator.clipboard.writeText(promptAberto.texto);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
     } catch (e) { console.error(e); }
   }
 
-  const indiceAtual = SECOES.findIndex(s => s.id === section.id);
-  const anterior = indiceAtual > 0 ? SECOES[indiceAtual - 1] : null;
-  const proximo = indiceAtual < SECOES.length - 1 ? SECOES[indiceAtual + 1] : null;
-
-  const temModeloPadrao = !!MODELOS_PADRAO[section.id];
-  const bloqueadoPorPca = section.id === "II" && !(etp.pca && etp.itens?.length > 0);
-  const textoPlano = rich ? (value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : (value || "").trim();
+  const secaoFocada = SECOES.find(s => s.id === focado);
+  const totalNoDoc = Object.keys(numeros).length;
 
   return (
     <div>
-      <div className="flex items-baseline gap-2 mb-1 flex-wrap">
-        <span className="serif text-lg font-bold" style={{ color: C.brass }}>{section.id}</span>
-        <h2 className="serif text-2xl font-semibold" style={{ color: C.navy }}>{section.titulo}</h2>
-        {section.obrig && (
-          <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full"
-            style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>Obrigatório</span>
-        )}
+      {/* Barra de formatação fixa */}
+      <div className="sticky top-0 z-20 border-b" style={{ background: "white", borderColor: C.border }}>
+        <BarraFormatacao
+          rotuloAlvo={secaoFocada ? `Editando: ${numeros[secaoFocada.id] || secaoFocada.id} — ${secaoFocada.titulo}` : "Clique num inciso para editar"} />
       </div>
-      <p className="text-sm mb-3" style={{ color: C.inkMuted }}>{section.ajuda}</p>
 
-      {section.id === "IV" && (
-        <SolucoesMercadoManager solucoes={etp.solucoesMercado || []} onChange={onSolucoesMercado} />
-      )}
-
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        {temModeloPadrao && (
-          <button onClick={handleModeloPadrao} disabled={bloqueadoPorPca}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
-            style={{ background: C.brass, color: C.navyDark }}
-            title={bloqueadoPorPca
-              ? 'Importe a planilha do PCA na etapa "2. Alinhamento ao PCA" primeiro'
-              : "Preenche com o texto-modelo salvo no app — grátis, sem IA e sem API"}>
-            <FileEdit size={13} /> Usar modelo padrão (sem IA)
+      <div className="max-w-3xl mx-auto px-6 py-7">
+        {/* Resumo do documento */}
+        <div className="flex items-center gap-2 mb-5 p-3 rounded-lg text-xs flex-wrap"
+          style={{ background: C.paperDark, color: C.inkMuted }}>
+          <FileText size={14} style={{ color: C.brass }} />
+          <span><b style={{ color: C.navy }}>{totalNoDoc}</b> de 13 incisos entrarão no documento</span>
+          {excluidos.length > 0 && <span>· {excluidos.length} deixado(s) de fora</span>}
+          <button onClick={() => { setPromptAberto({ id: "todos", texto: gerarPromptGeralIA(etp) }); setCopiado(false); }}
+            className="ml-auto px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
+            style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}
+            title="Monta um único texto pedindo os 13 incisos de uma vez">
+            ⧉ Texto para IA externa · todos
           </button>
-        )}
-        <button onClick={gerarPromptTopico}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-          style={{ background: C.navy, color: C.paper }}
-          title="Monta um prompt pronto pra colar em qualquer IA gratuita — sem custo de API">
-          <Sparkles size={13} /> Gerar prompt deste tópico
-        </button>
+        </div>
+
+        {/* Folha do documento */}
+        <div className="rounded-xl border p-10 shadow-sm" style={{ background: "white", borderColor: C.border }}>
+          {cabecalho.tipo === "imagem" && cabecalho.dataUrl && (
+            <div className="pb-4 mb-6 border-b text-center" style={{ borderColor: C.border }}>
+              <img src={cabecalho.dataUrl} alt="Timbre" style={{ maxHeight: "70px", maxWidth: "100%", margin: "0 auto" }} />
+            </div>
+          )}
+          {cabecalho.tipo === "texto" && cabecalho.html && (
+            <div className="pb-4 mb-6 border-b text-center rich-content text-xs" style={{ borderColor: C.border, color: C.ink }}
+              dangerouslySetInnerHTML={{ __html: cabecalho.html }} />
+          )}
+
+          <h2 className="serif text-xl font-semibold text-center mb-1" style={{ color: C.navy }}>
+            ESTUDO TÉCNICO PRELIMINAR
+          </h2>
+          <p className="text-xs text-center italic mb-7" style={{ color: C.inkMuted }}>
+            Lei nº 14.133/2021 · art. 18
+          </p>
+
+          {SECOES.map(s => {
+            const fora = excluidos.includes(s.id);
+            const numero = numeros[s.id];
+            const mudou = numero && numero !== s.id;
+            const preenchido = !!etp.sections[s.id]?.trim();
+            const emFoco = focado === s.id;
+
+            if (fora) {
+              return (
+                <div key={s.id} className="flex items-center gap-2 my-1.5 px-3 py-2 rounded-lg text-xs"
+                  style={{ background: C.paperDark, color: C.inkMuted }}>
+                  <X size={12} className="shrink-0" style={{ color: C.red }} />
+                  <span><b style={{ color: C.ink }}>{s.id} — {s.titulo}</b> · fora deste ETP</span>
+                  <button onClick={() => alternarExclusao(s.id, s.obrig)}
+                    className="ml-auto px-2.5 py-1 rounded-md text-[10px] font-semibold shrink-0"
+                    style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
+                    Incluir de volta
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <section key={s.id} id={`inciso-${s.id}`} className="group py-3 rounded-lg"
+                style={{
+                  background: emFoco ? "rgba(166,131,46,0.035)" : "transparent",
+                  boxShadow: emFoco ? "-14px 0 0 rgba(166,131,46,0.035), 14px 0 0 rgba(166,131,46,0.035)" : "none",
+                  scrollMarginTop: "110px",
+                }}
+                onClick={() => setFocado(s.id)}>
+
+                <div className="flex items-baseline gap-2 justify-center flex-wrap mb-1">
+                  <h3 className="serif text-sm font-bold uppercase tracking-wide" style={{ color: C.navy }}>
+                    {numero || s.id} — {s.titulo}
+                  </h3>
+                  {s.obrig && (
+                    <span className="text-[8.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                      style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>Obrigatório</span>
+                  )}
+                  {mudou && (
+                    <span className="text-[8.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                      style={{ background: "rgba(166,131,46,0.15)", color: C.brass }}>
+                      era {s.id} · sairá como {numero}
+                    </span>
+                  )}
+                  {!preenchido && (
+                    <span className="text-[8.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                      style={{ background: C.paperDark, color: C.inkMuted }}>vazio · não sairá</span>
+                  )}
+                </div>
+                <p className="text-[11px] text-center italic mb-2" style={{ color: C.inkMuted }}>{s.ajuda}</p>
+
+                <div className="flex items-center gap-1.5 justify-center mb-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ opacity: emFoco ? 1 : undefined }}>
+                  {MODELOS_PADRAO[s.id] && (
+                    <button onClick={e => { e.stopPropagation(); usarModelo(s.id); }}
+                      className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
+                      style={{ background: C.brass, color: C.navyDark }}
+                      title="Preenche com o texto-modelo do app — grátis, sem IA">
+                      ✎ Modelo padrão
+                    </button>
+                  )}
+                  <button onClick={e => { e.stopPropagation(); abrirPrompt(s.id); }}
+                    className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
+                    style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}
+                    title="Abre o texto pronto para você revisar e levar a uma IA gratuita">
+                    ⧉ Texto para IA externa
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); alternarExclusao(s.id, s.obrig); }}
+                    className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
+                    style={{ background: "white", color: C.red, border: "1px solid rgba(166,64,61,0.3)" }}
+                    title="Deixa este inciso fora do documento final">
+                    × Não incluir
+                  </button>
+                </div>
+
+                {s.id === "IV" && (
+                  <div onClick={e => e.stopPropagation()}>
+                    <SolucoesMercadoManager solucoes={etp.solucoesMercado || []} onChange={onSolucoesMercado} />
+                  </div>
+                )}
+
+                <CampoFormatado
+                  value={etp.sections[s.id] || ""}
+                  onChange={v => onSection(s.id, v)}
+                  onFocus={() => setFocado(s.id)}
+                  placeholder="Clique para escrever, ou use o Modelo padrão acima…"
+                />
+
+                <QuadrosAutomaticos etp={etp} secaoId={s.id} />
+              </section>
+            );
+          })}
+
+          <div className="mt-9 pt-5 border-t text-center text-xs" style={{ borderColor: C.border, color: C.ink }}>
+            <p>{linhaAssinaturaData(etp)}</p>
+            {listaResponsaveis(etp).map(r => (
+              <div key={r.id} className="mt-7">
+                <p>_______________________________________</p>
+                <p className="font-semibold mt-1">{r.nome}</p>
+                {r.cargo && <p style={{ color: C.inkMuted }}>{r.cargo}</p>}
+              </div>
+            ))}
+            {listaResponsaveis(etp).length === 0 && (
+              <div className="mt-7" style={{ color: C.inkMuted }}>
+                <p>_______________________________________</p>
+                <p className="mt-1 italic">Cadastre o responsável em "Dados do Processo"</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {rich ? (
-        <RichTextEditor value={value} onChange={onChange} />
-      ) : (
-        <textarea value={value} onChange={e => onChange(e.target.value)} rows={16}
-          placeholder="Escreva o conteúdo deste item, use o modelo padrão, ou gere o prompt e cole a resposta de uma IA..."
-          className="w-full px-4 py-3 rounded-lg border text-sm leading-relaxed resize-y"
-          style={{ borderColor: C.border, background: "white", minHeight: "320px" }} />
-      )}
-      <p className="text-xs mt-2" style={{ color: C.inkMuted }}>
-        {textoPlano.length} caracteres
-        {rich ? " · Use a barra de formatação para negrito, listas e tabelas." : " · Revise sempre antes de formalizar."}
-      </p>
-
-      <div className="flex items-center justify-between mt-6 pt-4 border-t" style={{ borderColor: C.border }}>
-        <button onClick={() => anterior && setActiveSection(anterior.id)} disabled={!anterior}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-30"
-          style={{ background: C.paperDark, color: C.navy }}>
-          <ArrowLeft size={15} />
-          {anterior ? `${anterior.id} — ${anterior.titulo}` : "Início"}
-        </button>
-        <button onClick={() => proximo && setActiveSection(proximo.id)} disabled={!proximo}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-30"
-          style={{ background: C.navy, color: C.paper }}>
-          {proximo ? `${proximo.id} — ${proximo.titulo}` : "Fim"}
-          <span style={{ transform: "scaleX(-1)", display: "inline-block" }}><ArrowLeft size={15} /></span>
-        </button>
-      </div>
-
-      {showPromptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
-          onClick={() => setShowPromptModal(false)}>
+      {/* Pop-up do prompt — editável antes de copiar */}
+      {promptAberto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(18,32,50,0.6)" }} onClick={() => setPromptAberto(null)}>
           <div onClick={e => e.stopPropagation()}
-            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
-            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl" style={{ borderColor: C.border }}>
+            className="w-full max-w-2xl max-h-[88vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl"
+              style={{ borderColor: C.border }}>
               <div>
-                <h3 className="serif text-lg font-semibold" style={{ color: C.navy }}>Prompt do inciso {section.id}</h3>
+                <h3 className="serif text-lg font-semibold" style={{ color: C.navy }}>
+                  {promptAberto.id === "todos" ? "Texto para IA externa — todos os incisos" : `Texto para IA externa — inciso ${promptAberto.id}`}
+                </h3>
                 <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>
-                  Copie e cole numa IA gratuita (ChatGPT, Gemini, Claude etc.). Depois traga a resposta de volta e
-                  cole no campo de texto do inciso — feche este pop-up antes de colar, pra não misturar as duas telas.
+                  Revise ou ajuste abaixo, copie e cole numa IA gratuita (ChatGPT, Gemini etc.).
+                  Depois traga a resposta para o campo do inciso.
                 </p>
               </div>
-              <button onClick={() => setShowPromptModal(false)} className="shrink-0" style={{ color: C.inkMuted }}><X size={18} /></button>
+              <button onClick={() => setPromptAberto(null)} className="shrink-0" style={{ color: C.inkMuted }}>
+                <X size={20} />
+              </button>
             </div>
             <div className="p-5">
-              <textarea readOnly value={promptGerado} rows={16}
+              <textarea value={promptAberto.texto}
+                onChange={e => setPromptAberto({ ...promptAberto, texto: e.target.value })}
+                rows={16}
                 className="w-full px-3 py-2.5 rounded-lg border text-xs font-mono leading-relaxed resize-y"
                 style={{ borderColor: C.border, background: C.paperDark, color: C.ink }} />
               <div className="flex items-center justify-end gap-2 mt-3">
-                <button onClick={() => setShowPromptModal(false)}
-                  className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                <button onClick={() => setPromptAberto(null)}
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
                   Fechar
                 </button>
-                <button onClick={copiarPromptTopico}
+                <button onClick={copiarPrompt}
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium"
                   style={{ background: C.navy, color: C.paper }}>
-                  <Copy size={14} /> {copiedPrompt ? "Copiado!" : "Copiar prompt"}
+                  <Copy size={14} /> {copiado ? "Copiado!" : "Copiar"}
                 </button>
               </div>
             </div>
@@ -4042,6 +4403,88 @@ function SectionForm({ etp, section, value, onChange, onSolucoesMercado, setActi
       )}
     </div>
   );
+}
+
+// Quadros que o app monta sozinho e que aparecem dentro dos incisos II, V e VI
+function QuadrosAutomaticos({ etp, secaoId }) {
+  const marca = (titulo, conteudo, obs) => (
+    <div className="mt-3 mb-1 rounded-lg p-3"
+      style={{ border: `1px dashed ${C.brassLight}`, background: "rgba(166,131,46,0.045)" }}>
+      <p className="text-[9px] font-bold uppercase tracking-wide mb-2" style={{ color: C.brass }}>
+        ▦ Gerado automaticamente · {titulo}
+      </p>
+      {conteudo}
+      {obs && <p className="text-[9.5px] mt-1.5 italic" style={{ color: C.inkMuted }}>{obs}</p>}
+    </div>
+  );
+
+  if (secaoId === "II" && etp.pca && etp.itens?.length > 0) {
+    return marca("Alinhamento ao PCA", (
+      <table className="w-full text-[10.5px] border-collapse">
+        <thead>
+          <tr style={{ background: C.paperDark }}>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Item</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Descrição</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Consta?</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Sequencial</th>
+          </tr>
+        </thead>
+        <tbody>
+          {etp.itens.slice(0, 4).map((it, i) => {
+            const m = pcaMatchFor(it, etp.pca.linhas);
+            return (
+              <tr key={it.id}>
+                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{i + 1}</td>
+                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
+                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m ? "Sim" : "Não"}</td>
+                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m?.sequencial || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    ), etp.itens.length > 4
+      ? `Mostrando 4 de ${etp.itens.length} itens — o documento final traz todos.`
+      : "Vem da etapa 2 — Alinhamento ao PCA.");
+  }
+
+  if (secaoId === "V" && etp.itens?.length > 0) {
+    return marca("Quadro de quantitativos", (
+      <table className="w-full text-[10.5px] border-collapse">
+        <thead>
+          <tr style={{ background: C.paperDark }}>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Item</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Descrição</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Und.</th>
+            <th className="text-left px-2 py-1 border" style={{ borderColor: C.border }}>Qtd.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {etp.itens.slice(0, 4).map((it, i) => (
+            <tr key={it.id}>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{i + 1}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{it.unidade || ""}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{it.quantidade || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    ), etp.itens.length > 4
+      ? `Mostrando 4 de ${etp.itens.length} itens — o documento final traz todos.`
+      : "Vem da etapa 1 — Planilha de Itens.");
+  }
+
+  if (secaoId === "VI") {
+    const html = gerarRelatorioEstimativaHtml(etp);
+    if (!html) return null;
+    return marca("Comprobatório da estimativa de valor", (
+      <div className="text-[10.5px] rich-content" style={{ color: C.ink }}
+        dangerouslySetInnerHTML={{ __html: html }} />
+    ), "Vem da etapa 4 — Levantamento de Preços.");
+  }
+
+  return null;
 }
 
 // ---------- Planilha de Itens ----------
@@ -4810,13 +5253,14 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
 // ---------- Preview View ----------
 function PreviewView({ etp, secretarias, onBack }) {
   const [copied, setCopied] = useState(false);
-  const [timbreGlobal, setTimbre] = useState(null);
+  const [timbreGlobal, setTimbre] = useState(TIMBRE_PADRAO);
   const [timbreLoading, setTimbreLoading] = useState(true);
   const [timbreError, setTimbreError] = useState("");
   const timbreFileRef = useRef(null);
   // O timbre da secretaria do ETP tem prioridade; o gerenciado nesta tela é o timbre geral
   const secretariaDoEtp = secretariaDoDoc(etp, secretarias);
-  const timbre = secretariaDoEtp?.timbre || timbreGlobal;
+  const cabecalho = resolverCabecalho(etp, secretarias, timbreGlobal);
+  const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   useEffect(() => {
     storage.get("timbre:padrao", false)
@@ -4945,7 +5389,7 @@ function PreviewView({ etp, secretarias, onBack }) {
             style={{ background: C.paperDark, color: C.navy }}>
             <Copy size={13} /> {copied ? "Copiado!" : "Copiar texto"}
           </button>
-          <button onClick={() => gerarDocumentoWord(etp, timbre).catch(e => console.error(e))}
+          <button onClick={() => gerarDocumentoWord(etp, cabecalho).catch(e => console.error(e))}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{ background: C.paperDark, color: C.navy }}>
             <Download size={13} /> Baixar Word (.doc)
