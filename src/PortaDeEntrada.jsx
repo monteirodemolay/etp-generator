@@ -290,7 +290,9 @@ export default function PortaDeEntrada({ children }) {
           Sair
         </button>
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {typeof children === "function" ? children(usuario) : children}
+      </div>
     </div>
   );
 }

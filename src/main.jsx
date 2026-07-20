@@ -6,7 +6,7 @@ import PortaDeEntrada from "./PortaDeEntrada.jsx";
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <PortaDeEntrada>
-      <App />
+      {usuario => <App emailUsuario={usuario?.email || null} />}
     </PortaDeEntrada>
   </React.StrictMode>
 );

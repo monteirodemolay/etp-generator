@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Loader2, Info, Upload, Download, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, TrendingUp } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Loader2, Info, Upload, Download, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, TrendingUp, ChevronRight, Users } from "lucide-react";
 import storage from "./storage";
 
 // ---------- Design tokens ----------
@@ -121,17 +121,109 @@ function emptyEtp() {
 
 // Secretaria — unidade organizacional que agrupa os documentos (chave "sec:<id>").
 // Cada uma pode ter timbre próprio; sem timbre, cai no timbre geral do app.
-function emptySecretaria(nome, sigla) {
+// Tipos de entidade que podem contratar — nem toda unidade é uma secretaria
+const TIPOS_ENTIDADE = [
+  "Secretaria", "Fundo", "Autarquia", "Fundação",
+  "Empresa Pública", "Consórcio Público", "Outro",
+];
+
+function emptySecretaria(nome, sigla, tipo) {
   return {
     id: "sec_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
     nome: nome || "",
     sigla: sigla || "",
+    tipoEntidade: tipo || "Secretaria",
     tipoTimbre: "imagem", // "imagem" | "texto" | "nenhum"
     timbre: null,         // imagem, quando tipoTimbre = "imagem"
     timbreHtml: "",       // texto formatado, quando tipoTimbre = "texto"
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+// ---------- Usuários e permissões ----------
+// As SENHAS não ficam aqui: elas vivem no Firebase Authentication. Este cadastro guarda
+// apenas quem é a pessoa, qual o papel e a quais entidades ela tem acesso.
+const PAPEIS = {
+  admin: {
+    rotulo: "Administrador",
+    descricao: "Gerencia entidades, usuários e permissões, além de criar e excluir documentos.",
+  },
+  padrao: {
+    rotulo: "Usuário padrão",
+    descricao: "Cria e edita documentos das entidades que lhe forem atribuídas.",
+  },
+};
+
+// O que cada papel pode fazer. Serve para a interface esconder o que não cabe;
+// a barreira de verdade continua sendo as Regras de Segurança do Firestore.
+const PERMISSOES = {
+  admin: {
+    gerenciarUsuarios: true, gerenciarEntidades: true,
+    criarDocumentos: true, editarDocumentos: true,
+    excluirDocumentos: true, esvaziarLixeira: true,
+  },
+  padrao: {
+    gerenciarUsuarios: false, gerenciarEntidades: false,
+    criarDocumentos: true, editarDocumentos: true,
+    excluirDocumentos: true, esvaziarLixeira: false,
+  },
+};
+
+function emptyUsuario(email) {
+  return {
+    id: "usr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    email: (email || "").trim().toLowerCase(),
+    nomeCompleto: "",
+    cargo: "",
+    papel: "padrao",
+    entidades: [],          // ids das entidades a que tem acesso
+    entidadePrincipal: "",  // qual delas abre por padrão
+    ativo: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+// Encontra o cadastro do e-mail que está logado
+function usuarioPorEmail(usuarios, email) {
+  const alvo = String(email || "").trim().toLowerCase();
+  if (!alvo) return null;
+  return usuarios.find(u => u.email === alvo) || null;
+}
+
+// Permissões de quem está usando. Sem cadastro correspondente, trata como administrador:
+// só chega aqui quem já passou pelas Regras do Firestore, e isso evita travar o primeiro
+// acesso, quando ainda não há nenhum usuário cadastrado.
+function permissoesDe(usuario) {
+  if (!usuario) return { ...PERMISSOES.admin, papel: "admin", semCadastro: true };
+  if (!usuario.ativo) return { gerenciarUsuarios: false, gerenciarEntidades: false,
+    criarDocumentos: false, editarDocumentos: false, excluirDocumentos: false,
+    esvaziarLixeira: false, papel: usuario.papel, inativo: true };
+  return { ...PERMISSOES[usuario.papel || "padrao"], papel: usuario.papel || "padrao" };
+}
+
+// Entidades que a pessoa enxerga. Administrador vê todas; sem cadastro, também.
+function entidadesVisiveis(usuario, secretarias) {
+  if (!usuario || usuario.papel === "admin") return secretarias;
+  const permitidas = usuario.entidades || [];
+  const filtradas = secretarias.filter(s => permitidas.includes(s.id));
+  return filtradas.length > 0 ? filtradas : secretarias;
+}
+
+// Rótulo curto para a lista: "SEMAS e +2"
+function resumoEntidades(usuario, secretarias) {
+  if (!usuario) return "—";
+  if (usuario.papel === "admin") return "Todas as entidades";
+  const ids = usuario.entidades || [];
+  if (ids.length === 0) return "Nenhuma entidade atribuída";
+
+  const principalId = usuario.entidadePrincipal && ids.includes(usuario.entidadePrincipal)
+    ? usuario.entidadePrincipal : ids[0];
+  const principal = secretarias.find(s => s.id === principalId);
+  const nome = principal?.sigla || principal?.nome || "Entidade";
+  const extras = ids.length - 1;
+  return extras > 0 ? `${nome} e +${extras}` : nome;
 }
 
 // Secretaria a que um documento pertence. Documentos criados antes do cadastro de secretarias
@@ -2178,12 +2270,13 @@ const MODELOS_PADRAO = {
 };
 
 // ---------- App ----------
-export default function App() {
+export default function App({ emailUsuario = null }) {
   const [view, setView] = useState("list"); // list | editor | preview | justificativa | declaracao
   const [etps, setEtps] = useState([]);
   const [justificativas, setJustificativas] = useState([]);
   const [declaracoes, setDeclaracoes] = useState([]);
   const [secretarias, setSecretarias] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
   const [currentDecl, setCurrentDecl] = useState(null);
@@ -2217,11 +2310,12 @@ export default function App() {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
       carregarColecao("sec:"),
+      carregarColecao("usr:"),
     ]);
 
     // Primeiro acesso: cria a secretaria padrão para que todo documento tenha onde se apoiar.
@@ -2239,6 +2333,7 @@ export default function App() {
     setJustificativas(listaJust);
     setDeclaracoes(listaDecl);
     setSecretarias(secretariasFinais);
+    setUsuarios(listaUsr.sort((a, b) => (a.nomeCompleto || a.email).localeCompare(b.nomeCompleto || b.email)));
     setLoading(false);
   }, [carregarColecao]);
 
@@ -2304,6 +2399,23 @@ export default function App() {
     const copia = duplicarDocumento(etp, "etp");
     setEtps(prev => [copia, ...prev]);
     storage.set("etp:" + copia.id, JSON.stringify(copia), false).catch(() => {});
+  }
+
+  // ----- Usuários -----
+  function salvarUsuario(u) {
+    const atualizado = { ...u, updatedAt: Date.now() };
+    setUsuarios(prev => {
+      const existe = prev.some(x => x.id === atualizado.id);
+      return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
+    });
+    storage.set("usr:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+
+  async function excluirUsuario(id) {
+    try {
+      await storage.delete("usr:" + id, false);
+      setUsuarios(prev => prev.filter(x => x.id !== id));
+    } catch (err) { console.error(err); }
   }
 
   // ----- Secretarias -----
@@ -2486,6 +2598,11 @@ export default function App() {
     setView("list");
   }
 
+  // Quem está usando o sistema e o que pode fazer
+  const usuarioAtual = usuarioPorEmail(usuarios, emailUsuario);
+  const permissoes = permissoesDe(usuarioAtual);
+  const secretariasVisiveis = entidadesVisiveis(usuarioAtual, secretarias);
+
   // Filtro por secretaria — vale para as três coleções. Documentos antigos (sem secretariaId)
   // pertencem à primeira secretaria cadastrada, conforme secretariaDoDoc.
   function pertenceASecretariaAtiva(doc) {
@@ -2553,7 +2670,7 @@ export default function App() {
         <ListView
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
-          secretarias={secretarias} secretariaAtiva={secretariaAtiva} setSecretariaAtiva={setSecretariaAtiva}
+          secretarias={secretariasVisiveis} secretariaAtiva={secretariaAtiva} setSecretariaAtiva={setSecretariaAtiva}
           loading={loading} search={search} setSearch={setSearch}
           onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp} onDuplicar={duplicarEtp}
           onAbrirDeclaracao={abrirDeclaracao} onNovaDeclaracao={novaDeclaracao}
@@ -2563,6 +2680,8 @@ export default function App() {
           onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
           onExcluirSecretaria={excluirSecretaria}
           onRecarregar={loadList}
+          usuarios={usuarios} emailUsuario={emailUsuario} permissoes={permissoes}
+          onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario}
         />
       )}
 
@@ -2592,6 +2711,271 @@ export default function App() {
         <PreviewView etp={current} secretarias={secretarias} onBack={() => setView("editor")} />
       )}
     </div>
+  );
+}
+
+// ---------- Usuários e permissões ----------
+function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNovo, onExcluir }) {
+  const [editando, setEditando] = useState(null);   // id em edição
+  const [confirmId, setConfirmId] = useState(null);
+  const [novoEmail, setNovoEmail] = useState("");
+  const [erro, setErro] = useState("");
+
+  function criar(e) {
+    e.preventDefault();
+    const email = novoEmail.trim().toLowerCase();
+    if (!email) return;
+    if (usuarios.some(u => u.email === email)) {
+      setErro("Já existe um cadastro com este e-mail.");
+      return;
+    }
+    setErro("");
+    const u = emptyUsuario(email);
+    onNovo(u);
+    setNovoEmail("");
+    setEditando(u.id);
+  }
+
+  function alternarEntidade(u, entId) {
+    const atuais = u.entidades || [];
+    const novas = atuais.includes(entId) ? atuais.filter(x => x !== entId) : [...atuais, entId];
+    const principal = novas.includes(u.entidadePrincipal) ? u.entidadePrincipal : (novas[0] || "");
+    onSalvar({ ...u, entidades: novas, entidadePrincipal: principal });
+  }
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+            <Building2 size={15} />
+            <span className="text-xs font-semibold tracking-widest uppercase">Controle de acesso</span>
+          </div>
+          <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Usuários e permissões</h1>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2 p-3 rounded-lg mb-5 text-xs leading-relaxed"
+        style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+        <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+        <span>
+          <b>As senhas não ficam neste cadastro.</b> Elas são criadas e alteradas no Firebase
+          Authentication — guardá-las aqui deixaria qualquer pessoa com acesso ao computador lê-las.
+          Cadastre a pessoa lá primeiro (com o mesmo e-mail) e depois defina aqui o papel e as entidades.
+        </span>
+      </div>
+
+      {/* Novo usuário */}
+      <form onSubmit={criar} className="rounded-xl border p-4 mb-5" style={{ borderColor: C.border, background: "white" }}>
+        <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
+          Cadastrar pessoa
+        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="email" value={novoEmail} onChange={e => setNovoEmail(e.target.value)}
+            placeholder="e-mail cadastrado no Firebase"
+            className="flex-1 min-w-[220px] px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+          <button type="submit" disabled={!novoEmail.trim()}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+            style={{ background: C.navy, color: C.paper }}>
+            <Plus size={15} /> Adicionar
+          </button>
+        </div>
+        {erro && <p className="text-xs mt-2" style={{ color: C.red }}>{erro}</p>}
+      </form>
+
+      {usuarios.length === 0 ? (
+        <div className="text-center py-12 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Nenhum usuário cadastrado</p>
+          <p className="text-sm max-w-md mx-auto" style={{ color: C.inkMuted }}>
+            Enquanto não houver cadastro, quem entrar no sistema é tratado como administrador —
+            o acesso já foi filtrado pelas Regras do Firebase.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {usuarios.map(u => {
+            const aberto = editando === u.id;
+            const souEu = u.email === String(emailAtual || "").toLowerCase();
+            const p = PAPEIS[u.papel] || PAPEIS.padrao;
+            return (
+              <div key={u.id} className="rounded-xl border" style={{
+                borderColor: aberto ? C.brass : C.border,
+                background: u.ativo === false ? C.paperDark : "white",
+              }}>
+                {/* Linha resumida */}
+                <button onClick={() => setEditando(aberto ? null : u.id)}
+                  className="w-full flex items-center gap-3 p-4 text-left">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: u.papel === "admin" ? "rgba(166,131,46,0.15)" : C.paperDark }}>
+                    <span className="serif text-xs font-bold"
+                      style={{ color: u.papel === "admin" ? C.brass : C.inkMuted }}>
+                      {(u.nomeCompleto || u.email).split(" ").map(x => x[0]).join("").slice(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: C.navy }}>
+                      {u.nomeCompleto || <span style={{ color: C.inkMuted, fontStyle: "italic" }}>Sem nome cadastrado</span>}
+                      {souEu && <span className="ml-1.5 text-[10px] font-normal" style={{ color: C.inkMuted }}>(você)</span>}
+                    </p>
+                    <p className="text-[11px] truncate" style={{ color: C.inkMuted }}>{u.email}</p>
+                  </div>
+                  <div className="hidden sm:block text-right shrink-0">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full"
+                      style={{
+                        background: u.papel === "admin" ? "rgba(166,131,46,0.15)" : C.paperDark,
+                        color: u.papel === "admin" ? C.brass : C.inkMuted,
+                      }}>
+                      {p.rotulo}
+                    </span>
+                    <p className="text-[11px] mt-1" style={{ color: C.inkMuted }}>
+                      {resumoEntidades(u, secretarias)}
+                    </p>
+                  </div>
+                  {u.ativo === false && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0"
+                      style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>Inativo</span>
+                  )}
+                  <ChevronRight size={16} className="shrink-0 transition-transform"
+                    style={{ color: C.inkMuted, transform: aberto ? "rotate(90deg)" : "none" }} />
+                </button>
+
+                {/* Detalhes */}
+                {aberto && (
+                  <div className="px-4 pb-4 border-t pt-4" style={{ borderColor: C.border }}>
+                    <div className="grid sm:grid-cols-2 gap-3 mb-4">
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                          Nome completo
+                        </span>
+                        <input value={u.nomeCompleto} onChange={e => onSalvar({ ...u, nomeCompleto: e.target.value })}
+                          placeholder="Ex.: Luís Eduardo Monteiro Lima"
+                          className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                          Cargo
+                        </span>
+                        <input value={u.cargo || ""} onChange={e => onSalvar({ ...u, cargo: e.target.value })}
+                          placeholder="Ex.: Analista Administrativo"
+                          className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+                      </label>
+                    </div>
+
+                    <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
+                      Papel
+                    </span>
+                    <div className="grid sm:grid-cols-2 gap-2 mb-4">
+                      {Object.entries(PAPEIS).map(([chave, info]) => (
+                        <label key={chave} className="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer"
+                          style={{
+                            borderColor: u.papel === chave ? C.brass : C.border,
+                            background: u.papel === chave ? "rgba(166,131,46,0.06)" : "white",
+                          }}>
+                          <input type="radio" name={`papel-${u.id}`} checked={u.papel === chave}
+                            onChange={() => onSalvar({ ...u, papel: chave })}
+                            className="mt-0.5" style={{ accentColor: C.brass }} />
+                          <span>
+                            <span className="block text-xs font-semibold" style={{ color: C.navy }}>{info.rotulo}</span>
+                            <span className="block text-[11px] leading-snug mt-0.5" style={{ color: C.inkMuted }}>
+                              {info.descricao}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {u.papel === "padrao" && (
+                      <>
+                        <span className="text-xs font-semibold uppercase tracking-wide block mb-1" style={{ color: C.inkMuted }}>
+                          Entidades a que tem acesso
+                        </span>
+                        <p className="text-[11px] mb-2" style={{ color: C.inkMuted }}>
+                          Marque as entidades. A estrela indica qual abre por padrão ao entrar.
+                        </p>
+                        <div className="space-y-1.5 mb-4">
+                          {secretarias.map(sec => {
+                            const marcada = (u.entidades || []).includes(sec.id);
+                            const principal = u.entidadePrincipal === sec.id;
+                            return (
+                              <div key={sec.id} className="flex items-center gap-2.5 p-2.5 rounded-lg border"
+                                style={{ borderColor: marcada ? C.brass : C.border, background: marcada ? "rgba(166,131,46,0.05)" : "white" }}>
+                                <input type="checkbox" checked={marcada}
+                                  onChange={() => alternarEntidade(u, sec.id)}
+                                  style={{ accentColor: C.brass }} className="w-4 h-4 shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium truncate" style={{ color: C.navy }}>
+                                    {sec.sigla ? `${sec.sigla} — ${sec.nome}` : (sec.nome || "Entidade sem nome")}
+                                  </p>
+                                  {sec.tipoEntidade && (
+                                    <p className="text-[10px]" style={{ color: C.inkMuted }}>{sec.tipoEntidade}</p>
+                                  )}
+                                </div>
+                                {marcada && (
+                                  <button onClick={() => onSalvar({ ...u, entidadePrincipal: sec.id })}
+                                    className="text-[10px] font-semibold px-2 py-1 rounded shrink-0"
+                                    style={{
+                                      background: principal ? C.brass : C.paperDark,
+                                      color: principal ? C.navyDark : C.inkMuted,
+                                    }}
+                                    title="Definir como entidade principal">
+                                    {principal ? "★ Principal" : "☆ Tornar principal"}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] mb-4 px-3 py-2 rounded-lg" style={{ background: C.paperDark, color: C.inkMuted }}>
+                          Resumo: <b style={{ color: C.ink }}>{resumoEntidades(u, secretarias)}</b>
+                        </p>
+                      </>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-3 border-t" style={{ borderColor: C.border }}>
+                      <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: C.ink }}>
+                        <input type="checkbox" checked={u.ativo !== false}
+                          onChange={e => onSalvar({ ...u, ativo: e.target.checked })}
+                          style={{ accentColor: C.green }} className="w-4 h-4" />
+                        Acesso ativo
+                      </label>
+
+                      <div className="ml-auto">
+                        {souEu ? (
+                          <span className="text-[10px]" style={{ color: C.inkMuted }}>
+                            Você não pode excluir o próprio cadastro
+                          </span>
+                        ) : confirmId === u.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px]" style={{ color: C.red }}>Excluir cadastro?</span>
+                            <button onClick={() => { onExcluir(u.id); setConfirmId(null); }}
+                              className="px-2 py-1 rounded text-[10px] font-semibold"
+                              style={{ background: C.red, color: "white" }}>Sim</button>
+                            <button onClick={() => setConfirmId(null)}
+                              className="px-2 py-1 rounded text-[10px] font-medium"
+                              style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setConfirmId(u.id)}
+                            className="flex items-center gap-1 text-[11px] font-medium" style={{ color: C.red }}>
+                            <Trash2 size={12} /> Excluir cadastro
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="text-[10.5px] mt-3 leading-relaxed" style={{ color: C.inkMuted }}>
+                      Excluir aqui remove as permissões, mas <b>não apaga a conta no Firebase</b> — para
+                      bloquear o acesso de vez, desative ou exclua o usuário no console do Firebase.
+                      Desmarcar "Acesso ativo" já impede o uso do sistema.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2631,41 +3015,54 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
             <Building2 size={16} />
             <span className="text-xs font-semibold tracking-widest uppercase">Organização</span>
           </div>
-          <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Secretarias</h1>
+          <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Entidades</h1>
         </div>
         <button onClick={onNova}
           className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold shrink-0"
           style={{ background: C.navy, color: C.paper }}>
-          <Plus size={15} /> Nova Secretaria
+          <Plus size={15} /> Nova Entidade
         </button>
       </div>
 
       <p className="text-sm mb-6" style={{ color: C.inkMuted }}>
-        Cada documento pertence a uma secretaria. O nome cadastrado aqui já entra preenchido no campo
-        "Órgão/Secretaria" dos documentos novos, e o timbre de cada uma é usado nos arquivos gerados.
+        Entidades são as unidades que contratam: secretarias, fundos, autarquias, fundações e afins.
+        Cada documento pertence a uma delas. O nome cadastrado aqui já entra preenchido no campo
+        "Órgão" dos documentos novos, e o timbre de cada uma é usado nos arquivos gerados.
       </p>
 
       <div className="space-y-3">
         {secretarias.map(sec => (
           <div key={sec.id} className="p-4 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
-            <div className="grid sm:grid-cols-[1fr,140px] gap-3 mb-3">
+            <div className="grid sm:grid-cols-[1fr,120px] gap-3 mb-3">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Nome</span>
                 <input value={sec.nome} onChange={e => onSalvar({ ...sec, nome: e.target.value })}
-                  placeholder="Ex.: Secretaria Municipal de Assistência Social"
+                  placeholder="Ex.: Fundo Municipal de Assistência Social"
                   className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
               </label>
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Sigla</span>
                 <input value={sec.sigla} onChange={e => onSalvar({ ...sec, sigla: e.target.value })}
-                  placeholder="Ex.: SEMAS"
+                  placeholder="Ex.: FMAS"
                   className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
               </label>
             </div>
 
+            <label className="block mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Natureza da entidade
+              </span>
+              <select value={sec.tipoEntidade || "Secretaria"}
+                onChange={e => onSalvar({ ...sec, tipoEntidade: e.target.value })}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white"
+                style={{ borderColor: C.border, maxWidth: "260px" }}>
+                {TIPOS_ENTIDADE.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+
             <div className="pt-3 border-t" style={{ borderColor: C.border }}>
               <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
-                Timbre desta secretaria
+                Timbre desta entidade
               </span>
 
               <div className="inline-flex p-1 rounded-lg mb-3" style={{ background: C.paperDark }}>
@@ -2738,7 +3135,7 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
 
               <div className="flex justify-end mt-3">
                 {secretarias.length <= 1 ? (
-                  <span className="text-[10px]" style={{ color: C.inkMuted }}>A última secretaria não pode ser excluída</span>
+                  <span className="text-[10px]" style={{ color: C.inkMuted }}>A última entidade não pode ser excluída</span>
                 ) : confirmId === sec.id ? (
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px]" style={{ color: C.red }}>Excluir?</span>
@@ -2748,7 +3145,7 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
                       className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
                   </div>
                 ) : (
-                  <button onClick={() => setConfirmId(sec.id)} style={{ color: C.red }} title="Excluir secretaria">
+                  <button onClick={() => setConfirmId(sec.id)} style={{ color: C.red }} title="Excluir entidade">
                     <Trash2 size={14} />
                   </button>
                 )}
@@ -2761,8 +3158,8 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
       <div className="mt-5 flex items-start gap-2 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
         <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
         <span>
-          Excluir uma secretaria não apaga os documentos dela — eles passam a aparecer sob a primeira
-          secretaria da lista. As alterações desta tela são salvas automaticamente.
+          Excluir uma entidade não apaga os documentos dela — eles passam a aparecer sob a primeira
+          entidade da lista. As alterações desta tela são salvas automaticamente.
         </span>
       </div>
     </div>
@@ -2893,7 +3290,7 @@ const DICAS = [
   "Use “Duplicar” numa contratação parecida do ano passado em vez de refazer o ETP do zero.",
   "Antes de finalizar, abra a Conformidade: ela aponta pendências que travam o processo.",
   "Incisos vazios não entram no documento. Para tirar um preenchido, use “Não incluir”.",
-  "Cada Secretaria pode ter timbre próprio — imagem, texto ou nenhum.",
+  "Cada Entidade pode ter timbre próprio — imagem, texto ou nenhum.",
   "Lance mais de uma cotação por item: a pesquisa de preços costuma exigir várias fontes.",
 ];
 
@@ -2985,7 +3382,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onOpen, onNew, onDelete, onDuplicar,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
-  onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar }) {
+  onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
+  usuarios, emailUsuario, permissoes, onSalvarUsuario, onExcluirUsuario }) {
 
   const [aba, setAba] = useState("painel");
   const [showGuia, setShowGuia] = useState(false);
@@ -3019,9 +3417,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
-    { id: "secretarias", rotulo: "Secretarias", icone: Building2, contador: secretarias.length },
+    { id: "secretarias", rotulo: "Entidades", icone: Building2, contador: secretarias.length, somenteAdmin: true },
+    { id: "usuarios", rotulo: "Usuários", icone: Users, contador: usuarios.length, somenteAdmin: true },
     { id: "backup", rotulo: "Backup", icone: Download },
-  ];
+  ].filter(m => !m.somenteAdmin || permissoes.gerenciarEntidades);
 
   // ---- Blocos reutilizados ----
   const cartao = (conteudo, extra = "") => (
@@ -3166,7 +3565,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
             <select value={secretariaAtiva} onChange={e => setSecretariaAtiva(e.target.value)}
               className="px-2.5 py-1.5 rounded-lg border text-xs bg-white max-w-[300px]"
               style={{ borderColor: C.border, color: C.navy }}>
-              <option value="todas">Todas as Secretarias</option>
+              <option value="todas">Todas as Entidades</option>
               {secretarias.map(x => (
                 <option key={x.id} value={x.id}>{x.sigla ? `${x.sigla} — ${x.nome}` : (x.nome || "Sem nome")}</option>
               ))}
@@ -3179,7 +3578,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           </button>
           <div className="pl-3 border-l shrink-0 hidden sm:block" style={{ borderColor: C.border }}>
             <p className="text-[11px]" style={{ color: C.inkMuted }}>
-              {secAtiva ? (secAtiva.sigla || secAtiva.nome) : "Todas as Secretarias"}
+              {secAtiva ? (secAtiva.sigla || secAtiva.nome) : "Todas as Entidades"}
             </p>
           </div>
         </header>
@@ -3333,7 +3732,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                         {acaoRapida(Plus, "Novo ETP", "Criar do zero", () => setNovoDoc({ tipo: "etp" }))}
                         {acaoRapida(ListChecks, "Declaração", "Verificar PCA", () => setNovoDoc({ tipo: "declaracao" }))}
                         {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => setNovoDoc({ tipo: "justificativa" }))}
-                        {acaoRapida(Building2, "Secretarias", "Timbre e cadastro", () => setAba("secretarias"))}
+                        {acaoRapida(Building2, "Entidades", "Timbre e cadastro", () => setAba("secretarias"))}
                       </div>
                     </>
                   )}
@@ -3474,6 +3873,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                 onNovo={() => setNovoDoc({ tipo: "declaracao" })} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
             </>
+          )}
+
+          {aba === "usuarios" && (
+            <UsuariosView usuarios={usuarios} secretarias={secretarias} emailAtual={emailUsuario}
+              onSalvar={onSalvarUsuario} onNovo={onSalvarUsuario} onExcluir={onExcluirUsuario} />
           )}
 
           {aba === "secretarias" && (
@@ -3851,7 +4255,7 @@ function JanelaNovoDocumento({ inicial, secretarias, secretariaAtiva, onFechar, 
           <div className="grid sm:grid-cols-2 gap-3 mb-5">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                Secretaria
+                Entidade
               </span>
               <select value={secretariaId} onChange={e => setSecretariaId(e.target.value)}
                 className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white"
