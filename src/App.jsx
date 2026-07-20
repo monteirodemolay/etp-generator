@@ -2272,15 +2272,17 @@ export default function App() {
     return secretarias[0];
   }
 
-  function newEtp(tipo) {
+  // Recebe o que foi preenchido na janela de criação: objeto, tipo, processo e secretaria
+  function newEtp(dados = {}) {
     const etp = emptyEtp();
-    const sec = secretariaParaNovoDoc();
+    const sec = secretarias.find(x => x.id === dados.secretariaId) || secretariaParaNovoDoc();
     if (sec) {
       etp.secretariaId = sec.id;
       etp.meta.orgao = sec.nome; // evita redigitar o órgão a cada novo documento
     }
-    // O painel permite começar já com o tipo de objeto escolhido
-    if (typeof tipo === "string" && TIPOS_OBJETO.includes(tipo)) etp.meta.tipo = tipo;
+    if (dados.objeto) etp.meta.titulo = dados.objeto;
+    if (dados.processo) etp.meta.processo = dados.processo;
+    if (dados.tipoObjeto && TIPOS_OBJETO.includes(dados.tipoObjeto)) etp.meta.tipo = dados.tipoObjeto;
     setCurrent(etp);
     setCurrentId(etp.id);
     setActiveSection("itens");
@@ -2335,12 +2337,13 @@ export default function App() {
   }
   function novaJustificativa(dadosIniciais) {
     const doc = emptyJustificativa();
-    const sec = secretariaParaNovoDoc();
+    const sec = secretarias.find(x => x.id === dadosIniciais?.secretariaId) || secretariaParaNovoDoc();
     if (sec) {
       doc.secretariaId = sec.id;
       doc.campos.orgao = sec.nome;
     }
     if (dadosIniciais?.objeto) doc.campos.objeto = dadosIniciais.objeto;
+    if (dadosIniciais?.processo) doc.campos.processo = dadosIniciais.processo;
     if (dadosIniciais?.orgao) doc.campos.orgao = dadosIniciais.orgao;
     if (dadosIniciais?.secretariaId) doc.secretariaId = dadosIniciais.secretariaId;
     storage.set("just:" + doc.id, JSON.stringify(doc), false).catch(() => {});
@@ -2373,13 +2376,14 @@ export default function App() {
     setCurrentDecl(doc);
     setView("declaracao");
   }
-  function novaDeclaracao() {
+  function novaDeclaracao(dados = {}) {
     const doc = emptyDeclaracao();
-    const sec = secretariaParaNovoDoc();
+    const sec = secretarias.find(x => x.id === dados.secretariaId) || secretariaParaNovoDoc();
     if (sec) {
       doc.secretariaId = sec.id;
       doc.orgao = sec.nome;
     }
+    if (dados.objeto) doc.objeto = dados.objeto;
     storage.set("decl:" + doc.id, JSON.stringify(doc), false).catch(() => {});
     setDeclaracoes(prev => [doc, ...prev]);
     abrirDeclaracao(doc);
@@ -3022,7 +3026,6 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   const menu = [
     { id: "painel", rotulo: "Painel", icone: ClipboardList },
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
-    { id: "novo", rotulo: "Novo ETP", icone: Plus, acao: () => setNovoDoc({ tipo: "etp" }) },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "secretarias", rotulo: "Secretarias", icone: Building2 },
@@ -3266,7 +3269,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                       <div className="px-5 py-10 text-center">
                         <FileText size={28} className="mx-auto mb-2" style={{ color: C.border }} />
                         <p className="text-sm mb-3" style={{ color: C.inkMuted }}>Nenhum ETP criado ainda.</p>
-                        <button onClick={onNew} className="px-4 py-2 rounded-lg text-sm font-medium"
+                        <button onClick={() => setNovoDoc({ tipo: "etp" })}
+                          className="px-4 py-2 rounded-lg text-sm font-medium"
                           style={{ background: C.navy, color: C.paper }}>
                           Criar o primeiro ETP
                         </button>
@@ -3345,9 +3349,9 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                     <>
                       <h3 className="serif text-base font-semibold mb-3" style={{ color: C.navy }}>Ações rápidas</h3>
                       <div className="grid grid-cols-2 gap-2">
-                        {acaoRapida(Plus, "Novo ETP", "Criar do zero", onNew)}
-                        {acaoRapida(ListChecks, "Declaração", "Verificar PCA", onNovaDeclaracao)}
-                        {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => onNovaJustificativa(null))}
+                        {acaoRapida(Plus, "Novo ETP", "Criar do zero", () => setNovoDoc({ tipo: "etp" }))}
+                        {acaoRapida(ListChecks, "Declaração", "Verificar PCA", () => setNovoDoc({ tipo: "declaracao" }))}
+                        {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => setNovoDoc({ tipo: "justificativa" }))}
                         {acaoRapida(Building2, "Secretarias", "Timbre e cadastro", onGerenciarSecretarias)}
                       </div>
                     </>
@@ -3361,7 +3365,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                       </p>
                       <div className="space-y-1.5">
                         {TIPOS_OBJETO.map(t => (
-                          <button key={t} onClick={() => onNew(t)}
+                          <button key={t} onClick={() => setNovoDoc({ tipo: "etp", tipoObjeto: t })}
                             className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs hover:bg-black/[0.02]"
                             style={{ borderColor: C.border, color: C.ink }}>
                             <span>{t}</span>
@@ -3378,10 +3382,19 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "etps" && (
             <>
-              <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Meus ETPs</h1>
-              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
-                {base.length} estudo(s){secAtiva ? ` em ${secAtiva.sigla || secAtiva.nome}` : ""}.
-              </p>
+              <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+                <div>
+                  <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Meus ETPs</h1>
+                  <p className="text-sm" style={{ color: C.inkMuted }}>
+                    {base.length} estudo(s){secAtiva ? ` em ${secAtiva.sigla || secAtiva.nome}` : ""}.
+                  </p>
+                </div>
+                <button onClick={() => setNovoDoc({ tipo: "etp" })}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm shadow-sm shrink-0"
+                  style={{ background: C.navy, color: C.paper }}>
+                  <Plus size={16} /> Novo ETP
+                </button>
+              </div>
 
               <div className="relative mb-5 max-w-lg">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
@@ -3403,7 +3416,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                     {search ? "Tente outro termo de busca." : "Comece cadastrando os itens da contratação."}
                   </p>
                   {!search && (
-                    <button onClick={onNew} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm"
+                    <button onClick={() => setNovoDoc({ tipo: "etp" })}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm"
                       style={{ background: C.navy, color: C.paper }}>
                       <Plus size={16} /> Criar o primeiro ETP
                     </button>
@@ -3476,7 +3490,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
               </p>
               <ListaDocumentos titulo="Declarações" docs={declaracoes}
                 onAbrir={onAbrirDeclaracao} onExcluir={onExcluirDeclaracao} onDuplicar={onDuplicarDeclaracao}
-                onNovo={onNovaDeclaracao} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
+                onNovo={() => setNovoDoc({ tipo: "declaracao" })} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
             </>
           )}
@@ -3491,7 +3505,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
               </p>
               <ListaDocumentos titulo="Justificativas" docs={justificativas}
                 onAbrir={onAbrirJustificativa} onExcluir={onExcluirJustificativa} onDuplicar={onDuplicarJustificativa}
-                onNovo={() => onNovaJustificativa(null)} icone={FileEdit} vazio="Nenhuma justificativa criada ainda."
+                onNovo={() => setNovoDoc({ tipo: "justificativa" })} icone={FileEdit} vazio="Nenhuma justificativa criada ainda."
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
             </>
           )}
@@ -3510,157 +3524,25 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
       </div>
 
       {showGuia && <GuiaRapido onFechar={() => setShowGuia(false)} />}
+
+      {novoDoc && (
+        <JanelaNovoDocumento
+          inicial={novoDoc}
+          secretarias={secretarias}
+          secretariaAtiva={secretariaAtiva}
+          onFechar={() => setNovoDoc(null)}
+          onCriar={dados => {
+            setNovoDoc(null);
+            if (dados.tipo === "etp") onNew(dados);
+            else if (dados.tipo === "declaracao") onNovaDeclaracao(dados);
+            else onNovaJustificativa(dados);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-// ---------- Janela de criação ----------
-// Em vez de cair direto num documento vazio, o servidor nomeia o que está criando.
-// Serve aos três tipos; os campos mudam conforme o que se cria.
-function JanelaNovoDocumento({ tipo, secretarias, secretariaAtiva, tipoInicial, onCriar, onFechar }) {
-  const secPadrao = secretariaAtiva !== "todas"
-    ? secretariaAtiva
-    : (secretarias[0]?.id || "");
-
-  const [objeto, setObjeto] = useState("");
-  const [tipoObjeto, setTipoObjeto] = useState(tipoInicial || TIPOS_OBJETO[0]);
-  const [secretariaId, setSecretariaId] = useState(secPadrao);
-  const [processo, setProcesso] = useState("");
-  const inputRef = useRef(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const config = {
-    etp: {
-      titulo: "Novo Estudo Técnico Preliminar",
-      icone: FileText,
-      rotuloObjeto: "Objeto da contratação",
-      dicaObjeto: "Ex.: Aquisição de material de copa e cozinha",
-      ajuda: "Você poderá ajustar tudo depois — inclusive gerar o objeto a partir dos itens cadastrados.",
-      mostrarTipo: true,
-      mostrarProcesso: true,
-    },
-    declaracao: {
-      titulo: "Nova Declaração de previsão no PCA",
-      icone: ListChecks,
-      rotuloObjeto: "Objeto",
-      dicaObjeto: "Ex.: Aquisição de veículo para o transporte social",
-      ajuda: "Confere se os itens constam no Plano de Contratações Anual e gera o documento do processo.",
-      mostrarTipo: false,
-      mostrarProcesso: false,
-    },
-    justificativa: {
-      titulo: "Nova Justificativa de aquisição",
-      icone: FileEdit,
-      rotuloObjeto: "Objeto",
-      dicaObjeto: "Ex.: Material de consumo (gás engarrafado P45kg)",
-      ajuda: "Documento anterior à aquisição, com os dados do processo e o texto de justificativa.",
-      mostrarTipo: false,
-      mostrarProcesso: true,
-    },
-  }[tipo];
-
-  const Icone = config.icone;
-
-  function criar() {
-    onCriar({
-      objeto: objeto.trim(),
-      tipoObjeto,
-      secretariaId: secretariaId || undefined,
-      processo: processo.trim(),
-    });
-  }
-
-  function aoTeclar(e) {
-    if (e.key === "Enter" && objeto.trim()) criar();
-    if (e.key === "Escape") onFechar();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
-      onClick={onFechar}>
-      <div onClick={e => e.stopPropagation()} onKeyDown={aoTeclar}
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl overflow-hidden">
-
-        <div className="flex items-start justify-between gap-3 p-5 pb-4 border-b" style={{ borderColor: C.border }}>
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-              style={{ background: "rgba(166,131,46,0.12)" }}>
-              <Icone size={19} style={{ color: C.brass }} />
-            </div>
-            <div>
-              <h3 className="serif text-lg font-semibold leading-tight" style={{ color: C.navy }}>{config.titulo}</h3>
-              <p className="text-[11px] mt-1 leading-snug" style={{ color: C.inkMuted }}>{config.ajuda}</p>
-            </div>
-          </div>
-          <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={19} /></button>
-        </div>
-
-        <div className="p-5 space-y-3">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-              {config.rotuloObjeto}
-            </span>
-            <input ref={inputRef} value={objeto} onChange={e => setObjeto(e.target.value)}
-              placeholder={config.dicaObjeto}
-              className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
-              style={{ borderColor: C.border }} />
-          </label>
-
-          {config.mostrarTipo && (
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                Tipo de objeto
-              </span>
-              <select value={tipoObjeto} onChange={e => setTipoObjeto(e.target.value)}
-                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
-                {TIPOS_OBJETO.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </label>
-          )}
-
-          <div className={config.mostrarProcesso ? "grid sm:grid-cols-2 gap-3" : ""}>
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                Secretaria
-              </span>
-              <select value={secretariaId} onChange={e => setSecretariaId(e.target.value)}
-                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
-                {secretarias.map(x => (
-                  <option key={x.id} value={x.id}>{x.sigla ? `${x.sigla} — ${x.nome}` : (x.nome || "Sem nome")}</option>
-                ))}
-              </select>
-            </label>
-
-            {config.mostrarProcesso && (
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                  Nº do processo <span className="normal-case font-normal">(opcional)</span>
-                </span>
-                <input value={processo} onChange={e => setProcesso(e.target.value)}
-                  placeholder="Ex.: 2026554477"
-                  className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border }} />
-              </label>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t" style={{ borderColor: C.border, background: C.paperDark }}>
-          <button onClick={onFechar}
-            className="px-3.5 py-2 rounded-lg text-sm font-medium"
-            style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
-            Cancelar
-          </button>
-          <button onClick={criar} disabled={!objeto.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-            style={{ background: C.navy, color: C.paper }}>
-            <Plus size={15} /> Criar e abrir
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ---------- Backup ----------
 function TelaBackup({ onRestaurado }) {
@@ -3872,6 +3754,156 @@ function TelaBackup({ onRestaurado }) {
         </div>
       </div>
     </>
+  );
+}
+
+// ---------- Janela de novo documento ----------
+// Recolhe o essencial antes de criar. Assim o documento só nasce quando você confirma —
+// nada de ETP em branco aparecendo na lista por engano.
+function JanelaNovoDocumento({ inicial, secretarias, secretariaAtiva, onFechar, onCriar }) {
+  const [tipo, setTipo] = useState(inicial.tipo || "etp");
+  const [objeto, setObjeto] = useState("");
+  const [tipoObjeto, setTipoObjeto] = useState(inicial.tipoObjeto || TIPOS_OBJETO[0]);
+  const [processo, setProcesso] = useState("");
+  const [secretariaId, setSecretariaId] = useState(
+    secretariaAtiva !== "todas" ? secretariaAtiva : (secretarias[0]?.id || "")
+  );
+
+  const rotulos = {
+    etp: { titulo: "Novo Estudo Técnico Preliminar", icone: FileText,
+           ajuda: "O documento principal, com os 13 incisos do art. 18." },
+    declaracao: { titulo: "Nova Declaração de previsão no PCA", icone: ListChecks,
+                  ajuda: "Confere se os itens constam no Plano de Contratações Anual." },
+    justificativa: { titulo: "Nova Justificativa de aquisição", icone: FileEdit,
+                     ajuda: "Documento anterior à aquisição, com a motivação da compra." },
+  };
+  const r = rotulos[tipo];
+  const Icone = r.icone;
+  const secretaria = secretarias.find(x => x.id === secretariaId);
+
+  function confirmar(e) {
+    e.preventDefault();
+    onCriar({
+      tipo,
+      objeto: objeto.trim(),
+      tipoObjeto,
+      processo: processo.trim(),
+      secretariaId,
+      orgao: secretaria?.nome || "",
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(18,32,50,0.6)" }} onClick={onFechar}>
+      <form onSubmit={confirmar} onClick={e => e.stopPropagation()}
+        className="w-full max-w-lg max-h-[88vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+
+        <div className="flex items-start justify-between gap-3 p-5 pb-4 border-b" style={{ borderColor: C.border }}>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: "rgba(166,131,46,0.12)" }}>
+              <Icone size={19} style={{ color: C.brass }} />
+            </div>
+            <div>
+              <h3 className="serif text-lg font-semibold leading-tight" style={{ color: C.navy }}>{r.titulo}</h3>
+              <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>{r.ajuda}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-5">
+          {/* Trocar o tipo sem fechar a janela */}
+          <div className="inline-flex p-1 rounded-lg mb-4" style={{ background: C.paperDark }}>
+            {[["etp", "ETP"], ["declaracao", "Declaração"], ["justificativa", "Justificativa"]].map(([v, rot]) => (
+              <button key={v} type="button" onClick={() => setTipo(v)}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold"
+                style={{
+                  background: tipo === v ? "white" : "transparent",
+                  color: tipo === v ? C.navy : C.inkMuted,
+                  boxShadow: tipo === v ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                }}>
+                {rot}
+              </button>
+            ))}
+          </div>
+
+          <label className="block mb-4">
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+              Objeto {tipo === "etp" ? "(o que será contratado)" : ""}
+            </span>
+            <input value={objeto} onChange={e => setObjeto(e.target.value)} autoFocus
+              placeholder={tipo === "etp"
+                ? "Ex.: Aquisição de material de copa e cozinha"
+                : "Ex.: Aquisição de gás engarrafado P45"}
+              className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
+              style={{ borderColor: C.border }} />
+            <span className="text-[10.5px] mt-1 block" style={{ color: C.inkMuted }}>
+              Pode deixar em branco e preencher depois — mas ajuda a achar o documento na lista.
+            </span>
+          </label>
+
+          {tipo === "etp" && (
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Tipo de objeto
+              </span>
+              <select value={tipoObjeto} onChange={e => setTipoObjeto(e.target.value)}
+                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white"
+                style={{ borderColor: C.border }}>
+                {TIPOS_OBJETO.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <span className="text-[10.5px] mt-1 block" style={{ color: C.inkMuted }}>
+                Os textos-modelo dos incisos se ajustam a esta escolha.
+              </span>
+            </label>
+          )}
+
+          <div className="grid sm:grid-cols-2 gap-3 mb-5">
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Secretaria
+              </span>
+              <select value={secretariaId} onChange={e => setSecretariaId(e.target.value)}
+                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white"
+                style={{ borderColor: C.border }}>
+                {secretarias.map(x => (
+                  <option key={x.id} value={x.id}>{x.sigla || x.nome || "Sem nome"}</option>
+                ))}
+              </select>
+            </label>
+
+            {tipo !== "declaracao" && (
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                  Nº do processo
+                </span>
+                <input value={processo} onChange={e => setProcesso(e.target.value)}
+                  placeholder="Opcional"
+                  className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
+                  style={{ borderColor: C.border }} />
+              </label>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onFechar}
+              className="px-4 py-2.5 rounded-lg text-sm font-medium"
+              style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+              Cancelar
+            </button>
+            <button type="submit"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold"
+              style={{ background: C.navy, color: C.paper }}>
+              <Plus size={15} /> Criar e abrir
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
   );
 }
 
