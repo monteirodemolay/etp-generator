@@ -1,50 +1,115 @@
-// Shim de armazenamento local, compatível com a API `window.storage` usada
-// dentro dos artefatos do Claude (get/set/delete/list), mas gravando no
-// localStorage do navegador — para o app funcionar sozinho, fora do Claude.
+// Armazenamento na nuvem (Firestore), com a mesma interface do armazenamento local:
+// get / set / delete / list. Como a assinatura é idêntica, o app não precisa saber
+// onde os dados estão — só troca esta implementação.
 //
-// Obs.: os dados ficam só neste navegador/computador. Trocar de máquina ou
-// limpar os dados do site apaga os ETPs salvos aqui.
+// Modelo: coleção "dados", um documento por chave ("etp:123", "sec:abc"...).
+// O conteúdo vai no campo "v" como texto JSON, igual ao que já era gravado antes.
 
-const DB_KEY = "etpgen:db";
+import {
+  collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+  query, where, documentId, writeBatch,
+} from "firebase/firestore";
+import { db } from "./firebase";
 
-function readDb() {
-  try {
-    return JSON.parse(localStorage.getItem(DB_KEY) || "{}");
-  } catch {
-    return {};
-  }
+const COLECAO = "dados";
+
+// O Firestore limita cada documento a 1 MiB. Valores maiores (a planilha do PCA pode
+// chegar perto disso) são quebrados em pedaços e remontados na leitura.
+const LIMITE_PEDACO = 700000;
+const SUFIXO_PEDACO = "__p";
+
+// O Firestore não aceita "/" em identificadores de documento
+function paraId(chave) {
+  return String(chave).replace(/\//g, "__barra__");
 }
-
-function writeDb(db) {
-  localStorage.setItem(DB_KEY, JSON.stringify(db));
+function deId(id) {
+  return id.replace(/__barra__/g, "/");
 }
 
 const storage = {
-  async get(key) {
-    const db = readDb();
-    if (!(key in db)) throw new Error(`Chave "${key}" não encontrada`);
-    return { key, value: db[key], shared: false };
+  async get(chave) {
+    const ref = doc(db, COLECAO, paraId(chave));
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error(`Chave "${chave}" não encontrada`);
+
+    const dados = snap.data();
+
+    // Valor quebrado em pedaços: remonta na ordem
+    if (dados.pedacos) {
+      let texto = "";
+      for (let i = 0; i < dados.pedacos; i++) {
+        const parte = await getDoc(doc(db, COLECAO, paraId(chave) + SUFIXO_PEDACO + i));
+        if (!parte.exists()) throw new Error(`Pedaço ${i} de "${chave}" não encontrado`);
+        texto += parte.data().v;
+      }
+      return { key: chave, value: texto, shared: false };
+    }
+
+    return { key: chave, value: dados.v, shared: false };
   },
 
-  async set(key, value) {
-    const db = readDb();
-    db[key] = value;
-    writeDb(db);
-    return { key, value, shared: false };
+  async set(chave, valor) {
+    const texto = String(valor ?? "");
+    const id = paraId(chave);
+
+    // Apaga pedaços de uma gravação anterior, se houver
+    const antigo = await getDoc(doc(db, COLECAO, id));
+    if (antigo.exists() && antigo.data().pedacos) {
+      const lote = writeBatch(db);
+      for (let i = 0; i < antigo.data().pedacos; i++) {
+        lote.delete(doc(db, COLECAO, id + SUFIXO_PEDACO + i));
+      }
+      await lote.commit();
+    }
+
+    if (texto.length <= LIMITE_PEDACO) {
+      await setDoc(doc(db, COLECAO, id), { v: texto, em: Date.now() });
+    } else {
+      const total = Math.ceil(texto.length / LIMITE_PEDACO);
+      const lote = writeBatch(db);
+      for (let i = 0; i < total; i++) {
+        lote.set(doc(db, COLECAO, id + SUFIXO_PEDACO + i), {
+          v: texto.slice(i * LIMITE_PEDACO, (i + 1) * LIMITE_PEDACO),
+        });
+      }
+      lote.set(doc(db, COLECAO, id), { pedacos: total, em: Date.now() });
+      await lote.commit();
+    }
+
+    return { key: chave, value: texto, shared: false };
   },
 
-  async delete(key) {
-    const db = readDb();
-    const existed = key in db;
-    delete db[key];
-    writeDb(db);
-    return { key, deleted: existed, shared: false };
+  async delete(chave) {
+    const id = paraId(chave);
+    const ref = doc(db, COLECAO, id);
+    const snap = await getDoc(ref);
+    const existia = snap.exists();
+
+    if (existia && snap.data().pedacos) {
+      const lote = writeBatch(db);
+      for (let i = 0; i < snap.data().pedacos; i++) {
+        lote.delete(doc(db, COLECAO, id + SUFIXO_PEDACO + i));
+      }
+      await lote.commit();
+    }
+    await deleteDoc(ref);
+    return { key: chave, deleted: existia, shared: false };
   },
 
-  async list(prefix = "") {
-    const db = readDb();
-    const keys = Object.keys(db).filter(k => k.startsWith(prefix));
-    return { keys, prefix, shared: false };
+  async list(prefixo = "") {
+    const p = paraId(prefixo);
+    // Busca por faixa de identificador: tudo que começa com o prefixo
+    const consulta = query(
+      collection(db, COLECAO),
+      where(documentId(), ">=", p),
+      where(documentId(), "<", p + "\uf8ff"),
+    );
+    const snap = await getDocs(consulta);
+    const keys = snap.docs
+      .map(d => d.id)
+      .filter(id => !id.includes(SUFIXO_PEDACO))  // pedaços não são chaves próprias
+      .map(deId);
+    return { keys, prefix: prefixo, shared: false };
   },
 };
 

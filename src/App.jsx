@@ -623,7 +623,7 @@ function buscarNoPca(pca, termo, limite = 8) {
     const cod = (l.codigo || "").toLowerCase();
     const prod = (l.produto || "").toLowerCase();
     const seq = (l.sequencial || "").toLowerCase();
-    if (cod === t || seq === t) porCodigo.unshift(l);          // correspondência exata primeiro
+    if (mesmoCodigo(cod, t) || mesmoCodigo(seq, t)) porCodigo.unshift(l);  // correspondência exata primeiro
     else if (cod.startsWith(t) || seq.startsWith(t)) porCodigo.push(l);
     else if (prod.includes(t)) porTexto.push(l);
     if (porCodigo.length + porTexto.length > limite * 3) break;
@@ -633,9 +633,8 @@ function buscarNoPca(pca, termo, limite = 8) {
 
 // Linha do PCA correspondente a um código informado (usada para mostrar o produto ao digitar)
 function linhaPcaPorCodigo(pca, codigo) {
-  const c = String(codigo || "").trim();
-  if (!c || !pca?.linhas) return null;
-  return pca.linhas.find(l => l.codigo && l.codigo === c) || null;
+  if (!normalizarCodigo(codigo) || !pca?.linhas) return null;
+  return pca.linhas.find(l => mesmoCodigo(l.codigo, codigo)) || null;
 }
 
 // Cruza os itens com a planilha do PCA. Além da correspondência automática por código,
@@ -904,10 +903,25 @@ function parsePCASheet(rows) {
 }
 
 // Cruza um item da Planilha de Itens com as linhas do PCA — por código (Sistema Centi) e, na falta dele, por descrição
+// Normaliza um código para comparação: o Excel ora entrega texto, ora número, às vezes com
+// espaço rígido ou zeros à esquerda. Sem isso, códigos iguais deixam de casar.
+function normalizarCodigo(v) {
+  return String(v ?? "").replace(/[\s\u00A0]/g, "").trim();
+}
+
+// Dois códigos são o mesmo se batem exatamente ou se só diferem por zeros à esquerda
+function mesmoCodigo(a, b) {
+  const x = normalizarCodigo(a), y = normalizarCodigo(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const semZeros = t => t.replace(/^0+/, "") || "0";
+  return /^\d+$/.test(x) && /^\d+$/.test(y) && semZeros(x) === semZeros(y);
+}
+
 function pcaMatchFor(item, pcaLinhas) {
   if (!pcaLinhas || pcaLinhas.length === 0) return null;
   if (item.idProduto) {
-    const porCodigo = pcaLinhas.find(l => l.codigo && l.codigo === String(item.idProduto).trim());
+    const porCodigo = pcaLinhas.find(l => mesmoCodigo(l.codigo, item.idProduto));
     if (porCodigo) return porCodigo;
   }
   if (item.descricao) {
@@ -983,8 +997,58 @@ function parseCotacaoFornecedorSheet(rows) {
   return { nomeEmpresa: findLabelValue("Empresa"), cnpj: findLabelValue("CNPJ"), valores };
 }
 
-function num(v) { const n = parseFloat(String(v).replace(",", ".")); return isNaN(n) ? 0 : n; }
-function brl(n) { return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+// Lê um valor monetário digitado ou colado em qualquer formato usual:
+// "1.234,56"  "1234,56"  "1234.56"  "R$ 2.350,90"  "1,234.56"  "10.000"  "0,4567"
+// Regra: quando há vírgula e ponto, o último separador é o decimal. Quando há só ponto,
+// um grupo final de exatamente 3 dígitos é separador de milhar (convenção brasileira).
+function num(v) {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  let s = String(v ?? "").trim();
+  if (!s) return 0;
+
+  const negativo = /^-|\(.*\)$/.test(s);
+  s = s.replace(/[^\d,.]/g, ""); // tira R$, espaços, letras
+  if (!s) return 0;
+
+  const iVirgula = s.lastIndexOf(",");
+  const iPonto = s.lastIndexOf(".");
+
+  if (iVirgula >= 0 && iPonto >= 0) {
+    if (iVirgula > iPonto) s = s.replace(/\./g, "").replace(",", ".");  // 1.234,56
+    else s = s.replace(/,/g, "");                                        // 1,234.56
+  } else if (iVirgula >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");                          // 1234,56
+  } else if (iPonto >= 0) {
+    const partes = s.split(".");
+    const ultima = partes[partes.length - 1];
+    // "1.234" e "1.234.567" são milhar; "1234.56" e "0.4567" são decimais
+    if (partes.length > 2 || ultima.length === 3) s = partes.join("");
+  }
+
+  const n = parseFloat(s);
+  if (isNaN(n)) return 0;
+  return negativo ? -Math.abs(n) : n;
+}
+
+// Formata em reais. Mantém até 4 casas decimais quando o valor as tem — preços unitários
+// de licitação costumam usar 3 ou 4 — e nunca mostra menos de 2.
+function brl(n) {
+  const v = Number(n) || 0;
+  const decimais = (v.toFixed(6).split(".")[1] || "").replace(/0+$/, "").length;
+  const casas = Math.min(4, Math.max(2, decimais));
+  return v.toLocaleString("pt-BR", {
+    style: "currency", currency: "BRL",
+    minimumFractionDigits: casas, maximumFractionDigits: casas,
+  });
+}
+
+// Valor formatado para voltar a um campo de digitação (sem o símbolo, vírgula decimal)
+function formatarParaCampo(v) {
+  const n = Number(v) || 0;
+  const decimais = (n.toFixed(6).split(".")[1] || "").replace(/0+$/, "").length;
+  const casas = Math.min(4, Math.max(2, decimais));
+  return n.toFixed(casas).replace(".", ",");
+}
 
 function progress(etp) {
   const filled = SECOES.filter(s => etp.sections[s.id]?.trim().length > 0).length;
@@ -2921,6 +2985,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 
   const [aba, setAba] = useState("painel");
   const [showGuia, setShowGuia] = useState(false);
+  const [novoDoc, setNovoDoc] = useState(null); // { tipo, tipoInicial }
   const [dica, setDica] = useState(0);
   const [confirmId, setConfirmId] = useState(null);
 
@@ -2957,10 +3022,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   const menu = [
     { id: "painel", rotulo: "Painel", icone: ClipboardList },
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
-    { id: "novo", rotulo: "Novo ETP", icone: Plus, acao: onNew },
+    { id: "novo", rotulo: "Novo ETP", icone: Plus, acao: () => setNovoDoc({ tipo: "etp" }) },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
-    { id: "secretarias", rotulo: "Secretarias", icone: Building2, acao: onGerenciarSecretarias },
+    { id: "secretarias", rotulo: "Secretarias", icone: Building2 },
     { id: "backup", rotulo: "Backup", icone: Download },
   ];
 
@@ -3445,6 +3510,154 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
       </div>
 
       {showGuia && <GuiaRapido onFechar={() => setShowGuia(false)} />}
+    </div>
+  );
+}
+
+// ---------- Janela de criação ----------
+// Em vez de cair direto num documento vazio, o servidor nomeia o que está criando.
+// Serve aos três tipos; os campos mudam conforme o que se cria.
+function JanelaNovoDocumento({ tipo, secretarias, secretariaAtiva, tipoInicial, onCriar, onFechar }) {
+  const secPadrao = secretariaAtiva !== "todas"
+    ? secretariaAtiva
+    : (secretarias[0]?.id || "");
+
+  const [objeto, setObjeto] = useState("");
+  const [tipoObjeto, setTipoObjeto] = useState(tipoInicial || TIPOS_OBJETO[0]);
+  const [secretariaId, setSecretariaId] = useState(secPadrao);
+  const [processo, setProcesso] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const config = {
+    etp: {
+      titulo: "Novo Estudo Técnico Preliminar",
+      icone: FileText,
+      rotuloObjeto: "Objeto da contratação",
+      dicaObjeto: "Ex.: Aquisição de material de copa e cozinha",
+      ajuda: "Você poderá ajustar tudo depois — inclusive gerar o objeto a partir dos itens cadastrados.",
+      mostrarTipo: true,
+      mostrarProcesso: true,
+    },
+    declaracao: {
+      titulo: "Nova Declaração de previsão no PCA",
+      icone: ListChecks,
+      rotuloObjeto: "Objeto",
+      dicaObjeto: "Ex.: Aquisição de veículo para o transporte social",
+      ajuda: "Confere se os itens constam no Plano de Contratações Anual e gera o documento do processo.",
+      mostrarTipo: false,
+      mostrarProcesso: false,
+    },
+    justificativa: {
+      titulo: "Nova Justificativa de aquisição",
+      icone: FileEdit,
+      rotuloObjeto: "Objeto",
+      dicaObjeto: "Ex.: Material de consumo (gás engarrafado P45kg)",
+      ajuda: "Documento anterior à aquisição, com os dados do processo e o texto de justificativa.",
+      mostrarTipo: false,
+      mostrarProcesso: true,
+    },
+  }[tipo];
+
+  const Icone = config.icone;
+
+  function criar() {
+    onCriar({
+      objeto: objeto.trim(),
+      tipoObjeto,
+      secretariaId: secretariaId || undefined,
+      processo: processo.trim(),
+    });
+  }
+
+  function aoTeclar(e) {
+    if (e.key === "Enter" && objeto.trim()) criar();
+    if (e.key === "Escape") onFechar();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
+      onClick={onFechar}>
+      <div onClick={e => e.stopPropagation()} onKeyDown={aoTeclar}
+        className="w-full max-w-lg rounded-xl bg-white shadow-xl overflow-hidden">
+
+        <div className="flex items-start justify-between gap-3 p-5 pb-4 border-b" style={{ borderColor: C.border }}>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: "rgba(166,131,46,0.12)" }}>
+              <Icone size={19} style={{ color: C.brass }} />
+            </div>
+            <div>
+              <h3 className="serif text-lg font-semibold leading-tight" style={{ color: C.navy }}>{config.titulo}</h3>
+              <p className="text-[11px] mt-1 leading-snug" style={{ color: C.inkMuted }}>{config.ajuda}</p>
+            </div>
+          </div>
+          <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={19} /></button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+              {config.rotuloObjeto}
+            </span>
+            <input ref={inputRef} value={objeto} onChange={e => setObjeto(e.target.value)}
+              placeholder={config.dicaObjeto}
+              className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
+              style={{ borderColor: C.border }} />
+          </label>
+
+          {config.mostrarTipo && (
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Tipo de objeto
+              </span>
+              <select value={tipoObjeto} onChange={e => setTipoObjeto(e.target.value)}
+                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                {TIPOS_OBJETO.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          )}
+
+          <div className={config.mostrarProcesso ? "grid sm:grid-cols-2 gap-3" : ""}>
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Secretaria
+              </span>
+              <select value={secretariaId} onChange={e => setSecretariaId(e.target.value)}
+                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                {secretarias.map(x => (
+                  <option key={x.id} value={x.id}>{x.sigla ? `${x.sigla} — ${x.nome}` : (x.nome || "Sem nome")}</option>
+                ))}
+              </select>
+            </label>
+
+            {config.mostrarProcesso && (
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                  Nº do processo <span className="normal-case font-normal">(opcional)</span>
+                </span>
+                <input value={processo} onChange={e => setProcesso(e.target.value)}
+                  placeholder="Ex.: 2026554477"
+                  className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t" style={{ borderColor: C.border, background: C.paperDark }}>
+          <button onClick={onFechar}
+            className="px-3.5 py-2 rounded-lg text-sm font-medium"
+            style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+            Cancelar
+          </button>
+          <button onClick={criar} disabled={!objeto.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
+            style={{ background: C.navy, color: C.paper }}>
+            <Plus size={15} /> Criar e abrir
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -4984,6 +5197,11 @@ function VinculoPca({ item, pca, dados, onAlterar }) {
 
   return (
     <div className="relative">
+      {item.idProduto && (
+        <p className="text-[11px] mb-1.5" style={{ color: C.inkMuted }}>
+          Código deste item no Centi: <b style={{ color: C.ink }}>{item.idProduto}</b> — não localizado no PCA.
+        </p>
+      )}
       <label className="block">
         <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
           Localizar no PCA
@@ -4999,9 +5217,24 @@ function VinculoPca({ item, pca, dados, onAlterar }) {
         <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border shadow-lg overflow-hidden max-h-56 overflow-y-auto etp-scroll"
           style={{ background: "white", borderColor: C.border }}>
           {resultados.length === 0 ? (
-            <p className="px-3 py-2.5 text-xs" style={{ color: C.inkMuted }}>
-              Nada encontrado no PCA para "{busca}".
-            </p>
+            <div className="px-3 py-3">
+              <p className="text-xs font-medium mb-1" style={{ color: C.ink }}>
+                Nada encontrado no PCA para "{busca}".
+              </p>
+              {mesmoCodigo(busca, item.idProduto) ? (
+                <p className="text-[11px] leading-relaxed" style={{ color: C.inkMuted }}>
+                  Este é o código do item no Centi — e ele não consta na planilha do PCA importada.
+                  É justamente esse o caso em que o código do PCA é <b>outro</b>: procure pelo{" "}
+                  <b>nome do produto</b> ou pelo <b>sequencial</b>. Se o item realmente não estiver no
+                  plano, deixe em branco e use a planilha de inclusão no Centi.
+                </p>
+              ) : (
+                <p className="text-[11px] leading-relaxed" style={{ color: C.inkMuted }}>
+                  Tente pelo nome do produto ou pelo sequencial. A planilha importada tem{" "}
+                  {pca?.linhas?.length || 0} linha(s).
+                </p>
+              )}
+            </div>
           ) : resultados.map((l, i) => (
             <button key={`${l.codigo}-${l.sequencial}-${i}`} onClick={() => vincular(l)}
               className="w-full text-left px-3 py-2 hover:bg-black/[0.03]"
@@ -6159,7 +6392,7 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Qtd.</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-52" style={{ color: C.inkMuted }}>Cotações</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-32" style={{ color: C.inkMuted }}>Valor Adotado</th>
+                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-32" style={{ color: C.inkMuted }}>Valor Adotado (R$)</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Total do Item</th>
                 </tr>
               </thead>
@@ -6194,12 +6427,16 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
                         </button>
                       </td>
                       <td className="px-2 py-2">
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: C.border }}>
+                          <span className="px-1.5 py-1.5 text-xs font-semibold shrink-0"
+                            style={{ background: C.paperDark, color: C.inkMuted }}>R$</span>
                           <input value={adotado} onChange={e => setAdotado(it.id, e.target.value)}
-                            placeholder="0,00" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                            placeholder="0,0000" className="w-full px-2 py-1.5 text-sm"
+                            style={{ border: "none", outline: "none" }}
+                            title="Aceita 1.234,56 · 1234,56 · 1234.56 · com ou sem R$" />
                         </div>
                         {s.n > 0 && (
-                          <button onClick={() => setAdotado(it.id, valorMetodologia(s).toFixed(2))}
+                          <button onClick={() => setAdotado(it.id, formatarParaCampo(valorMetodologia(s)))}
                             className="text-[10px] mt-1" style={{ color: C.brass }}>usar {labelMetodologia}</button>
                         )}
                       </td>
@@ -6286,9 +6523,15 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
                     placeholder="Fonte" className="px-2 py-2 rounded-lg border text-sm" style={{ borderColor: C.border, width: "150px" }} />
                   <input value={novaEmpresa} onChange={e => setNovaEmpresa(e.target.value)}
                     placeholder="Fornecedor (opcional)" className="px-2 py-2 rounded-lg border text-sm flex-1 min-w-[130px]" style={{ borderColor: C.border }} />
-                  <input value={novoValor} onChange={e => setNovoValor(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && salvarNovaCotacao()}
-                    placeholder="Valor (R$)" className="px-2 py-2 rounded-lg border text-sm w-28" style={{ borderColor: C.border }} />
+                  <div className="flex items-center rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+                    <span className="px-2 py-2 text-xs font-semibold shrink-0"
+                      style={{ background: C.paperDark, color: C.inkMuted }}>R$</span>
+                    <input value={novoValor} onChange={e => setNovoValor(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && salvarNovaCotacao()}
+                      placeholder="0,0000" className="px-2 py-2 text-sm w-24"
+                      style={{ border: "none", outline: "none" }}
+                      title="Aceita 1.234,56 · 1234,56 · 1234.56 · com ou sem R$" />
+                  </div>
                   <button onClick={salvarNovaCotacao} disabled={!novoValor.trim()}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
                     style={{ background: C.navy, color: C.paper }}>
@@ -6311,10 +6554,16 @@ function CotacoesForm({ etp, onCotacoes, onValoresAdotados, onMeta }) {
 
               <div className="flex items-center gap-2 pt-3 border-t flex-wrap" style={{ borderColor: C.border }}>
                 <span className="text-xs font-medium" style={{ color: C.inkMuted }}>Valor unitário adotado:</span>
-                <input value={adotadoAtivo} onChange={e => setAdotado(itemAtivo.id, e.target.value)}
-                  placeholder="0,00" className="w-28 px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: C.border }}>
+                  <span className="px-2 py-1.5 text-xs font-semibold shrink-0"
+                    style={{ background: C.paperDark, color: C.inkMuted }}>R$</span>
+                  <input value={adotadoAtivo} onChange={e => setAdotado(itemAtivo.id, e.target.value)}
+                    placeholder="0,0000" className="w-28 px-2 py-1.5 text-sm"
+                    style={{ border: "none", outline: "none" }}
+                    title="Aceita 1.234,56 · 1234,56 · 1234.56 · com ou sem R$" />
+                </div>
                 {statsAtivo.n > 0 && (
-                  <button onClick={() => setAdotado(itemAtivo.id, valorMetodologia(statsAtivo).toFixed(2))}
+                  <button onClick={() => setAdotado(itemAtivo.id, formatarParaCampo(valorMetodologia(statsAtivo)))}
                     className="text-xs font-medium" style={{ color: C.brass }}>usar {labelMetodologia}</button>
                 )}
               </div>
