@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import * as XLSX from "xlsx";
-import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Loader2, Info, Upload, Download, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, Settings } from "lucide-react";
+import { FileText, Plus, Trash2, Printer, Copy, ArrowLeft, Check, AlertCircle, ClipboardList, Search, Building2, Loader2, Info, Upload, Download, Table2 as TableIcon, FileEdit, X, ListX, ListChecks, TrendingUp } from "lucide-react";
 import storage from "./storage";
 
 // ---------- Design tokens ----------
@@ -112,6 +112,7 @@ function emptyEtp() {
     pca: null, // { nomeArquivo, importedAt, linhas: [...] } — última planilha do PCA importada
     solucoesMercado: [], // [{id, nome, selecionada}] — soluções de mercado pesquisadas para o inciso IV
     incisosExcluidos: [], // ids dos incisos que o servidor optou por não incluir neste ETP
+    manuaisPca: {}, // { itemId: { codigo, sequencial } } — previsão informada à mão, quando o cruzamento automático não acha
     sections,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -611,6 +612,156 @@ function emptyDeclaracao() {
   };
 }
 
+// Busca linhas do PCA por código ou por parte da descrição. Usada para vincular manualmente
+// um item cujo código no Centi é diferente do código no PCA.
+function buscarNoPca(pca, termo, limite = 8) {
+  const t = String(termo || "").trim().toLowerCase();
+  if (!pca?.linhas || t.length < 2) return [];
+  const porCodigo = [];
+  const porTexto = [];
+  for (const l of pca.linhas) {
+    const cod = (l.codigo || "").toLowerCase();
+    const prod = (l.produto || "").toLowerCase();
+    const seq = (l.sequencial || "").toLowerCase();
+    if (cod === t || seq === t) porCodigo.unshift(l);          // correspondência exata primeiro
+    else if (cod.startsWith(t) || seq.startsWith(t)) porCodigo.push(l);
+    else if (prod.includes(t)) porTexto.push(l);
+    if (porCodigo.length + porTexto.length > limite * 3) break;
+  }
+  return [...porCodigo, ...porTexto].slice(0, limite);
+}
+
+// Linha do PCA correspondente a um código informado (usada para mostrar o produto ao digitar)
+function linhaPcaPorCodigo(pca, codigo) {
+  const c = String(codigo || "").trim();
+  if (!c || !pca?.linhas) return null;
+  return pca.linhas.find(l => l.codigo && l.codigo === c) || null;
+}
+
+// Cruza os itens com a planilha do PCA. Além da correspondência automática por código,
+// considera os códigos que o servidor preencheu à mão para itens previstos de outra forma.
+function cruzarComPca(itens, pca, manuais = {}) {
+  return (itens || []).map(it => {
+    const automatico = pca ? pcaMatchFor(it, pca.linhas) : null;
+    const manual = !automatico ? (manuais[it.id] || null) : null;
+
+    // Vínculo manual: o servidor apontou qual linha do PCA corresponde a este item, seja
+    // escolhendo pelo código do PCA (que pode ser diferente do código do Centi), seja
+    // digitando o sequencial direto.
+    const linhaVinculada = manual?.codigoPca ? linhaPcaPorCodigo(pca, manual.codigoPca) : null;
+    const sequencialManual = linhaVinculada?.sequencial || manual?.sequencial?.trim() || null;
+
+    const pcaRow = automatico || linhaVinculada;
+    return {
+      item: it,
+      pcaRow,
+      automatico: !!automatico,
+      manual,
+      linhaVinculada,
+      previsto: !!(automatico || sequencialManual),
+      sequencial: automatico ? (automatico.sequencial || "—") : sequencialManual,
+      codigo: automatico
+        ? (it.idProduto || "-")
+        : (manual?.codigoPca?.trim() || manual?.codigo?.trim() || it.idProduto || "-"),
+      produtoPca: automatico?.produto || linhaVinculada?.produto || null,
+    };
+  });
+}
+
+// Quantos itens do ETP estão previstos no PCA (incluindo os preenchidos manualmente)
+function contarPrevistosNoPca(etp) {
+  return cruzarComPca(etp.itens, etp.pca, etp.manuaisPca).filter(m => m.previsto).length;
+}
+
+// ---------- Checklist de conformidade ----------
+// Confere o ETP antes de finalizar. Cada apontamento tem gravidade:
+//   "impeditivo" — exigência legal não atendida
+//   "atencao"    — algo provavelmente incompleto, mas não impede
+//   "ok"         — verificação atendida
+function verificarConformidade(etp) {
+  const itens = etp.itens || [];
+  const excluidos = etp.incisosExcluidos || [];
+  const apontamentos = [];
+
+  const add = (nivel, texto, onde) => apontamentos.push({ nivel, texto, onde });
+
+  // --- Identificação ---
+  if (!etp.meta.titulo?.trim()) add("impeditivo", "O objeto da contratação não foi definido.", "meta");
+  else add("ok", "Objeto da contratação definido.", "meta");
+
+  if (!etp.meta.processo?.trim()) add("atencao", "Número do processo administrativo não informado.", "meta");
+  if (listaResponsaveis(etp).length === 0) add("impeditivo", "Nenhum responsável técnico cadastrado para assinar.", "meta");
+  else add("ok", `${listaResponsaveis(etp).length} responsável(is) cadastrado(s).`, "meta");
+
+  // --- Itens e quantidades ---
+  if (itens.length === 0) {
+    add("impeditivo", "Nenhum item cadastrado na planilha.", "itens");
+  } else {
+    add("ok", `${itens.length} item(ns) cadastrado(s).`, "itens");
+    const semQtd = itens.filter(i => !num(i.quantidade)).length;
+    if (semQtd > 0) add("impeditivo", `${semQtd} item(ns) sem quantidade informada.`, "itens");
+    const semDesc = itens.filter(i => !i.descricao?.trim()).length;
+    if (semDesc > 0) add("impeditivo", `${semDesc} item(ns) sem descrição.`, "itens");
+  }
+
+  // --- PCA (art. 12, VII) ---
+  if (itens.length > 0) {
+    if (!etp.pca) {
+      add("atencao", "Planilha do PCA não importada — não há como demonstrar o alinhamento ao plano.", "pca");
+    } else {
+      const previstos = contarPrevistosNoPca(etp);
+      if (previstos === itens.length) add("ok", "Todos os itens estão previstos no PCA.", "pca");
+      else add("atencao", `${itens.length - previstos} item(ns) sem previsão no PCA — requer inclusão no plano ou justificativa (art. 12, VII).`, "pca");
+    }
+  }
+
+  // --- Estimativa de valor (art. 23) ---
+  if (itens.length > 0) {
+    const total = valorTotalEtp(etp);
+    if (total === 0) {
+      add("impeditivo", "Nenhuma cotação lançada — a contratação está sem estimativa de valor.", "cotacoes");
+    } else {
+      add("ok", `Valor total estimado: ${brl(total)}.`, "cotacoes");
+      const semCotacao = itens.filter(i => (etp.cotacoes?.[i.id] || []).length === 0).length;
+      if (semCotacao > 0) add("atencao", `${semCotacao} item(ns) sem nenhuma cotação registrada.`, "cotacoes");
+      const umaCotacao = itens.filter(i => (etp.cotacoes?.[i.id] || []).length === 1).length;
+      if (umaCotacao > 0) add("atencao", `${umaCotacao} item(ns) com apenas uma cotação — a pesquisa de preços costuma exigir mais de uma fonte.`, "cotacoes");
+    }
+  }
+
+  // --- Incisos obrigatórios (art. 18, §2º) ---
+  REQUIRED_IDS.forEach(id => {
+    const sec = SECOES.find(x => x.id === id);
+    if (excluidos.includes(id)) {
+      add("impeditivo", `Inciso ${id} (${sec.titulo}) foi deixado fora do ETP, mas é obrigatório pelo art. 18, §2º.`, "documento");
+    } else if (!etp.sections[id]?.trim()) {
+      add("impeditivo", `Inciso ${id} (${sec.titulo}) está em branco e é obrigatório.`, "documento");
+    }
+  });
+  const obrigatoriosOk = REQUIRED_IDS.filter(id => !excluidos.includes(id) && etp.sections[id]?.trim()).length;
+  if (obrigatoriosOk === REQUIRED_IDS.length) add("ok", "Todos os incisos obrigatórios estão preenchidos.", "documento");
+
+  // --- Referências cruzadas quebradas pela renumeração ---
+  const numeros = numeracaoFinal(etp);
+  const mudaram = SECOES.filter(sec => numeros[sec.id] && numeros[sec.id] !== sec.id).map(sec => sec.id);
+  if (mudaram.length > 0) {
+    const citacoes = [];
+    Object.entries(etp.sections || {}).forEach(([id, html]) => {
+      if (!html?.trim() || excluidos.includes(id)) return;
+      const texto = html.replace(/<[^>]+>/g, " ");
+      mudaram.forEach(orig => {
+        const padrao = new RegExp(`inciso\\s+${orig}\\b`, "i");
+        if (padrao.test(texto)) citacoes.push(`${numeros[id] || id} cita "inciso ${orig}", que passou a ser ${numeros[orig]}`);
+      });
+    });
+    if (citacoes.length > 0) {
+      add("atencao", `Referência entre incisos possivelmente desatualizada pela renumeração: ${citacoes.join("; ")}.`, "documento");
+    }
+  }
+
+  return apontamentos;
+}
+
 // Título curto para exibir na lista de documentos avulsos
 function tituloDocumento(doc) {
   const obj = (doc.campos?.objeto ?? doc.objeto ?? "").trim();
@@ -693,8 +844,10 @@ function parseCentiSheet(rows) {
 // Gera e baixa um modelo de planilha em branco (formato compatível com a importação acima)
 function baixarModeloPlanilha() {
   const header = ["Id Produto", "Nome do Produto", "Unidade Medida", "Quantidade", "Classificação"];
-  const exemplo = ["", "Ex.: CADEIRA DE RODAS EM ALUMÍNIO DOBRÁVEL ATÉ 120KG", "UNIDADE", "10", "MATERIAL PERMANENTE"];
-  const ws = XLSX.utils.aoa_to_sheet([header, exemplo]);
+  // O exemplo já vem com o código preenchido: é por ele que o app cruza o item com o PCA
+  const exemplo = ["5241938182", "Ex.: CADEIRA DE RODAS EM ALUMÍNIO DOBRÁVEL ATÉ 120KG", "UNIDADE", "10", "MATERIAL PERMANENTE"];
+  const nota = ["", "↑ Apague esta linha de exemplo. O 'Id Produto' é o código do Sistema Centi e é usado para localizar o item no PCA.", "", "", ""];
+  const ws = XLSX.utils.aoa_to_sheet([header, exemplo, nota]);
   ws["!cols"] = [{ wch: 14 }, { wch: 55 }, { wch: 16 }, { wch: 12 }, { wch: 28 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Itens");
@@ -1320,7 +1473,7 @@ function montarContextoParaPrompt(etp) {
   }
 
   if (etp.pca) {
-    const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+    const encontrados = contarPrevistosNoPca(etp);
     partes.push(`Alinhamento ao Plano de Contratações Anual: ${encontrados} de ${itens.length} itens já constam previstos no PCA vigente.`);
   }
 
@@ -1387,7 +1540,7 @@ function montarContextoPorTopico(etp, sectionId) {
   }
 
   if (sectionId === "II" && etp.pca) {
-    const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+    const encontrados = contarPrevistosNoPca(etp);
     linhas.push(`Alinhamento ao Plano de Contratações Anual: ${encontrados} de ${itens.length} itens já constam previstos no PCA vigente (planilha "${etp.pca.nomeArquivo}").`);
   }
 
@@ -1451,7 +1604,7 @@ function montarContextoPorTopico(etp, sectionId) {
     const sintese = [];
     if (itens.length > 0) sintese.push(`${itens.length} item(ns) levantado(s)`);
     if (etp.pca) {
-      const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+      const encontrados = contarPrevistosNoPca(etp);
       sintese.push(`${encontrados}/${itens.length} alinhados ao PCA`);
     }
     const totalEstimado = itens.reduce((s, i) => s + num(i.quantidade) * num(valoresAdotados[i.id] || 0), 0);
@@ -1598,10 +1751,9 @@ async function gerarDocumentoWord(etp, cabecalho) {
     ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
     : "";
 
-  const linhasPca = pca ? itens.map((it, idx) => {
-    const m = pcaMatchFor(it, pca.linhas);
-    return `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${m ? "Sim" : "Não"}</td><td>${escapeHtml(m?.sequencial || "—")}</td></tr>`;
-  }).join("") : "";
+  const linhasPca = pca ? cruzarComPca(itens, pca, etp.manuaisPca).map((m, idx) =>
+    `<tr><td>${idx + 1}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${m.previsto ? "Sim" : "Não"}</td><td>${escapeHtml(m.sequencial || "—")}</td></tr>`
+  ).join("") : "";
 
   const relatorioEstimativa = gerarRelatorioEstimativaHtml(etp);
 
@@ -1721,7 +1873,7 @@ function gerarTextoPadraoII(etp) {
   const itens = etp.itens || [];
   if (!etp.pca || itens.length === 0) return "";
 
-  const encontrados = itens.filter(it => pcaMatchFor(it, etp.pca.linhas)).length;
+  const encontrados = contarPrevistosNoPca(etp);
   const total = itens.length;
   const dataImportacao = fmtDate(etp.pca.importedAt);
 
@@ -2056,13 +2208,15 @@ export default function App() {
     return secretarias[0];
   }
 
-  function newEtp() {
+  function newEtp(tipo) {
     const etp = emptyEtp();
     const sec = secretariaParaNovoDoc();
     if (sec) {
       etp.secretariaId = sec.id;
       etp.meta.orgao = sec.nome; // evita redigitar o órgão a cada novo documento
     }
+    // O painel permite começar já com o tipo de objeto escolhido
+    if (typeof tipo === "string" && TIPOS_OBJETO.includes(tipo)) etp.meta.tipo = tipo;
     setCurrent(etp);
     setCurrentId(etp.id);
     setActiveSection("itens");
@@ -2211,6 +2365,14 @@ export default function App() {
     });
   }
 
+  function updateManuaisPca(manuaisPca) {
+    setCurrent(prev => {
+      const next = { ...prev, manuaisPca, updatedAt: Date.now() };
+      persist(next);
+      return next;
+    });
+  }
+
   function updateExcluidos(incisosExcluidos) {
     setCurrent(prev => {
       const next = { ...prev, incisosExcluidos, updatedAt: Date.now() };
@@ -2330,6 +2492,7 @@ export default function App() {
           onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa}
           onExcluirJustificativa={excluirJustificativa} onDuplicarJustificativa={duplicarJustificativa}
           onGerenciarSecretarias={() => setView("secretarias")}
+          onRecarregar={loadList}
         />
       )}
 
@@ -2354,6 +2517,7 @@ export default function App() {
           etp={current} activeSection={activeSection} setActiveSection={setActiveSection}
           onMeta={updateMeta} onSection={updateSection} onItens={updateItens} onCotacoes={updateCotacoes}
           onSolucoesMercado={updateSolucoesMercado} onExcluidos={updateExcluidos} secretarias={secretarias}
+          onManuaisPca={updateManuaisPca}
           onValoresAdotados={updateValoresAdotados} onPca={updatePca}
           saveState={saveState} onBack={backToList} onPreview={() => setView("preview")}
         />
@@ -2537,6 +2701,134 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
   );
 }
 
+// ---------- Backup: exportar e importar tudo ----------
+// Enquanto os dados vivem só no navegador, este é o único caminho de recuperação
+// caso a máquina seja formatada, o perfil corrompa ou alguém limpe os dados do site.
+const CHAVES_COLECAO = ["etp:", "just:", "decl:", "sec:"];
+const CHAVES_UNICAS = ["pca:planilha", "timbre:padrao", "diretorio:responsaveis"];
+
+async function montarBackup() {
+  const pacote = {
+    formato: "gerador-etp-backup",
+    versao: 1,
+    geradoEm: new Date().toISOString(),
+    colecoes: {},
+    unicos: {},
+  };
+
+  for (const prefixo of CHAVES_COLECAO) {
+    pacote.colecoes[prefixo] = [];
+    try {
+      const chaves = await storage.list(prefixo, false);
+      for (const k of chaves?.keys || []) {
+        try {
+          const r = await storage.get(k, false);
+          if (r?.value) pacote.colecoes[prefixo].push({ chave: k, valor: r.value });
+        } catch (e) { /* registro ausente */ }
+      }
+    } catch (e) { console.error("backup: " + prefixo, e); }
+  }
+
+  for (const k of CHAVES_UNICAS) {
+    try {
+      const r = await storage.get(k, false);
+      if (r?.value) pacote.unicos[k] = r.value;
+    } catch (e) { /* pode não existir */ }
+  }
+
+  return pacote;
+}
+
+function baixarBackup(pacote) {
+  const texto = JSON.stringify(pacote, null, 2);
+  const blob = new Blob([texto], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `backup_gerador_etp_${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Lê o arquivo e confere se é mesmo um backup deste app, antes de qualquer gravação
+function lerBackup(texto) {
+  let dados;
+  try {
+    dados = JSON.parse(texto);
+  } catch (e) {
+    throw new Error("O arquivo não é um JSON válido.");
+  }
+  if (dados?.formato !== "gerador-etp-backup") {
+    throw new Error("Este arquivo não é um backup do Gerador de ETP.");
+  }
+  if (!dados.colecoes || !dados.unicos) {
+    throw new Error("O backup está incompleto ou corrompido.");
+  }
+  return dados;
+}
+
+// Quantos itens de cada tipo o arquivo contém — mostrado antes de confirmar
+function resumirBackup(pacote) {
+  return {
+    etps: pacote.colecoes["etp:"]?.length || 0,
+    justificativas: pacote.colecoes["just:"]?.length || 0,
+    declaracoes: pacote.colecoes["decl:"]?.length || 0,
+    secretarias: pacote.colecoes["sec:"]?.length || 0,
+    temPca: !!pacote.unicos["pca:planilha"],
+    temTimbre: !!pacote.unicos["timbre:padrao"],
+    geradoEm: pacote.geradoEm,
+  };
+}
+
+// Grava o backup. Em "substituir", apaga o que existe hoje nas mesmas coleções antes de
+// restaurar; em "mesclar", mantém o que há e sobrescreve apenas documentos de mesmo id.
+async function restaurarBackup(pacote, modo = "mesclar") {
+  let gravados = 0;
+
+  if (modo === "substituir") {
+    for (const prefixo of CHAVES_COLECAO) {
+      try {
+        const chaves = await storage.list(prefixo, false);
+        for (const k of chaves?.keys || []) {
+          await storage.delete(k, false).catch(() => {});
+        }
+      } catch (e) { /* nada a apagar */ }
+    }
+  }
+
+  for (const prefixo of CHAVES_COLECAO) {
+    for (const reg of pacote.colecoes[prefixo] || []) {
+      await storage.set(reg.chave, reg.valor, false);
+      gravados++;
+    }
+  }
+  for (const [k, v] of Object.entries(pacote.unicos || {})) {
+    await storage.set(k, v, false);
+    gravados++;
+  }
+  return gravados;
+}
+
+// Situação de um ETP, derivada do preenchimento — os únicos estados que o app consegue afirmar
+function situacaoEtp(etp) {
+  const p = progress(etp);
+  if (p.filled === 0) return { chave: "rascunho", rotulo: "Rascunho", cor: C.inkMuted };
+  if (p.reqFilled === p.reqTotal) return { chave: "concluido", rotulo: "Concluído", cor: C.green };
+  return { chave: "elaboracao", rotulo: "Em elaboração", cor: C.brass };
+}
+
+// Dicas curtas que giram no painel
+const DICAS = [
+  "Cadastre o código do Sistema Centi nos itens — é por ele que o app localiza cada um no PCA.",
+  "Use “Duplicar” numa contratação parecida do ano passado em vez de refazer o ETP do zero.",
+  "Antes de finalizar, abra a Conformidade: ela aponta pendências que travam o processo.",
+  "Incisos vazios não entram no documento. Para tirar um preenchido, use “Não incluir”.",
+  "Cada Secretaria pode ter timbre próprio — imagem, texto ou nenhum.",
+  "Lance mais de uma cotação por item: a pesquisa de preços costuma exigir várias fontes.",
+];
+
 // ---------- Lista de documentos avulsos (declarações e justificativas) ----------
 // Mesmo comportamento das duas listas: abrir, excluir com confirmação e criar novo.
 function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo, icone: Icone, vazio, secretarias, mostrarSecretaria }) {
@@ -2617,310 +2909,806 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo,
 }
 
 // ---------- List View ----------
+// ---------- Painel principal ----------
+// Barra lateral fixa + área de conteúdo. As abas trocam o conteúdo sem sair da tela.
 function ListView({ etps, todosEtps, justificativas, declaracoes,
   secretarias, secretariaAtiva, setSecretariaAtiva,
   loading, search, setSearch,
   onOpen, onNew, onDelete, onDuplicar,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
-  onGerenciarSecretarias }) {
+  onGerenciarSecretarias, onRecarregar }) {
+
+  const [aba, setAba] = useState("painel");
+  const [showGuia, setShowGuia] = useState(false);
+  const [dica, setDica] = useState(0);
   const [confirmId, setConfirmId] = useState(null);
+
+  useEffect(() => {
+    const t = setInterval(() => setDica(d => (d + 1) % DICAS.length), 9000);
+    return () => clearInterval(t);
+  }, []);
 
   function handleDeleteClick(id, e) {
     e.stopPropagation();
-    if (confirmId === id) {
-      onDelete(id, e);
-      setConfirmId(null);
-    } else {
-      setConfirmId(id);
-    }
+    if (confirmId === id) { onDelete(id, e); setConfirmId(null); }
+    else setConfirmId(id);
   }
 
-  // Indicadores calculados sobre TODOS os ETPs (não sobre o resultado da busca), para que os
-  // números do painel não mudem enquanto o servidor digita no campo de busca.
   const base = todosEtps || etps;
-  const completos = base.filter(e => progress(e).reqFilled === progress(e).reqTotal);
-  const emRascunho = base.length - completos.length;
-  const valorTotalCompletos = completos.reduce((s, e) => s + valorTotalEtp(e), 0);
+  const porSituacao = { concluido: [], elaboracao: [], rascunho: [] };
+  base.forEach(e => porSituacao[situacaoEtp(e).chave].push(e));
+  const valorTotal = base.reduce((soma, e) => soma + valorTotalEtp(e), 0);
+  const pctConcluidos = base.length ? Math.round((porSituacao.concluido.length / base.length) * 100) : 0;
+  const recentes = [...base].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
-  const recentes = [...base].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
+  // Nome de quem trabalha: o responsável mais usado nos ETPs, quando houver
+  const nomeUsuario = (() => {
+    const nomes = base.flatMap(e => listaResponsaveis(e).map(r => r.nome)).filter(Boolean);
+    if (nomes.length === 0) return null;
+    const cont = {};
+    nomes.forEach(n => { cont[n] = (cont[n] || 0) + 1; });
+    return Object.entries(cont).sort((a, b) => b[1] - a[1])[0][0];
+  })();
+  const primeiroNome = nomeUsuario ? nomeUsuario.split(" ").slice(0, 2).join(" ") : null;
 
-  // Pendências — cada linha aponta para algo concreto que falta em um ETP específico
-  const pendencias = [];
-  base.forEach(e => {
-    const p = progress(e);
-    const titulo = e.meta.titulo || "ETP sem título";
-    if (p.reqFilled < p.reqTotal) {
-      pendencias.push({ etp: e, texto: `${titulo} — ${p.reqTotal - p.reqFilled} inciso(s) obrigatório(s) em branco` });
-    }
-    if (listaResponsaveis(e).length === 0) {
-      pendencias.push({ etp: e, texto: `${titulo} — sem responsável técnico cadastrado` });
-    }
-    if ((e.itens || []).length > 0 && valorTotalEtp(e) === 0) {
-      pendencias.push({ etp: e, texto: `${titulo} — sem valor estimado (cotações não lançadas)` });
-    }
-  });
+  const secAtiva = secretarias.find(x => x.id === secretariaAtiva);
 
-  const indicadores = [
-    { rotulo: "ETPs no total", valor: String(base.length) },
-    { rotulo: "Em rascunho", valor: String(emRascunho) },
-    { rotulo: "Completos", valor: String(completos.length) },
-    { rotulo: "Valor estimado (completos)", valor: brl(valorTotalCompletos), pequeno: true },
+  const menu = [
+    { id: "painel", rotulo: "Painel", icone: ClipboardList },
+    { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
+    { id: "novo", rotulo: "Novo ETP", icone: Plus, acao: onNew },
+    { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
+    { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
+    { id: "secretarias", rotulo: "Secretarias", icone: Building2, acao: onGerenciarSecretarias },
+    { id: "backup", rotulo: "Backup", icone: Download },
   ];
 
-  return (
-    <div className="max-w-5xl mx-auto px-6 py-10">
-      <div className="flex items-start justify-between gap-4 mb-5">
-        <div>
-          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
-            <ClipboardList size={18} />
-            <span className="text-xs font-semibold tracking-widest uppercase">Lei nº 14.133/2021 · art. 18</span>
+  // ---- Blocos reutilizados ----
+  const cartao = (conteudo, extra = "") => (
+    <div className={`rounded-xl border p-5 ${extra}`} style={{ borderColor: C.border, background: "white" }}>
+      {conteudo}
+    </div>
+  );
+
+  const indicador = (valor, rotulo, nota, Icone, corIcone, fundoIcone) => (
+    <div className="rounded-xl border p-4 flex items-center gap-3.5" style={{ borderColor: C.border, background: "white" }}>
+      <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: fundoIcone }}>
+        <Icone size={20} style={{ color: corIcone }} />
+      </div>
+      <div className="min-w-0">
+        <p className="serif text-2xl font-semibold leading-none" style={{ color: C.navy }}>{valor}</p>
+        <p className="text-xs mt-1 truncate" style={{ color: C.ink }}>{rotulo}</p>
+        {nota && <p className="text-[10.5px] truncate" style={{ color: C.inkMuted }}>{nota}</p>}
+      </div>
+    </div>
+  );
+
+  // Rosca de progresso desenhada em SVG, sem biblioteca
+  function Rosca() {
+    const fatias = [
+      { rotulo: "Concluídos", n: porSituacao.concluido.length, cor: C.green },
+      { rotulo: "Em elaboração", n: porSituacao.elaboracao.length, cor: C.brass },
+      { rotulo: "Rascunhos", n: porSituacao.rascunho.length, cor: C.border },
+    ];
+    const total = base.length || 1;
+    const raio = 54, circ = 2 * Math.PI * raio;
+    let offset = 0;
+    return (
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="relative shrink-0" style={{ width: 132, height: 132 }}>
+          <svg width="132" height="132" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="66" cy="66" r={raio} fill="none" stroke={C.paperDark} strokeWidth="14" />
+            {fatias.map(f => {
+              if (f.n === 0) return null;
+              const comp = (f.n / total) * circ;
+              const el = (
+                <circle key={f.rotulo} cx="66" cy="66" r={raio} fill="none" stroke={f.cor} strokeWidth="14"
+                  strokeDasharray={`${comp} ${circ - comp}`} strokeDashoffset={-offset} />
+              );
+              offset += comp;
+              return el;
+            })}
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="serif text-2xl font-semibold" style={{ color: C.navy }}>{pctConcluidos}%</span>
+            <span className="text-[9.5px] text-center leading-tight" style={{ color: C.inkMuted }}>ETPs<br />concluídos</span>
           </div>
-          <h1 className="serif text-3xl font-semibold" style={{ color: C.navy }}>Gerador de ETP</h1>
-          <p className="text-sm mt-1" style={{ color: C.inkMuted }}>Estudos Técnicos Preliminares — organizados, completos e salvos automaticamente.</p>
         </div>
-      </div>
-
-      <div className="flex items-center gap-2 mb-6 flex-wrap p-3 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
-        <Building2 size={16} className="shrink-0" style={{ color: C.brass }} />
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Secretaria</span>
-        <select value={secretariaAtiva} onChange={e => setSecretariaAtiva(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border text-sm bg-white flex-1 min-w-[200px]" style={{ borderColor: C.border, color: C.navy }}>
-          <option value="todas">Todas as Secretarias</option>
-          {secretarias.map(s => (
-            <option key={s.id} value={s.id}>{s.sigla ? `${s.sigla} — ${s.nome}` : (s.nome || "Secretaria sem nome")}</option>
-          ))}
-        </select>
-        <button onClick={onGerenciarSecretarias}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium shrink-0"
-          style={{ background: C.paperDark, color: C.navy }}>
-          <Settings size={13} /> Gerenciar
-        </button>
-      </div>
-
-      {!loading && base.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-          {indicadores.map(ind => (
-            <div key={ind.rotulo} className="p-4 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
-              <span className="text-[10px] font-semibold uppercase tracking-wide block mb-1" style={{ color: C.brass }}>
-                {ind.rotulo}
-              </span>
-              <span className={`serif font-semibold ${ind.pequeno ? "text-lg" : "text-2xl"}`} style={{ color: C.navy }}>
-                {ind.valor}
+        <div className="flex-1 min-w-[150px] space-y-2">
+          {fatias.map(f => (
+            <div key={f.rotulo} className="flex items-center gap-2 text-xs">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: f.cor }} />
+              <span className="flex-1" style={{ color: C.ink }}>{f.rotulo}</span>
+              <span className="font-semibold" style={{ color: C.navy }}>
+                {f.n} <span className="font-normal" style={{ color: C.inkMuted }}>
+                  ({base.length ? Math.round((f.n / base.length) * 100) : 0}%)
+                </span>
               </span>
             </div>
           ))}
         </div>
-      )}
-
-      <div className="grid sm:grid-cols-3 gap-3 mb-6">
-        <button onClick={onNew}
-          className="flex items-center gap-3 p-4 rounded-xl text-left shadow-sm"
-          style={{ background: C.navy, color: C.paper }}>
-          <Plus size={20} className="shrink-0" />
-          <span>
-            <span className="block text-sm font-semibold">Novo ETP</span>
-            <span className="block text-xs opacity-75">Iniciar um estudo do zero</span>
-          </span>
-        </button>
-        <button onClick={onNovaDeclaracao}
-          className="flex items-center gap-3 p-4 rounded-xl text-left border"
-          style={{ borderColor: C.border, background: "white", color: C.navy }}>
-          <ListChecks size={20} className="shrink-0" style={{ color: C.brass }} />
-          <span>
-            <span className="block text-sm font-semibold">Nova Declaração de PCA</span>
-            <span className="block text-xs" style={{ color: C.inkMuted }}>Conferir itens e gerar documento</span>
-          </span>
-        </button>
-        <button onClick={() => onNovaJustificativa(null)}
-          className="flex items-center gap-3 p-4 rounded-xl text-left border"
-          style={{ borderColor: C.border, background: "white", color: C.navy }}>
-          <FileEdit size={20} className="shrink-0" style={{ color: C.brass }} />
-          <span>
-            <span className="block text-sm font-semibold">Nova Justificativa</span>
-            <span className="block text-xs" style={{ color: C.inkMuted }}>Justificativa de aquisição</span>
-          </span>
-        </button>
       </div>
+    );
+  }
 
-      {!loading && recentes.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
-            Continuar de onde parou
-          </h2>
-          <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-            {recentes.map((etp, idx) => {
-              const p = progress(etp);
-              const done = p.reqFilled === p.reqTotal;
-              return (
-                <button key={etp.id} onClick={() => onOpen(etp)}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-black/[0.02]"
-                  style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: C.navy }}>
-                      {etp.meta.titulo || "ETP sem título"}
-                    </p>
-                    <p className="text-xs" style={{ color: C.inkMuted }}>
-                      {etp.meta.orgao || "Órgão não informado"} · editado {fmtDateRelativa(etp.updatedAt)}
-                    </p>
-                  </div>
-                  <div className="w-24 shrink-0">
-                    <div className="h-1.5 rounded-full" style={{ background: C.paperDark }}>
-                      <div className="h-1.5 rounded-full" style={{ width: p.pct + "%", background: done ? C.green : C.brass }} />
-                    </div>
-                  </div>
-                  <span className="text-xs shrink-0 w-10 text-right" style={{ color: C.inkMuted }}>{p.filled}/{p.total}</span>
-                </button>
-              );
-            })}
+  const acaoRapida = (Icone, titulo, sub, onClick) => (
+    <button onClick={onClick}
+      className="flex items-start gap-2.5 p-3 rounded-lg border text-left hover:bg-black/[0.02]"
+      style={{ borderColor: C.border, background: "white" }}>
+      <Icone size={16} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold" style={{ color: C.navy }}>{titulo}</span>
+        <span className="block text-[10.5px] leading-snug" style={{ color: C.inkMuted }}>{sub}</span>
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="flex min-h-screen" style={{ background: C.paperDark }}>
+
+      {/* ---------- Barra lateral ---------- */}
+      <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
+        <div className="px-5 py-5 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.brass }}>
+            <ClipboardList size={20} style={{ color: C.navyDark }} />
+          </div>
+          <div className="min-w-0">
+            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>Gerador de ETP</p>
+            <p className="text-[10px] leading-tight" style={{ color: "#8A93A3" }}>Estudo Técnico Preliminar</p>
           </div>
         </div>
-      )}
 
-      {!loading && pendencias.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
-            Pendências ({pendencias.length})
-          </h2>
-          <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-            {pendencias.slice(0, 6).map((pend, idx) => (
-              <button key={idx} onClick={() => onOpen(pend.etp)}
-                className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02]"
-                style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
-                <AlertCircle size={13} className="shrink-0" style={{ color: C.brass }} />
-                <span className="text-xs flex-1 min-w-0 truncate" style={{ color: C.ink }}>{pend.texto}</span>
-              </button>
-            ))}
-            {pendencias.length > 6 && (
-              <p className="px-4 py-2 text-[11px]" style={{ color: C.inkMuted, borderTop: `1px solid ${C.border}` }}>
-                e mais {pendencias.length - 6} pendência(s).
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      <ListaDocumentos
-        titulo="Declarações de previsão no PCA"
-        docs={declaracoes}
-        onAbrir={onAbrirDeclaracao}
-        onExcluir={onExcluirDeclaracao}
-        onDuplicar={onDuplicarDeclaracao}
-        onNovo={onNovaDeclaracao}
-        icone={ListChecks}
-        vazio="Nenhuma declaração criada ainda."
-        secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
-      />
-
-      <ListaDocumentos
-        titulo="Justificativas de aquisição"
-        docs={justificativas}
-        onAbrir={onAbrirJustificativa}
-        onExcluir={onExcluirJustificativa}
-        onDuplicar={onDuplicarJustificativa}
-        onNovo={() => onNovaJustificativa(null)}
-        icone={FileEdit}
-        vazio="Nenhuma justificativa criada ainda."
-        secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
-      />
-
-      <h2 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
-        Todos os ETPs
-      </h2>
-
-      <div className="relative mb-6">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
-        <input
-          value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar por título, órgão, nº de processo ou responsável..."
-          className="w-full pl-9 pr-3 py-2.5 rounded-lg text-sm border"
-          style={{ borderColor: C.border, background: "white" }}
-        />
-      </div>
-
-      {loading ? (
-        <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
-      ) : etps.length === 0 ? (
-        <div className="text-center py-16 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
-          <FileText size={32} className="mx-auto mb-3" style={{ color: C.border }} />
-          <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Nenhum ETP criado ainda</p>
-          <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-            Comece cadastrando os itens da contratação — o restante do estudo se apoia neles.
-          </p>
-          <button onClick={onNew}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm shadow-sm"
-            style={{ background: C.navy, color: C.paper }}>
-            <Plus size={16} /> Criar o primeiro ETP
-          </button>
-        </div>
-      ) : (
-        <div className="grid sm:grid-cols-2 gap-4">
-          {etps.map(etp => {
-            const p = progress(etp);
-            const done = p.reqFilled === p.reqTotal;
-            const confirming = confirmId === etp.id;
+        <nav className="px-3 mt-2 flex-1 overflow-y-auto etp-scroll">
+          {menu.map(m => {
+            const ativo = !m.acao && aba === m.id;
             return (
-              <div key={etp.id} onClick={() => (confirming ? null : onOpen(etp))}
-                className="cursor-pointer rounded-xl p-5 border bg-white hover:shadow-md transition-shadow relative group"
-                style={{ borderColor: confirming ? C.red : C.border }}>
-                {confirming ? (
-                  <div onClick={e => e.stopPropagation()} className="absolute top-3 right-3 flex items-center gap-1.5 bg-white rounded-lg p-1 shadow-sm border" style={{ borderColor: C.border }}>
-                    <span className="text-[10px] pl-1" style={{ color: C.red }}>Excluir?</span>
-                    <button onClick={(e) => handleDeleteClick(etp.id, e)}
-                      className="px-2 py-1 rounded text-[10px] font-semibold" style={{ background: C.red, color: "white" }}>
-                      Sim
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setConfirmId(null); }}
-                      className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>
-                      Não
-                    </button>
-                  </div>
-                ) : (
-                  <div className="absolute top-4 right-4 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={(e) => { e.stopPropagation(); onDuplicar(etp, e); }}
-                      className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
-                      <Copy size={15} />
-                    </button>
-                    <button onClick={(e) => handleDeleteClick(etp.id, e)}
-                      className="p-1.5 rounded-md" style={{ color: C.red }} title="Excluir">
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
+              <button key={m.id} onClick={() => (m.acao ? m.acao() : setAba(m.id))}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-1 text-sm"
+                style={{
+                  background: ativo ? C.brass : "transparent",
+                  color: ativo ? C.navyDark : "#B7C0CC",
+                  fontWeight: ativo ? 600 : 500,
+                }}>
+                <m.icone size={16} className="shrink-0" />
+                <span className="flex-1 text-left">{m.rotulo}</span>
+                {m.contador > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full"
+                    style={{ background: ativo ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.1)", color: ativo ? C.navyDark : "#8A93A3" }}>
+                    {m.contador}
+                  </span>
                 )}
-                <h3 className="serif text-lg font-semibold pr-16 mb-1" style={{ color: C.navy }}>
-                  {etp.meta.titulo || "ETP sem título"}
-                </h3>
-                <p className="text-xs mb-3 flex items-center gap-1.5 flex-wrap" style={{ color: C.inkMuted }}>
-                  {secretariaAtiva === "todas" && secretariaDoDoc(etp, secretarias)?.sigla && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: C.paperDark, color: C.brass }}>
-                      {secretariaDoDoc(etp, secretarias).sigla}
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1">
-                    <Building2 size={12} /> {etp.meta.orgao || "Órgão não informado"} {etp.meta.processo && `· Proc. ${etp.meta.processo}`}
-                  </span>
-                </p>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
-                    <div className="h-1.5 rounded-full" style={{ width: p.pct + "%", background: done ? C.green : C.brass }} />
-                  </div>
-                  <span className="text-xs font-medium" style={{ color: C.inkMuted }}>{p.filled}/{p.total}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs" style={{ color: C.inkMuted }}>
-                  <span className="flex items-center gap-1">
-                    {done ? <Check size={12} style={{ color: C.green }} /> : <AlertCircle size={12} style={{ color: C.red }} />}
-                    {done ? "Elementos obrigatórios completos" : `${p.reqTotal - p.reqFilled} obrigatório(s) pendente(s)`}
-                  </span>
-                  <span>{fmtDate(etp.updatedAt)}</span>
-                </div>
-              </div>
+              </button>
             );
           })}
+        </nav>
+
+        <div className="m-3 p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }}>
+          <p className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color: C.brassLight }}>
+            <Info size={13} /> Dica do dia
+          </p>
+          <p className="text-[11px] leading-relaxed" style={{ color: "#B7C0CC" }}>{DICAS[dica]}</p>
+          <div className="flex gap-1 mt-3">
+            {DICAS.map((_, i) => (
+              <button key={i} onClick={() => setDica(i)} className="h-1 rounded-full transition-all"
+                style={{ width: i === dica ? 16 : 6, background: i === dica ? C.brass : "rgba(255,255,255,0.18)" }} />
+            ))}
+          </div>
         </div>
-      )}
+      </aside>
+
+      {/* ---------- Conteúdo ---------- */}
+      <div className="flex-1 min-w-0 flex flex-col">
+
+        <header className="flex items-center gap-3 px-7 py-3.5 border-b flex-wrap"
+          style={{ borderColor: C.border, background: "white" }}>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Building2 size={15} className="shrink-0" style={{ color: C.brass }} />
+            <select value={secretariaAtiva} onChange={e => setSecretariaAtiva(e.target.value)}
+              className="px-2.5 py-1.5 rounded-lg border text-xs bg-white max-w-[300px]"
+              style={{ borderColor: C.border, color: C.navy }}>
+              <option value="todas">Todas as Secretarias</option>
+              {secretarias.map(x => (
+                <option key={x.id} value={x.id}>{x.sigla ? `${x.sigla} — ${x.nome}` : (x.nome || "Sem nome")}</option>
+              ))}
+            </select>
+          </div>
+          <button onClick={() => setShowGuia(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+            style={{ borderColor: C.border, color: C.navy, background: "white" }}>
+            <FileText size={14} /> Guia rápido
+          </button>
+          <div className="flex items-center gap-2.5 pl-3 border-l shrink-0" style={{ borderColor: C.border }}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: C.paperDark }}>
+              <span className="serif text-xs font-bold" style={{ color: C.navy }}>
+                {primeiroNome ? primeiroNome.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() : "ETP"}
+              </span>
+            </div>
+            <div className="leading-tight hidden sm:block">
+              <p className="text-xs font-semibold" style={{ color: C.navy }}>{primeiroNome || "Setor de Compras"}</p>
+              <p className="text-[10px]" style={{ color: C.inkMuted }}>
+                {secAtiva ? (secAtiva.sigla || secAtiva.nome) : "Todas as Secretarias"}
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 px-7 py-6 overflow-y-auto etp-scroll">
+
+          {aba === "painel" && (
+            <>
+              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
+                {primeiroNome ? `Bem-vindo, ${primeiroNome}` : "Bem-vindo"}
+              </h1>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                Elabore e acompanhe seus Estudos Técnicos Preliminares, do levantamento de itens ao documento assinado.
+              </p>
+
+              <div className="grid lg:grid-cols-[1fr,320px] gap-5 items-start">
+                <div className="min-w-0">
+                  {/* Faixa de destaque */}
+                  <div className="rounded-xl p-7 mb-5 relative overflow-hidden"
+                    style={{ background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navyDark} 100%)` }}>
+                    <div className="relative z-10 max-w-lg">
+                      <h2 className="serif text-2xl font-bold leading-tight" style={{ color: C.paper }}>
+                        Planeje melhor.{" "}
+                        <span style={{ color: C.brassLight }}>Contrate com segurança.</span>
+                      </h2>
+                      <p className="text-sm mt-2 leading-relaxed" style={{ color: "#B7C0CC" }}>
+                        O app organiza a elaboração do ETP conforme o art. 18 da Lei nº 14.133/2021,
+                        aproveitando os dados que você já cadastrou.
+                      </p>
+                      <div className="flex gap-5 mt-5 flex-wrap">
+                        {[
+                          [ClipboardList, "13 incisos", "do art. 18"],
+                          [Check, "Conformidade", "verificada antes de finalizar"],
+                          [Download, "Exportação", "em Word e PDF"],
+                        ].map(([Ic, t, sub], i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                              style={{ background: "rgba(255,255,255,0.1)" }}>
+                              <Ic size={15} style={{ color: C.brassLight }} />
+                            </div>
+                            <div className="leading-tight">
+                              <p className="text-[11px] font-semibold" style={{ color: C.paper }}>{t}</p>
+                              <p className="text-[10px]" style={{ color: "#8A93A3" }}>{sub}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="absolute right-0 top-0 bottom-0 w-56 opacity-10 hidden md:block"
+                      style={{ background: `radial-gradient(circle at 70% 50%, ${C.brassLight} 0%, transparent 70%)` }} />
+                  </div>
+
+                  {/* Indicadores */}
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+                    {indicador(base.length, "ETPs criados", null, FileText, C.navy, "rgba(28,46,74,0.08)")}
+                    {indicador(porSituacao.concluido.length, "Concluídos", "obrigatórios preenchidos", Check, C.green, "rgba(76,124,89,0.1)")}
+                    {indicador(porSituacao.elaboracao.length, "Em elaboração", "ainda faltam incisos", FileEdit, C.brass, "rgba(166,131,46,0.12)")}
+                    {indicador(brl(valorTotal), "Valor estimado", "somado de todos os ETPs", TrendingUp, C.navy, "rgba(28,46,74,0.08)")}
+                  </div>
+
+                  {/* ETPs recentes */}
+                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b" style={{ borderColor: C.border }}>
+                      <h3 className="serif text-base font-semibold" style={{ color: C.navy }}>ETPs recentes</h3>
+                      <button onClick={() => setAba("etps")} className="text-xs font-medium" style={{ color: C.brass }}>
+                        Ver todos
+                      </button>
+                    </div>
+                    {recentes.length === 0 ? (
+                      <div className="px-5 py-10 text-center">
+                        <FileText size={28} className="mx-auto mb-2" style={{ color: C.border }} />
+                        <p className="text-sm mb-3" style={{ color: C.inkMuted }}>Nenhum ETP criado ainda.</p>
+                        <button onClick={onNew} className="px-4 py-2 rounded-lg text-sm font-medium"
+                          style={{ background: C.navy, color: C.paper }}>
+                          Criar o primeiro ETP
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto etp-scroll">
+                        <table className="w-full text-sm" style={{ minWidth: "560px" }}>
+                          <thead>
+                            <tr style={{ background: C.paperDark }}>
+                              <th className="text-left px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Título / Objeto</th>
+                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-28" style={{ color: C.inkMuted }}>Atualizado</th>
+                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-32" style={{ color: C.inkMuted }}>Situação</th>
+                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-20" style={{ color: C.inkMuted }}>Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentes.map(etp => {
+                              const sit = situacaoEtp(etp);
+                              const sec = secretariaDoDoc(etp, secretarias);
+                              return (
+                                <tr key={etp.id} className="border-t hover:bg-black/[0.015] cursor-pointer"
+                                  style={{ borderColor: C.border }} onClick={() => onOpen(etp)}>
+                                  <td className="px-5 py-3">
+                                    <p className="font-medium truncate" style={{ color: C.navy }}>
+                                      {etp.meta.titulo || "ETP sem título"}
+                                    </p>
+                                    <p className="text-[11px] truncate" style={{ color: C.inkMuted }}>
+                                      {sec?.sigla ? `${sec.sigla} · ` : ""}{etp.meta.setor || etp.meta.orgao || "Setor não informado"}
+                                    </p>
+                                  </td>
+                                  <td className="px-3 py-3 text-xs" style={{ color: C.inkMuted }}>
+                                    {fmtDateRelativa(etp.updatedAt)}
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full"
+                                      style={{ background: `${sit.cor}1A`, color: sit.cor }}>
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: sit.cor }} />
+                                      {sit.rotulo}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
+                                        className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Duplicar">
+                                        <Copy size={14} />
+                                      </button>
+                                      <button onClick={e => handleDeleteClick(etp.id, e)}
+                                        className="p-1.5 rounded" style={{ color: confirmId === etp.id ? C.red : C.inkMuted }}
+                                        title={confirmId === etp.id ? "Clique de novo para excluir" : "Excluir"}>
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Coluna direita */}
+                <div className="space-y-5">
+                  {cartao(
+                    <>
+                      <h3 className="serif text-base font-semibold mb-4" style={{ color: C.navy }}>Progresso geral</h3>
+                      {base.length === 0
+                        ? <p className="text-xs" style={{ color: C.inkMuted }}>Sem ETPs para acompanhar ainda.</p>
+                        : <Rosca />}
+                    </>
+                  )}
+
+                  {cartao(
+                    <>
+                      <h3 className="serif text-base font-semibold mb-3" style={{ color: C.navy }}>Ações rápidas</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        {acaoRapida(Plus, "Novo ETP", "Criar do zero", onNew)}
+                        {acaoRapida(ListChecks, "Declaração", "Verificar PCA", onNovaDeclaracao)}
+                        {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => onNovaJustificativa(null))}
+                        {acaoRapida(Building2, "Secretarias", "Timbre e cadastro", onGerenciarSecretarias)}
+                      </div>
+                    </>
+                  )}
+
+                  {cartao(
+                    <>
+                      <h3 className="serif text-base font-semibold mb-1" style={{ color: C.navy }}>Começar por tipo</h3>
+                      <p className="text-[11px] mb-3" style={{ color: C.inkMuted }}>
+                        Cria um ETP já com o tipo de objeto definido — os textos-modelo se ajustam a ele.
+                      </p>
+                      <div className="space-y-1.5">
+                        {TIPOS_OBJETO.map(t => (
+                          <button key={t} onClick={() => onNew(t)}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs hover:bg-black/[0.02]"
+                            style={{ borderColor: C.border, color: C.ink }}>
+                            <span>{t}</span>
+                            <Plus size={13} style={{ color: C.brass }} />
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {aba === "etps" && (
+            <>
+              <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Meus ETPs</h1>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                {base.length} estudo(s){secAtiva ? ` em ${secAtiva.sigla || secAtiva.nome}` : ""}.
+              </p>
+
+              <div className="relative mb-5 max-w-lg">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar por título, órgão, nº de processo ou responsável..."
+                  className="w-full pl-9 pr-4 py-2.5 rounded-lg border text-sm"
+                  style={{ borderColor: C.border, background: "white" }} />
+              </div>
+
+              {loading ? (
+                <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
+              ) : etps.length === 0 ? (
+                <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+                  <FileText size={30} className="mx-auto mb-3" style={{ color: C.border }} />
+                  <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+                    {search ? "Nenhum ETP encontrado" : "Nenhum ETP criado ainda"}
+                  </p>
+                  <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+                    {search ? "Tente outro termo de busca." : "Comece cadastrando os itens da contratação."}
+                  </p>
+                  {!search && (
+                    <button onClick={onNew} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm"
+                      style={{ background: C.navy, color: C.paper }}>
+                      <Plus size={16} /> Criar o primeiro ETP
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {etps.map(etp => {
+                    const p = progress(etp);
+                    const sit = situacaoEtp(etp);
+                    const sec = secretariaDoDoc(etp, secretarias);
+                    return (
+                      <div key={etp.id} onClick={() => onOpen(etp)}
+                        className="group relative p-5 rounded-xl border cursor-pointer hover:shadow-sm"
+                        style={{ borderColor: C.border, background: "white" }}>
+                        <div className="absolute top-4 right-4 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
+                            className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
+                            <Copy size={15} />
+                          </button>
+                          <button onClick={e => handleDeleteClick(etp.id, e)}
+                            className="p-1.5 rounded-md" style={{ color: confirmId === etp.id ? C.red : C.inkMuted }}
+                            title={confirmId === etp.id ? "Clique de novo para excluir" : "Excluir"}>
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+
+                        <h3 className="serif text-lg font-semibold pr-16 mb-1" style={{ color: C.navy }}>
+                          {etp.meta.titulo || "ETP sem título"}
+                        </h3>
+                        <p className="text-xs mb-3 flex items-center gap-1.5 flex-wrap" style={{ color: C.inkMuted }}>
+                          {secretariaAtiva === "todas" && sec?.sigla && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                              style={{ background: C.paperDark, color: C.brass }}>{sec.sigla}</span>
+                          )}
+                          <span className="flex items-center gap-1">
+                            <Building2 size={12} /> {etp.meta.orgao || "Órgão não informado"}
+                            {etp.meta.processo && ` · Proc. ${etp.meta.processo}`}
+                          </span>
+                        </p>
+
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
+                            <div className="h-1.5 rounded-full" style={{ width: p.pct + "%", background: sit.cor }} />
+                          </div>
+                          <span className="text-[11px] shrink-0" style={{ color: C.inkMuted }}>{p.filled}/{p.total}</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="inline-flex items-center gap-1.5 font-semibold px-2 py-0.5 rounded-full"
+                            style={{ background: `${sit.cor}1A`, color: sit.cor }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: sit.cor }} />
+                            {sit.rotulo}
+                          </span>
+                          <span style={{ color: C.inkMuted }}>editado {fmtDateRelativa(etp.updatedAt)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {aba === "declaracoes" && (
+            <>
+              <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Declarações de previsão no PCA</h1>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                Confere se os itens constam no Plano de Contratações Anual e gera o documento para o processo.
+              </p>
+              <ListaDocumentos titulo="Declarações" docs={declaracoes}
+                onAbrir={onAbrirDeclaracao} onExcluir={onExcluirDeclaracao} onDuplicar={onDuplicarDeclaracao}
+                onNovo={onNovaDeclaracao} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
+                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
+            </>
+          )}
+
+          {aba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}
+
+          {aba === "justificativas" && (
+            <>
+              <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Justificativas de aquisição</h1>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                Documento anterior à aquisição, com os dados do processo e o texto de justificativa.
+              </p>
+              <ListaDocumentos titulo="Justificativas" docs={justificativas}
+                onAbrir={onAbrirJustificativa} onExcluir={onExcluirJustificativa} onDuplicar={onDuplicarJustificativa}
+                onNovo={() => onNovaJustificativa(null)} icone={FileEdit} vazio="Nenhuma justificativa criada ainda."
+                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
+            </>
+          )}
+        </main>
+
+        <footer className="px-7 py-4 border-t flex items-center gap-2 flex-wrap"
+          style={{ borderColor: C.border, background: "white" }}>
+          <ClipboardList size={14} style={{ color: C.brass }} />
+          <span className="text-xs" style={{ color: C.inkMuted }}>
+            Gerador de ETP — Lei nº 14.133/2021, art. 18
+          </span>
+          <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
+            Desenvolvido para a Administração Pública
+          </span>
+        </footer>
+      </div>
+
+      {showGuia && <GuiaRapido onFechar={() => setShowGuia(false)} />}
     </div>
   );
 }
+
+// ---------- Backup ----------
+function TelaBackup({ onRestaurado }) {
+  const [exportando, setExportando] = useState(false);
+  const [resumoAtual, setResumoAtual] = useState(null);
+  const [arquivo, setArquivo] = useState(null);   // { pacote, resumo }
+  const [modo, setModo] = useState("mesclar");
+  const [erro, setErro] = useState("");
+  const [restaurando, setRestaurando] = useState(false);
+  const [feito, setFeito] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    montarBackup().then(p => setResumoAtual(resumirBackup(p))).catch(() => {});
+  }, []);
+
+  async function exportar() {
+    setExportando(true);
+    setErro("");
+    try {
+      const pacote = await montarBackup();
+      baixarBackup(pacote);
+      setFeito("Backup baixado. Guarde o arquivo num lugar seguro — de preferência numa pasta sincronizada.");
+      setTimeout(() => setFeito(""), 6000);
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível gerar o backup.");
+    }
+    setExportando(false);
+  }
+
+  async function escolherArquivo(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setErro("");
+    setArquivo(null);
+    try {
+      const texto = await f.text();
+      const pacote = lerBackup(texto);
+      setArquivo({ pacote, resumo: resumirBackup(pacote), nome: f.name });
+    } catch (err) {
+      setErro(err.message || "Arquivo inválido.");
+    }
+    e.target.value = "";
+  }
+
+  async function confirmarRestauracao() {
+    setRestaurando(true);
+    setErro("");
+    try {
+      await restaurarBackup(arquivo.pacote, modo);
+      setArquivo(null);
+      setFeito("Backup restaurado.");
+      onRestaurado?.();
+    } catch (e) {
+      console.error(e);
+      setErro("Falha ao restaurar. Nada foi perdido — tente novamente.");
+    }
+    setRestaurando(false);
+  }
+
+  const linhaResumo = (r) => (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+      {[["ETPs", r.etps], ["Justificativas", r.justificativas], ["Declarações", r.declaracoes], ["Secretarias", r.secretarias]]
+        .map(([rot, n]) => (
+          <div key={rot} className="px-2 py-2.5 rounded-lg" style={{ background: C.paperDark }}>
+            <p className="serif text-xl font-semibold leading-none" style={{ color: C.navy }}>{n}</p>
+            <p className="text-[10.5px] mt-1" style={{ color: C.inkMuted }}>{rot}</p>
+          </div>
+        ))}
+    </div>
+  );
+
+  return (
+    <>
+      <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Backup</h1>
+      <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+        Seus documentos ficam gravados apenas neste navegador. Baixe uma cópia de tempos em tempos — é o
+        que permite recuperar tudo se a máquina for formatada ou os dados do site forem limpos.
+      </p>
+
+      {feito && (
+        <div className="mb-4 p-3 rounded-lg flex items-start gap-2 text-xs"
+          style={{ background: "rgba(76,124,89,0.1)", color: C.ink }}>
+          <Check size={14} className="shrink-0 mt-0.5" style={{ color: C.green }} /> {feito}
+        </div>
+      )}
+      {erro && (
+        <div className="mb-4 p-3 rounded-lg flex items-start gap-2 text-xs"
+          style={{ background: "rgba(166,64,61,0.1)", color: C.ink }}>
+          <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} /> {erro}
+        </div>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
+        {/* Exportar */}
+        <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+            <Download size={15} />
+            <span className="text-xs font-semibold tracking-widest uppercase">Salvar cópia</span>
+          </div>
+          <h3 className="serif text-lg font-semibold mb-3" style={{ color: C.navy }}>Exportar tudo</h3>
+
+          {resumoAtual ? (
+            <>
+              {linhaResumo(resumoAtual)}
+              <p className="text-[11px] mt-3" style={{ color: C.inkMuted }}>
+                Inclui também {resumoAtual.temPca ? "a planilha do PCA importada, " : ""}
+                {resumoAtual.temTimbre ? "o timbre geral " : ""}e o diretório de responsáveis.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs" style={{ color: C.inkMuted }}>Levantando o que há para salvar...</p>
+          )}
+
+          <button onClick={exportar} disabled={exportando}
+            className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60"
+            style={{ background: C.navy, color: C.paper }}>
+            {exportando ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            {exportando ? "Preparando..." : "Baixar backup (.json)"}
+          </button>
+
+          <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg text-[11px] leading-relaxed"
+            style={{ background: C.paperDark, color: C.inkMuted }}>
+            <Info size={13} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+            <span>
+              Salve numa pasta do OneDrive, Google Drive ou na rede da Prefeitura: assim o arquivo sobe
+              sozinho para a nuvem e você fica protegido mesmo se perder o computador.
+            </span>
+          </div>
+        </div>
+
+        {/* Importar */}
+        <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+            <Upload size={15} />
+            <span className="text-xs font-semibold tracking-widest uppercase">Recuperar</span>
+          </div>
+          <h3 className="serif text-lg font-semibold mb-3" style={{ color: C.navy }}>Importar backup</h3>
+
+          {!arquivo ? (
+            <>
+              <p className="text-xs mb-4 leading-relaxed" style={{ color: C.inkMuted }}>
+                Escolha um arquivo gerado por este app. Antes de gravar qualquer coisa, você verá o que ele
+                contém e escolherá como restaurar.
+              </p>
+              <input ref={inputRef} type="file" accept=".json,application/json" onChange={escolherArquivo} className="hidden" />
+              <button onClick={() => inputRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold border"
+                style={{ borderColor: C.border, color: C.navy, background: "white" }}>
+                <Upload size={15} /> Escolher arquivo
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs mb-2" style={{ color: C.inkMuted }}>
+                <b style={{ color: C.navy }}>{arquivo.nome}</b>
+                {arquivo.resumo.geradoEm && ` · gerado em ${fmtDate(new Date(arquivo.resumo.geradoEm).getTime())}`}
+              </p>
+              {linhaResumo(arquivo.resumo)}
+
+              <div className="mt-4 space-y-2">
+                {[
+                  ["mesclar", "Mesclar com o que já existe", "Mantém seus documentos atuais. Documentos de mesmo identificador são substituídos pela versão do arquivo."],
+                  ["substituir", "Substituir tudo", "Apaga os documentos atuais e deixa apenas os do arquivo."],
+                ].map(([v, titulo, desc]) => (
+                  <label key={v} className="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer"
+                    style={{
+                      borderColor: modo === v ? C.brass : C.border,
+                      background: modo === v ? "rgba(166,131,46,0.06)" : "white",
+                    }}>
+                    <input type="radio" name="modo-restauracao" checked={modo === v} onChange={() => setModo(v)}
+                      className="mt-0.5" style={{ accentColor: C.brass }} />
+                    <span>
+                      <span className="block text-xs font-semibold" style={{ color: C.navy }}>{titulo}</span>
+                      <span className="block text-[11px] leading-snug mt-0.5" style={{ color: C.inkMuted }}>{desc}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              {modo === "substituir" && (
+                <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg text-[11px] leading-relaxed"
+                  style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
+                  <AlertCircle size={13} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                  <span>
+                    Seus {resumoAtual?.etps || 0} ETP(s), {resumoAtual?.justificativas || 0} justificativa(s) e{" "}
+                    {resumoAtual?.declaracoes || 0} declaração(ões) atuais serão apagados. Se ainda não baixou um
+                    backup do estado de hoje, faça isso antes.
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 mt-4">
+                <button onClick={() => setArquivo(null)}
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                  Cancelar
+                </button>
+                <button onClick={confirmarRestauracao} disabled={restaurando}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-60"
+                  style={{ background: modo === "substituir" ? C.red : C.navy, color: "white" }}>
+                  {restaurando ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                  {restaurando ? "Restaurando..." : modo === "substituir" ? "Substituir tudo" : "Mesclar"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------- Guia rápido ----------
+function GuiaRapido({ onFechar }) {
+  const passos = [
+    ["1. Planilha de Itens", "Importe do Sistema Centi ou cadastre à mão. O código do produto é essencial: é por ele que o app localiza cada item no PCA."],
+    ["2. Alinhamento ao PCA", "Importe a planilha do painel do PCA. O cruzamento é automático; para códigos divergentes, você vincula a linha certa pela busca."],
+    ["3. Dados do Processo", "Objeto, setor, responsáveis, prazos e demais campos que alimentam os textos-modelo dos incisos."],
+    ["4. Levantamento de Preços", "Lance as cotações por item e escolha a metodologia (média ou mediana). Daí sai a estimativa de valor."],
+    ["5. Documento", "Os 13 incisos numa página só. Use o texto-modelo, escreva do seu jeito, ou leve o prompt a uma IA gratuita."],
+    ["6. Conformidade e exportação", "Confira as pendências antes de finalizar e baixe em Word ou PDF."],
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
+      onClick={onFechar}>
+      <div onClick={e => e.stopPropagation()}
+        className="w-full max-w-xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl"
+          style={{ borderColor: C.border }}>
+          <div>
+            <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+              <FileText size={15} />
+              <span className="text-xs font-semibold tracking-widest uppercase">Como funciona</span>
+            </div>
+            <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Guia rápido</h3>
+          </div>
+          <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {passos.map(([titulo, texto], i) => (
+            <div key={i} className="flex gap-3">
+              <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center serif text-xs font-bold"
+                style={{ background: C.paperDark, color: C.brass }}>{i + 1}</div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: C.navy }}>{titulo}</p>
+                <p className="text-xs leading-relaxed mt-0.5" style={{ color: C.inkMuted }}>{texto}</p>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] leading-relaxed pt-2 border-t" style={{ borderColor: C.border, color: C.inkMuted }}>
+            As Declarações de PCA e as Justificativas de aquisição são documentos independentes — não precisam
+            de um ETP aberto e ficam salvas em listas próprias.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
@@ -3010,23 +3798,16 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
     e.target.value = "";
   }
 
-  const matches = itens.map(it => {
-    const pcaRow = pca ? pcaMatchFor(it, pca.linhas) : null;
-    const manual = !pcaRow ? (manuais[it.id] || null) : null;
-    const manualSequencial = manual?.sequencial?.trim() || null;
-    return { item: it, pcaRow, manual, manualSequencial };
-  });
-  const encontrados = matches.filter(m => m.pcaRow || m.manualSequencial).length;
-  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática (com ou sem preenchimento manual já feito)
-  const itensFaltantes = matches.filter(m => !m.pcaRow && !m.manualSequencial).map(m => m.item); // ainda sem sequencial nenhum
+  const matches = cruzarComPca(itens, pca, manuais);
+  const encontrados = matches.filter(m => m.previsto).length;
+  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática
+  const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.pcaRow || m.manualSequencial).map(({ item, pcaRow, manual, manualSequencial }, idx) => {
-      const codigoExibido = pcaRow ? (item.idProduto || "-") : (manual?.codigo?.trim() || item.idProduto || "-");
-      const sequencialExibido = pcaRow ? (pcaRow.sequencial || "-") : manualSequencial;
-      return `<tr><td>${idx + 1}</td><td>${escapeHtml(codigoExibido)}</td><td>${escapeHtml(item.descricao || "-")}</td><td>${escapeHtml(sequencialExibido)}</td></tr>`;
-    }).join("");
+    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) =>
+      `<tr><td>${idx + 1}</td><td>${escapeHtml(m.codigo)}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`
+    ).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }).catch(e => console.error(e));
   }
 
@@ -3118,12 +3899,12 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
                         </tr>
                       </thead>
                       <tbody>
-                        {matches.map(({ item, pcaRow, manualSequencial }, idx) => (
-                          <tr key={item.id} className="border-t align-top" style={{ borderColor: C.border }}>
+                        {matches.map((m, idx) => (
+                          <tr key={m.item.id} className="border-t align-top" style={{ borderColor: C.border }}>
                             <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
-                            <td className="px-3 py-2">{item.descricao || `Item ${idx + 1}`}</td>
+                            <td className="px-3 py-2">{m.item.descricao || `Item ${idx + 1}`}</td>
                             <td className="px-2 py-2">
-                              {(pcaRow || manualSequencial) ? (
+                              {m.previsto ? (
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
                                   <Check size={11} /> Sim
                                 </span>
@@ -3133,8 +3914,8 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
                                 </span>
                               )}
                             </td>
-                            <td className="px-2 py-2 text-xs" style={{ color: pcaRow || manualSequencial ? C.ink : C.inkMuted }}>
-                              {pcaRow ? (pcaRow.sequencial || "—") : (manualSequencial || "—")}
+                            <td className="px-2 py-2 text-xs" style={{ color: m.previsto ? C.ink : C.inkMuted }}>
+                              {m.sequencial || "—"}
                             </td>
                           </tr>
                         ))}
@@ -3216,10 +3997,10 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
 
             <div className="p-5">
               <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-                Estes itens não foram localizados automaticamente na planilha do PCA importada. Se algum já estiver
-                previsto de outra forma, preencha o <b>Código</b> e o <b>Sequencial do PCA</b> correspondentes —
-                assim que o Sequencial for preenchido, o item passa a contar como previsto. Os que ficarem sem
-                preenchimento podem ser baixados numa planilha para inclusão no Sistema Centi.
+                Estes itens não foram localizados automaticamente na planilha do PCA importada. Se algum já
+                estiver previsto no PCA sob outro código, use a busca para localizar a linha correta — o app
+                puxa o produto e o sequencial automaticamente. Os que ficarem sem vínculo podem ser baixados
+                numa planilha para inclusão no Sistema Centi.
               </p>
               {itensFaltantes.some(it => !it.idProduto) && (
                 <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
@@ -3233,8 +4014,8 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
 
               <div className="space-y-3 mb-5">
                 {semPcaMatch.map((it, idx) => {
-                  const dados = manuais[it.id] || { codigo: "", sequencial: "" };
-                  const resolvido = dados.sequencial?.trim();
+                  const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
+                  const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
                   return (
                     <div key={it.id} className="p-4 rounded-lg border-2" style={{ borderColor: resolvido ? "rgba(76,124,89,0.4)" : C.border, background: resolvido ? "rgba(76,124,89,0.04)" : "white" }}>
                       <div className="flex items-start justify-between gap-2 mb-3">
@@ -3252,20 +4033,8 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
                           </span>
                         )}
                       </div>
-                      <div className="grid sm:grid-cols-2 gap-3">
-                        <label className="block">
-                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Código</span>
-                          <input value={dados.codigo} onChange={e => atualizarManual(it.id, "codigo", e.target.value)}
-                            placeholder={it.idProduto || "Ex.: 5241938182"}
-                            className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
-                        </label>
-                        <label className="block">
-                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Sequencial do PCA</span>
-                          <input value={dados.sequencial} onChange={e => atualizarManual(it.id, "sequencial", e.target.value)}
-                            placeholder="Ex.: 10808"
-                            className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
-                        </label>
-                      </div>
+                      <VinculoPca item={it} pca={pca} dados={dados}
+                        onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
                     </div>
                   );
                 })}
@@ -3435,10 +4204,12 @@ function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
 }
 
 function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes,
-  onValoresAdotados, onPca, onSolucoesMercado, onExcluidos, secretarias, saveState, onBack, onPreview }) {
+  onValoresAdotados, onPca, onManuaisPca, onSolucoesMercado, onExcluidos, secretarias, saveState, onBack, onPreview }) {
   const p = progress(etp);
   const numeros = numeracaoFinal(etp);
   const excluidos = etp.incisosExcluidos || [];
+  const [showChecklist, setShowChecklist] = useState(false);
+  const pendencias = verificarConformidade(etp).filter(a => a.nivel === "impeditivo").length;
 
   // Leva o documento até o inciso escolhido, em vez de trocar de tela
   function irParaInciso(id) {
@@ -3451,7 +4222,7 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
 
   const etapas = [
     { id: "itens", rotulo: "1. Planilha de Itens", pronto: (etp.itens || []).length > 0 },
-    { id: "pca", rotulo: "2. Alinhamento ao PCA", pronto: !!etp.pca },
+    { id: "pca", rotulo: "2. Alinhamento ao PCA", pronto: !!etp.pca && (etp.itens || []).length > 0 && contarPrevistosNoPca(etp) === etp.itens.length },
     { id: "meta", rotulo: "3. Dados do Processo", pronto: !!etp.meta.titulo?.trim() },
     { id: "cotacoes", rotulo: "4. Levantamento de Preços", pronto: valorTotalEtp(etp) > 0 },
   ];
@@ -3489,6 +4260,16 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
           <span className="text-xs" style={{ color: saveState === "saving" ? C.brassLight : "#9FE0B0" }}>
             {saveState === "saving" ? "Salvando..." : "● Salvo"}
           </span>
+          <button onClick={() => setShowChecklist(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+            style={{
+              background: pendencias > 0 ? "rgba(166,64,61,0.9)" : "rgba(255,255,255,0.12)",
+              color: C.paper,
+            }}
+            title="Confere o preenchimento e a coerência do ETP antes de finalizar">
+            {pendencias > 0 ? <AlertCircle size={14} /> : <Check size={14} />}
+            {pendencias > 0 ? `${pendencias} pendência(s)` : "Conformidade"}
+          </button>
           <button onClick={onPreview}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{ background: C.brass, color: C.navyDark }}>
@@ -3561,7 +4342,7 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
               ) : activeSection === "itens" ? (
                 <ItemsForm etp={etp} onItens={onItens} onMeta={onMeta} />
               ) : activeSection === "pca" ? (
-                <PCAForm etp={etp} onPca={onPca} />
+                <PCAForm etp={etp} onPca={onPca} onManuaisPca={onManuaisPca} />
               ) : (
                 <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
               )}
@@ -3569,6 +4350,12 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
           )}
         </main>
       </div>
+
+      {showChecklist && (
+        <ChecklistConformidade etp={etp}
+          onIrPara={destino => setActiveSection(destino)}
+          onFechar={() => setShowChecklist(false)} />
+      )}
     </div>
   );
 }
@@ -4152,6 +4939,201 @@ function SolucoesMercadoManager({ solucoes, onChange }) {
   );
 }
 
+// ---------- Vínculo de um item a uma linha do PCA ----------
+// Resolve o caso em que o código do item no Centi é diferente do código no PCA: o servidor
+// busca a linha certa (por código, sequencial ou descrição) e vincula manualmente.
+function VinculoPca({ item, pca, dados, onAlterar }) {
+  const [busca, setBusca] = useState("");
+  const [aberto, setAberto] = useState(false);
+  const vinculada = dados?.codigoPca ? linhaPcaPorCodigo(pca, dados.codigoPca) : null;
+  const resultados = buscarNoPca(pca, busca);
+
+  function vincular(linha) {
+    onAlterar({ ...dados, codigoPca: linha.codigo, sequencial: linha.sequencial || "" });
+    setBusca("");
+    setAberto(false);
+  }
+
+  function desvincular() {
+    onAlterar({ ...dados, codigoPca: "", sequencial: "" });
+  }
+
+  if (vinculada) {
+    return (
+      <div className="p-2.5 rounded-lg" style={{ background: "rgba(76,124,89,0.08)", border: "1px solid rgba(76,124,89,0.35)" }}>
+        <div className="flex items-start gap-2">
+          <Check size={13} className="shrink-0 mt-0.5" style={{ color: C.green }} />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold" style={{ color: C.navy }}>
+              Vinculado ao PCA · sequencial {vinculada.sequencial || "—"}
+            </p>
+            <p className="text-[11px] leading-snug mt-0.5" style={{ color: C.inkMuted }}>
+              Código no PCA: <b style={{ color: C.ink }}>{vinculada.codigo}</b>
+              {item.idProduto && item.idProduto !== vinculada.codigo && (
+                <> · no Centi: <b style={{ color: C.ink }}>{item.idProduto}</b></>
+              )}
+            </p>
+            <p className="text-[11px] leading-snug" style={{ color: C.inkMuted }}>{vinculada.produto}</p>
+          </div>
+          <button onClick={desvincular} className="shrink-0 text-[10px] font-semibold px-2 py-1 rounded"
+            style={{ color: C.red }}>Desfazer</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+          Localizar no PCA
+        </span>
+        <input value={busca}
+          onChange={e => { setBusca(e.target.value); setAberto(true); }}
+          onFocus={() => setAberto(true)}
+          placeholder="Código do PCA, sequencial ou parte da descrição…"
+          className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+      </label>
+
+      {aberto && busca.trim().length >= 2 && (
+        <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border shadow-lg overflow-hidden max-h-56 overflow-y-auto etp-scroll"
+          style={{ background: "white", borderColor: C.border }}>
+          {resultados.length === 0 ? (
+            <p className="px-3 py-2.5 text-xs" style={{ color: C.inkMuted }}>
+              Nada encontrado no PCA para "{busca}".
+            </p>
+          ) : resultados.map((l, i) => (
+            <button key={`${l.codigo}-${l.sequencial}-${i}`} onClick={() => vincular(l)}
+              className="w-full text-left px-3 py-2 hover:bg-black/[0.03]"
+              style={{ borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
+              <p className="text-xs font-medium leading-snug" style={{ color: C.navy }}>{l.produto || "(sem descrição)"}</p>
+              <p className="text-[10.5px] mt-0.5" style={{ color: C.inkMuted }}>
+                cód. <b>{l.codigo || "—"}</b> · seq. <b>{l.sequencial || "—"}</b>
+                {l.local ? ` · ${l.local}` : ""}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[10px] mt-1.5" style={{ color: C.inkMuted }}>
+        Use quando o código do item no Centi for diferente do código no PCA. Se preferir, informe o
+        sequencial direto no campo abaixo.
+      </p>
+      <label className="block mt-2">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+          Ou informe o sequencial à mão
+        </span>
+        <input value={dados?.sequencial || ""}
+          onChange={e => onAlterar({ ...dados, sequencial: e.target.value, codigoPca: "" })}
+          placeholder="Ex.: 10808"
+          className="mt-1 w-full px-2.5 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+      </label>
+    </div>
+  );
+}
+
+// ---------- Checklist de conformidade ----------
+function ChecklistConformidade({ etp, onIrPara, onFechar }) {
+  const apontamentos = verificarConformidade(etp);
+  const impeditivos = apontamentos.filter(a => a.nivel === "impeditivo");
+  const atencoes = apontamentos.filter(a => a.nivel === "atencao");
+  const oks = apontamentos.filter(a => a.nivel === "ok");
+  const liberado = impeditivos.length === 0;
+
+  const rotuloEtapa = {
+    meta: "Dados do Processo", itens: "Planilha de Itens",
+    pca: "Alinhamento ao PCA", cotacoes: "Levantamento de Preços",
+    documento: "Documento",
+  };
+
+  const linha = (a, i, cor, icone) => (
+    <button key={i} onClick={() => { onIrPara(a.onde); onFechar(); }}
+      className="w-full flex items-start gap-2.5 px-4 py-2.5 text-left hover:bg-black/[0.02]"
+      style={{ borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
+      <span className="shrink-0 mt-0.5" style={{ color: cor }}>{icone}</span>
+      <span className="flex-1 text-xs leading-relaxed" style={{ color: C.ink }}>{a.texto}</span>
+      <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full"
+        style={{ background: C.paperDark, color: C.inkMuted }}>
+        {rotuloEtapa[a.onde] || a.onde}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
+      onClick={onFechar}>
+      <div onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl max-h-[88vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+
+        <div className="p-5 pb-4 border-b sticky top-0 bg-white rounded-t-xl z-10" style={{ borderColor: C.border }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+                <ClipboardList size={15} />
+                <span className="text-xs font-semibold tracking-widest uppercase">Antes de finalizar</span>
+              </div>
+              <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Conformidade do ETP</h3>
+            </div>
+            <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
+          </div>
+
+          <div className="mt-3 p-3 rounded-lg flex items-center gap-2 text-sm"
+            style={{ background: liberado ? "rgba(76,124,89,0.1)" : "rgba(166,64,61,0.08)" }}>
+            {liberado ? <Check size={16} style={{ color: C.green }} /> : <AlertCircle size={16} style={{ color: C.red }} />}
+            <span style={{ color: C.ink }}>
+              {liberado
+                ? <>Nenhuma pendência impeditiva{atencoes.length > 0 ? ` — mas há ${atencoes.length} ponto(s) de atenção.` : ". O ETP está pronto para finalizar."}</>
+                : <><b>{impeditivos.length} pendência(s) impeditiva(s)</b> — revise antes de finalizar o documento.</>}
+            </span>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {impeditivos.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.red }}>
+                Impeditivos ({impeditivos.length})
+              </h4>
+              <div className="rounded-lg border overflow-hidden" style={{ borderColor: "rgba(166,64,61,0.3)" }}>
+                {impeditivos.map((a, i) => linha(a, i, C.red, <AlertCircle size={13} />))}
+              </div>
+            </div>
+          )}
+
+          {atencoes.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.brass }}>
+                Pontos de atenção ({atencoes.length})
+              </h4>
+              <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+                {atencoes.map((a, i) => linha(a, i, C.brass, <Info size={13} />))}
+              </div>
+            </div>
+          )}
+
+          {oks.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.green }}>
+                Verificado ({oks.length})
+              </h4>
+              <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
+                {oks.map((a, i) => linha(a, i, C.green, <Check size={13} />))}
+              </div>
+            </div>
+          )}
+
+          <p className="text-[11px] leading-relaxed" style={{ color: C.inkMuted }}>
+            Esta conferência é um apoio ao seu trabalho, não um parecer jurídico. Ela verifica o preenchimento
+            e a coerência interna do documento — a adequação de cada texto ao caso concreto continua sendo
+            avaliação sua. Clique em qualquer linha para ir direto ao ponto.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Documento contínuo dos incisos ----------
 // Todos os 13 incisos numa página só, no formato do documento final. A barra de formatação
 // fica fixa no topo e age sobre o inciso em foco, como no Word.
@@ -4299,14 +5281,20 @@ function DocumentoIncisos({ etp, onSection, onSolucoesMercado, onExcluidos, secr
 
                 <div className="flex items-center gap-1.5 justify-center mb-2 opacity-0 group-hover:opacity-100 transition-opacity"
                   style={{ opacity: emFoco ? 1 : undefined }}>
-                  {MODELOS_PADRAO[s.id] && (
-                    <button onClick={e => { e.stopPropagation(); usarModelo(s.id); }}
-                      className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
-                      style={{ background: C.brass, color: C.navyDark }}
-                      title="Preenche com o texto-modelo do app — grátis, sem IA">
-                      ✎ Modelo padrão
-                    </button>
-                  )}
+                  {MODELOS_PADRAO[s.id] && (() => {
+                    const semPca = s.id === "II" && (!etp.pca || (etp.itens || []).length === 0);
+                    return (
+                      <button onClick={e => { e.stopPropagation(); if (!semPca) usarModelo(s.id); }}
+                        disabled={semPca}
+                        className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold disabled:opacity-40"
+                        style={{ background: C.brass, color: C.navyDark }}
+                        title={semPca
+                          ? 'Importe a planilha do PCA na etapa "2. Alinhamento ao PCA" primeiro'
+                          : "Preenche com o texto-modelo do app — grátis, sem IA"}>
+                        ✎ Modelo padrão
+                      </button>
+                    );
+                  })()}
                   <button onClick={e => { e.stopPropagation(); abrirPrompt(s.id); }}
                     className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold"
                     style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}
@@ -4430,17 +5418,14 @@ function QuadrosAutomaticos({ etp, secaoId }) {
           </tr>
         </thead>
         <tbody>
-          {etp.itens.slice(0, 4).map((it, i) => {
-            const m = pcaMatchFor(it, etp.pca.linhas);
-            return (
-              <tr key={it.id}>
-                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{i + 1}</td>
-                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{it.descricao || "-"}</td>
-                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m ? "Sim" : "Não"}</td>
-                <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m?.sequencial || "—"}</td>
-              </tr>
-            );
-          })}
+          {cruzarComPca(etp.itens, etp.pca, etp.manuaisPca).slice(0, 4).map((m, i) => (
+            <tr key={m.item.id}>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{i + 1}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m.item.descricao || "-"}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m.previsto ? "Sim" : "Não"}</td>
+              <td className="px-2 py-1 border" style={{ borderColor: C.border }}>{m.sequencial || "—"}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     ), etp.itens.length > 4
@@ -4634,8 +5619,8 @@ function ItemsForm({ etp, onItens, onMeta }) {
         <p className="text-xs mb-3 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {importError}</p>
       )}
 
-      <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
-        <table className="w-full text-sm">
+      <div className="rounded-lg border overflow-x-auto etp-scroll" style={{ borderColor: C.border }}>
+        <table className="w-full text-sm" style={{ minWidth: "760px" }}>
           <thead>
             <tr style={{ background: C.paperDark }}>
               <th className="px-3 py-2 w-8">
@@ -4644,10 +5629,14 @@ function ItemsForm({ etp, onItens, onMeta }) {
                     style={{ accentColor: C.brass }} className="w-3.5 h-3.5" />
                 )}
               </th>
-              <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>#</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Unid.</th>
-              <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Qtd.</th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-8" style={{ color: C.inkMuted }}>#</th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-32" style={{ color: C.inkMuted }}>
+                Código
+              </th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Unid.</th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
+              <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-40" style={{ color: C.inkMuted }}>Classificação</th>
               <th className="w-8"></th>
             </tr>
           </thead>
@@ -4658,13 +5647,46 @@ function ItemsForm({ etp, onItens, onMeta }) {
                   <input type="checkbox" checked={selected.has(it.id)} onChange={() => toggleOne(it.id)}
                     style={{ accentColor: C.brass }} className="w-3.5 h-3.5" />
                 </td>
-                <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
+                <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
                 <td className="px-2 py-2">
-                  <input value={it.descricao} onChange={e => update(idx, "descricao", e.target.value)}
-                    placeholder="Descrição do item" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
-                  {it.classificacao && (
-                    <p className="text-[10px] mt-0.5 px-1" style={{ color: C.inkMuted }}>{it.classificacao}{it.idProduto ? ` · cód. ${it.idProduto}` : ""}</p>
-                  )}
+                  {(() => {
+                    const noPca = linhaPcaPorCodigo(etp.pca, it.idProduto);
+                    return (
+                      <>
+                        <input value={it.idProduto || ""} onChange={e => update(idx, "idProduto", e.target.value)}
+                          placeholder="Cód. Centi"
+                          className="w-full px-2 py-1.5 rounded border text-sm font-mono"
+                          style={{ borderColor: noPca ? C.green : (it.idProduto?.trim() ? C.border : C.brassLight) }}
+                          title="Código do produto no Sistema Centi — é por ele que o app cruza o item com o PCA" />
+                        {noPca && (
+                          <p className="text-[9.5px] mt-1 leading-snug flex items-start gap-1" style={{ color: C.green }}>
+                            <Check size={9} className="shrink-0 mt-0.5" />
+                            <span>seq. {noPca.sequencial || "—"}</span>
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </td>
+                <td className="px-2 py-2">
+                  {(() => {
+                    const noPca = linhaPcaPorCodigo(etp.pca, it.idProduto);
+                    return (
+                      <>
+                        <input value={it.descricao} onChange={e => update(idx, "descricao", e.target.value)}
+                          placeholder="Descrição do item" className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                        {noPca && noPca.produto && (
+                          <p className="text-[9.5px] mt-1 leading-snug px-1" style={{ color: C.inkMuted }}>
+                            No PCA: {noPca.produto}
+                            {!it.descricao?.trim() && (
+                              <button onClick={() => update(idx, "descricao", noPca.produto)}
+                                className="ml-1.5 font-semibold" style={{ color: C.brass }}>usar</button>
+                            )}
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                 </td>
                 <td className="px-2 py-2">
                   <input value={it.unidade} onChange={e => update(idx, "unidade", e.target.value)}
@@ -4675,12 +5697,21 @@ function ItemsForm({ etp, onItens, onMeta }) {
                     className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
                 </td>
                 <td className="px-2 py-2">
+                  <input list="classificacoes-usadas" value={it.classificacao || ""}
+                    onChange={e => update(idx, "classificacao", e.target.value)}
+                    placeholder="Ex.: MATERIAL DE COPA"
+                    className="w-full px-2 py-1.5 rounded border text-sm" style={{ borderColor: C.border }} />
+                </td>
+                <td className="px-2 py-2">
                   <button onClick={() => remove(idx)} style={{ color: C.red }}><Trash2 size={14} /></button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        <datalist id="classificacoes-usadas">
+          {[...new Set(itens.map(i => i.classificacao).filter(Boolean))].map(c => <option key={c} value={c} />)}
+        </datalist>
         {itens.length === 0 && (
           <p className="text-sm text-center py-8" style={{ color: C.inkMuted }}>Nenhum item adicionado ainda. Importe uma planilha ou adicione manualmente.</p>
         )}
@@ -4691,20 +5722,37 @@ function ItemsForm({ etp, onItens, onMeta }) {
         <Plus size={13} /> Adicionar item
       </button>
 
-      {itens.length > 0 && (
-        <div className="mt-4 p-3 rounded-lg flex items-center gap-2 text-xs" style={{ background: C.paperDark, color: C.inkMuted }}>
-          <Info size={13} className="shrink-0" style={{ color: C.brass }} />
-          {itens.length} item(ns) cadastrado(s). Os valores serão levantados na etapa "4. Levantamento de Preços".
-        </div>
-      )}
+      {itens.length > 0 && (() => {
+        const semCodigo = itens.filter(i => !i.idProduto?.trim()).length;
+        return (
+          <>
+            <div className="mt-4 p-3 rounded-lg flex items-center gap-2 text-xs" style={{ background: C.paperDark, color: C.inkMuted }}>
+              <Info size={13} className="shrink-0" style={{ color: C.brass }} />
+              {itens.length} item(ns) cadastrado(s). Os valores serão levantados na etapa "4. Levantamento de Preços".
+            </div>
+            {semCodigo > 0 && (
+              <div className="mt-2 p-3 rounded-lg flex items-start gap-2 text-xs leading-relaxed"
+                style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+                <AlertCircle size={13} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+                <span>
+                  <b>{semCodigo} item(ns) sem código.</b> O cruzamento com o PCA é feito pelo código do produto —
+                  sem ele, o item não será localizado automaticamente na etapa 2 e você terá de informar o
+                  sequencial à mão. Se possível, preencha o código do Sistema Centi.
+                </span>
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
 
 // ---------- Alinhamento ao PCA ----------
-function PCAForm({ etp, onPca }) {
+function PCAForm({ etp, onPca, onManuaisPca }) {
   const itens = etp.itens || [];
   const pca = etp.pca;
+  const manuais = etp.manuaisPca || {};
   const fileRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
@@ -4730,19 +5778,34 @@ function PCAForm({ etp, onPca }) {
     e.target.value = "";
   }
 
-  const matches = itens.map(it => ({ item: it, pcaRow: pca ? pcaMatchFor(it, pca.linhas) : null }));
-  const encontrados = matches.filter(m => m.pcaRow).length;
-  const itensFaltantes = matches.filter(m => !m.pcaRow).map(m => m.item);
+  function atualizarManual(itemId, campo, valor) {
+    const atual = manuais[itemId] || { codigo: "", sequencial: "" };
+    onManuaisPca({ ...manuais, [itemId]: { ...atual, [campo]: valor } });
+  }
+
+  const matches = cruzarComPca(itens, pca, manuais);
+  const encontrados = matches.filter(m => m.previsto).length;
+  const semMatchAutomatico = matches.filter(m => !m.pcaRow).map(m => m.item);
+  const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item);
+  const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   return (
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>2. Alinhamento ao PCA</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Confere se cada item da Planilha de Itens já consta previsto no Plano de Contratações Anual (inciso II,
-        art. 18 da Lei nº 14.133/2021), cruzando pelo código do item no Sistema Centi.
+        Importe a planilha exportada do painel do PCA. O app cruza os itens pelo código do produto e mostra
+        quais já estão previstos no plano.
       </p>
 
-      <div className="flex items-center gap-3 mb-2 flex-wrap">
+      <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: "white" }}>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <span className="text-sm font-semibold" style={{ color: C.navy }}>Planilha do PCA</span>
+          {pca && (
+            <span className="text-xs" style={{ color: C.inkMuted }}>
+              {pca.nomeArquivo} · {pca.linhas.length} itens no painel · importada em {fmtDate(pca.importedAt)}
+            </span>
+          )}
+        </div>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
         <button onClick={() => fileRef.current?.click()} disabled={importing}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
@@ -4750,141 +5813,154 @@ function PCAForm({ etp, onPca }) {
           {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
           {importing ? "Importando..." : pca ? "Atualizar planilha do PCA" : "Importar planilha do PCA"}
         </button>
-        {pca && (
-          <span className="text-xs" style={{ color: C.inkMuted }}>
-            {pca.nomeArquivo} · {pca.linhas.length} itens no painel · importada em {fmtDate(pca.importedAt)}
-          </span>
+        {importError && (
+          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
+            <AlertCircle size={12} /> {importError}
+          </p>
         )}
       </div>
-      <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
-        Essa planilha é exportada periodicamente do painel do PCA — como ela muda com o tempo, reimporte a versão
-        mais recente sempre que for elaborar um ETP.
-      </p>
-      {importError && (
-        <p className="text-xs mb-3 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {importError}</p>
-      )}
 
       {itens.length === 0 ? (
-        <p className="text-sm" style={{ color: C.inkMuted }}>Cadastre itens na etapa "1. Planilha de Itens" primeiro.</p>
+        <p className="text-sm" style={{ color: C.inkMuted }}>
+          Cadastre os itens na etapa "1. Planilha de Itens" primeiro.
+        </p>
       ) : !pca ? (
-        <div className="flex items-start gap-2 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
-          <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
-          Importe a planilha do PCA acima para ver, item a item, se cada um já está previsto.
-        </div>
+        <p className="text-sm" style={{ color: C.inkMuted }}>
+          Importe a planilha do PCA acima para ver o cruzamento.
+        </p>
       ) : (
         <>
-          <div className="rounded-lg border overflow-hidden mb-3" style={{ borderColor: C.border }}>
+          <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.border }}>
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: C.paperDark }}>
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
                   <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
                   <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Consta no PCA?</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Sequencial</th>
-                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-24" style={{ color: C.inkMuted }}>Prioridade</th>
+                  <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Sequencial</th>
                 </tr>
               </thead>
               <tbody>
-                {matches.map(({ item, pcaRow }, idx) => (
-                  <tr key={item.id} className="border-t" style={{ borderColor: C.border }}>
+                {matches.map((m, idx) => (
+                  <tr key={m.item.id} className="border-t align-top" style={{ borderColor: C.border }}>
                     <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{idx + 1}</td>
-                    <td className="px-3 py-2">
-                      <p style={{ color: C.ink }}>{item.descricao || `Item ${idx + 1}`}</p>
-                      {item.idProduto && <p className="text-[10px]" style={{ color: C.inkMuted }}>cód. {item.idProduto}</p>}
-                    </td>
+                    <td className="px-3 py-2">{m.item.descricao || `Item ${idx + 1}`}</td>
                     <td className="px-2 py-2">
-                      {pcaRow ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
+                      {m.previsto ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "rgba(76,124,89,0.12)", color: C.green }}>
                           <Check size={11} /> Sim
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
                           <AlertCircle size={11} /> Não
                         </span>
                       )}
                     </td>
-                    <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.sequencial || "—"}</td>
-                    <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{pcaRow?.prioridade || "—"}</td>
+                    <td className="px-2 py-2 text-xs" style={{ color: m.previsto ? C.ink : C.inkMuted }}>
+                      {m.sequencial || "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div className="p-3 rounded-lg flex items-center gap-2 text-xs" style={{ background: encontrados === itens.length ? "rgba(76,124,89,0.1)" : "rgba(166,131,46,0.1)", color: C.ink }}>
-            {encontrados === itens.length ? <Check size={14} style={{ color: C.green }} /> : <Info size={14} style={{ color: C.brass }} />}
-            <span>
-              <b>{encontrados}</b> de <b>{itens.length}</b> itens localizados no PCA.
-              {encontrados < itens.length && " Os itens não localizados podem precisar de inclusão/atualização do PCA, ou de DFD específico, antes da contratação."}
-            </span>
+          <div className="mt-3 p-3 rounded-lg flex items-center gap-2 text-xs flex-wrap"
+            style={{ background: totalmenteAlinhado ? "rgba(76,124,89,0.1)" : "rgba(166,131,46,0.1)", color: C.ink }}>
+            {totalmenteAlinhado ? <Check size={14} style={{ color: C.green }} /> : <Info size={14} style={{ color: C.brass }} />}
+            <span><b>{encontrados}</b> de <b>{itens.length}</b> itens previstos no PCA (inclui os informados à mão).</span>
           </div>
 
-          {itensFaltantes.length > 0 && (
+          {semMatchAutomatico.length > 0 && (
             <button onClick={() => setShowFaltantes(true)}
               className="flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-md text-xs font-medium"
-              style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
-              <ListX size={13} /> Ver itens sem previsão no PCA ({itensFaltantes.length})
+              style={{
+                background: itensFaltantes.length > 0 ? "rgba(166,64,61,0.1)" : "rgba(166,131,46,0.12)",
+                color: itensFaltantes.length > 0 ? C.red : C.brass,
+              }}>
+              <ListX size={13} /> Itens não localizados automaticamente ({semMatchAutomatico.length}
+              {itensFaltantes.length !== semMatchAutomatico.length ? ` · ${itensFaltantes.length} pendente(s)` : ""})
             </button>
           )}
+        </>
+      )}
 
-          {showFaltantes && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.55)" }}
-              onClick={() => setShowFaltantes(false)}>
-              <div onClick={e => e.stopPropagation()}
-                className="w-full max-w-xl max-h-[80vh] overflow-y-auto etp-scroll rounded-xl bg-white p-6 shadow-xl">
-                <div className="flex items-start justify-between mb-1">
-                  <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
-                  <button onClick={() => setShowFaltantes(false)} style={{ color: C.inkMuted }}><X size={18} /></button>
-                </div>
-                <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-                  Estes {itensFaltantes.length} item(ns) não foram localizados na planilha do PCA importada. Baixe a
-                  planilha abaixo e importe no Sistema Centi para formalizar o requerimento de inclusão deles no plano.
+      {showFaltantes && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
+          onClick={() => setShowFaltantes(false)}>
+          <div onClick={e => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[88vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b sticky top-0 bg-white rounded-t-xl z-10"
+              style={{ borderColor: C.border }}>
+              <div>
+                <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Itens sem previsão no PCA</h3>
+                <p className="text-xs mt-0.5" style={{ color: C.inkMuted }}>
+                  {itensFaltantes.length} de {semMatchAutomatico.length} ainda pendente(s)
                 </p>
-                {itensFaltantes.some(it => !it.idProduto) && (
-                  <div className="flex items-start gap-2 mb-4 p-3 rounded-lg text-xs leading-relaxed" style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
-                    <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: C.red }} />
-                    <span>
-                      Algum(ns) item(ns) está(ão) sem código/ID (provavelmente adicionado manualmente, e não pela
-                      importação do Sistema Centi). A planilha sairá com essa célula em branco — complete o código
-                      manualmente antes de importar, se o Centi exigir.
-                    </span>
-                  </div>
-                )}
-                <div className="rounded-lg border overflow-hidden mb-4" style={{ borderColor: C.border }}>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr style={{ background: C.paperDark }}>
-                        <th className="text-left px-3 py-2 text-xs font-semibold uppercase w-10" style={{ color: C.inkMuted }}>#</th>
-                        <th className="text-left px-3 py-2 text-xs font-semibold uppercase" style={{ color: C.inkMuted }}>Descrição</th>
-                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-28" style={{ color: C.inkMuted }}>Código/ID</th>
-                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-20" style={{ color: C.inkMuted }}>Unid.</th>
-                        <th className="text-left px-2 py-2 text-xs font-semibold uppercase w-16" style={{ color: C.inkMuted }}>Qtd.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {itensFaltantes.map((it, idx) => (
-                        <tr key={it.id} className="border-t" style={{ borderColor: C.border }}>
-                          <td className="px-3 py-2 text-xs" style={{ color: C.inkMuted }}>{itens.indexOf(it) + 1}</td>
-                          <td className="px-3 py-2">{it.descricao || `Item ${idx + 1}`}</td>
-                          <td className="px-2 py-2 text-xs" style={{ color: it.idProduto ? C.ink : C.red }}>
-                            {it.idProduto || "sem código"}
-                          </td>
-                          <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.unidade}</td>
-                          <td className="px-2 py-2 text-xs" style={{ color: C.inkMuted }}>{it.quantidade || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              </div>
+              <button onClick={() => setShowFaltantes(false)} className="shrink-0" style={{ color: C.inkMuted }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5">
+              <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+                Estes itens não foram localizados automaticamente na planilha importada. Se algum já estiver
+                previsto no PCA sob outro código, use a busca para localizar a linha correta — o app puxa o
+                produto e o sequencial automaticamente. Os que ficarem sem preenchimento
+                podem ser baixados numa planilha para inclusão no Sistema Centi.
+              </p>
+
+              <div className="space-y-3 mb-5">
+                {semMatchAutomatico.map((it, idx) => {
+                  const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
+                  const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
+                  return (
+                    <div key={it.id} className="p-4 rounded-lg border-2"
+                      style={{
+                        borderColor: resolvido ? "rgba(76,124,89,0.4)" : C.border,
+                        background: resolvido ? "rgba(76,124,89,0.04)" : "white",
+                      }}>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div>
+                          <span className="text-xs font-semibold" style={{ color: C.inkMuted }}>
+                            Item {itens.indexOf(it) + 1}
+                          </span>
+                          <p className="text-sm font-medium" style={{ color: C.navy }}>
+                            {it.descricao || `Item ${idx + 1}`}
+                          </p>
+                        </div>
+                        {resolvido ? (
+                          <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                            style={{ background: "rgba(76,124,89,0.15)", color: C.green }}>
+                            <Check size={12} /> Previsto
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                            style={{ background: "rgba(166,64,61,0.1)", color: C.red }}>
+                            <AlertCircle size={12} /> Pendente
+                          </span>
+                        )}
+                      </div>
+                      <VinculoPca item={it} pca={pca} dados={dados}
+                        onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {itensFaltantes.length > 0 && (
                 <button onClick={() => baixarPlanilhaInclusaoCenti(itensFaltantes)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium"
                   style={{ background: C.navy, color: C.paper }}>
-                  <Download size={14} /> Baixar planilha para inclusão no Centi
+                  <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} pendente(s))
                 </button>
-              </div>
+              )}
             </div>
-          )}
-        </>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -5320,8 +6396,8 @@ function PreviewView({ etp, secretarias, onBack }) {
       if (s.id === "II" && etp.pca && etp.itens?.length > 0) {
         t += `\nQuadro de alinhamento ao PCA:\n`;
         etp.itens.forEach(it => {
-          const m = pcaMatchFor(it, etp.pca.linhas);
-          t += `• ${it.descricao || "-"} — ${m ? `consta (seq. ${m.sequencial || "-"})` : "não consta"}\n`;
+          const m = cruzarComPca([it], etp.pca, etp.manuaisPca)[0];
+          t += `• ${it.descricao || "-"} — ${m.previsto ? `consta (seq. ${m.sequencial || "-"})` : "não consta"}\n`;
         });
       }
       if (s.id === "V" && etp.itens?.length > 0) {
@@ -5486,17 +6562,14 @@ function PreviewView({ etp, secretarias, onBack }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {etp.itens.map((it, idx) => {
-                        const pcaRow = pcaMatchFor(it, etp.pca.linhas);
-                        return (
-                          <tr key={it.id}>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{it.descricao || `Item ${idx + 1}`}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border, color: pcaRow ? C.green : C.red }}>{pcaRow ? "Sim" : "Não"}</td>
-                            <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{pcaRow?.sequencial || "—"}</td>
-                          </tr>
-                        );
-                      })}
+                      {cruzarComPca(etp.itens, etp.pca, etp.manuaisPca).map((m, idx) => (
+                        <tr key={m.item.id}>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{idx + 1}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{m.item.descricao || `Item ${idx + 1}`}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border, color: m.previsto ? C.green : C.red }}>{m.previsto ? "Sim" : "Não"}</td>
+                          <td className="px-2 py-1.5 border" style={{ borderColor: C.border }}>{m.sequencial || "—"}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                   <p className="text-[10px] mt-1" style={{ color: C.inkMuted }}>
