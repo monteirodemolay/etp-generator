@@ -280,8 +280,8 @@ export default function PortaDeEntrada({ children }) {
 
   // ----- Tudo certo: mostra o app, com uma faixa de identificação no topo -----
   return (
-    <>
-      <div className="flex items-center gap-3 px-4 py-1.5 text-xs"
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="flex items-center gap-3 px-4 py-1.5 text-xs shrink-0"
         style={{ background: C.navyDark, color: "#B7C0CC", fontFamily: "Inter, system-ui, sans-serif" }}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.green }} />
         <span className="truncate">{usuario.email}</span>
@@ -290,7 +290,7 @@ export default function PortaDeEntrada({ children }) {
           Sair
         </button>
       </div>
-      {children}
-    </>
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+    </div>
   );
 }

@@ -2505,9 +2505,10 @@ export default function App() {
   });
 
   return (
-    <div style={{ background: C.paperDark, minHeight: "100%", fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
+    <div style={{ background: C.paperDark, height: "100%", minHeight: 0, fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap');
+        html, body, #root { height: 100%; }
         .serif { font-family: 'Source Serif 4', Georgia, serif; }
         .etp-scroll::-webkit-scrollbar { width: 8px; }
         .etp-scroll::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
@@ -2559,14 +2560,10 @@ export default function App() {
           onExcluirDeclaracao={excluirDeclaracao} onDuplicarDeclaracao={duplicarDeclaracao}
           onAbrirJustificativa={abrirJustificativa} onNovaJustificativa={novaJustificativa}
           onExcluirJustificativa={excluirJustificativa} onDuplicarJustificativa={duplicarJustificativa}
-          onGerenciarSecretarias={() => setView("secretarias")}
+          onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
+          onExcluirSecretaria={excluirSecretaria}
           onRecarregar={loadList}
         />
-      )}
-
-      {view === "secretarias" && (
-        <SecretariasView secretarias={secretarias} onSalvar={salvarSecretaria}
-          onNova={novaSecretaria} onExcluir={excluirSecretaria} onBack={() => setView("list")} />
       )}
 
       {view === "justificativa" && currentJust && (
@@ -2600,6 +2597,7 @@ export default function App() {
 
 // ---------- Cadastro de Secretarias ----------
 function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
+  // Quando usada como aba do painel não recebe onBack — o menu lateral já faz a navegação
   const [confirmId, setConfirmId] = useState(null);
   const fileRefs = useRef({});
 
@@ -2620,10 +2618,12 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
+    <div className={onBack ? "max-w-3xl mx-auto px-6 py-10" : "max-w-3xl"}>
+      {onBack && (
+        <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
+      )}
 
       <div className="flex items-start justify-between gap-4 mb-2">
         <div>
@@ -2985,7 +2985,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onOpen, onNew, onDelete, onDuplicar,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
-  onGerenciarSecretarias, onRecarregar }) {
+  onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar }) {
 
   const [aba, setAba] = useState("painel");
   const [showGuia, setShowGuia] = useState(false);
@@ -3011,15 +3011,6 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   const pctConcluidos = base.length ? Math.round((porSituacao.concluido.length / base.length) * 100) : 0;
   const recentes = [...base].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
-  // Nome de quem trabalha: o responsável mais usado nos ETPs, quando houver
-  const nomeUsuario = (() => {
-    const nomes = base.flatMap(e => listaResponsaveis(e).map(r => r.nome)).filter(Boolean);
-    if (nomes.length === 0) return null;
-    const cont = {};
-    nomes.forEach(n => { cont[n] = (cont[n] || 0) + 1; });
-    return Object.entries(cont).sort((a, b) => b[1] - a[1])[0][0];
-  })();
-  const primeiroNome = nomeUsuario ? nomeUsuario.split(" ").slice(0, 2).join(" ") : null;
 
   const secAtiva = secretarias.find(x => x.id === secretariaAtiva);
 
@@ -3028,7 +3019,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
-    { id: "secretarias", rotulo: "Secretarias", icone: Building2 },
+    { id: "secretarias", rotulo: "Secretarias", icone: Building2, contador: secretarias.length },
     { id: "backup", rotulo: "Backup", icone: Download },
   ];
 
@@ -3186,18 +3177,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
             style={{ borderColor: C.border, color: C.navy, background: "white" }}>
             <FileText size={14} /> Guia rápido
           </button>
-          <div className="flex items-center gap-2.5 pl-3 border-l shrink-0" style={{ borderColor: C.border }}>
-            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: C.paperDark }}>
-              <span className="serif text-xs font-bold" style={{ color: C.navy }}>
-                {primeiroNome ? primeiroNome.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() : "ETP"}
-              </span>
-            </div>
-            <div className="leading-tight hidden sm:block">
-              <p className="text-xs font-semibold" style={{ color: C.navy }}>{primeiroNome || "Setor de Compras"}</p>
-              <p className="text-[10px]" style={{ color: C.inkMuted }}>
-                {secAtiva ? (secAtiva.sigla || secAtiva.nome) : "Todas as Secretarias"}
-              </p>
-            </div>
+          <div className="pl-3 border-l shrink-0 hidden sm:block" style={{ borderColor: C.border }}>
+            <p className="text-[11px]" style={{ color: C.inkMuted }}>
+              {secAtiva ? (secAtiva.sigla || secAtiva.nome) : "Todas as Secretarias"}
+            </p>
           </div>
         </header>
 
@@ -3205,9 +3188,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "painel" && (
             <>
-              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
-                {primeiroNome ? `Bem-vindo, ${primeiroNome}` : "Bem-vindo"}
-              </h1>
+              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Painel</h1>
               <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
                 Elabore e acompanhe seus Estudos Técnicos Preliminares, do levantamento de itens ao documento assinado.
               </p>
@@ -3352,7 +3333,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                         {acaoRapida(Plus, "Novo ETP", "Criar do zero", () => setNovoDoc({ tipo: "etp" }))}
                         {acaoRapida(ListChecks, "Declaração", "Verificar PCA", () => setNovoDoc({ tipo: "declaracao" }))}
                         {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => setNovoDoc({ tipo: "justificativa" }))}
-                        {acaoRapida(Building2, "Secretarias", "Timbre e cadastro", onGerenciarSecretarias)}
+                        {acaoRapida(Building2, "Secretarias", "Timbre e cadastro", () => setAba("secretarias"))}
                       </div>
                     </>
                   )}
@@ -3493,6 +3474,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                 onNovo={() => setNovoDoc({ tipo: "declaracao" })} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
             </>
+          )}
+
+          {aba === "secretarias" && (
+            <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
+              onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
           )}
 
           {aba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}
@@ -4485,8 +4471,8 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
   );
 
   return (
-    <div className="flex flex-col h-full min-h-screen">
-      <header className="no-print flex items-center justify-between px-6 py-3 border-b sticky top-0 z-30"
+    <div className="flex flex-col" style={{ height: "100%" }}>
+      <header className="no-print flex items-center justify-between px-6 py-3 border-b shrink-0 z-30"
         style={{ background: C.navy, borderColor: C.navyDark }}>
         <div className="flex items-center gap-3 min-w-0">
           <button onClick={onBack} className="p-1.5 rounded-md hover:bg-white/10 shrink-0" style={{ color: C.paper }}>
@@ -4523,8 +4509,8 @@ function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, o
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Índice lateral — agrupado, com rolagem até o inciso em vez de troca de tela */}
+      <div className="flex flex-1 min-h-0">
+        {/* Índice lateral — fixo, rola por conta própria e fica sempre visível */}
         <nav className="no-print w-60 shrink-0 overflow-y-auto etp-scroll" style={{ background: C.navyDark }}>
           <div className="px-4 pt-4 pb-1 text-[9.5px] font-bold tracking-widest uppercase" style={{ color: C.brass }}>
             Preparação
