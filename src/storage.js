@@ -4,6 +4,14 @@
 //
 // Modelo: coleção "dados", um documento por chave ("etp:123", "sec:abc"...).
 // O conteúdo vai no campo "v" como texto JSON, igual ao que já era gravado antes.
+//
+// SEGURANÇA — leia o arquivo firestore.rules na raiz do repositório.
+// A proteção deste banco vive nas Regras de Segurança do Firestore, publicadas no
+// console do Firebase (elas NÃO entram em vigor só por existirem no repositório).
+// Regra atual: qualquer operação exige usuário autenticado; nenhuma outra coleção
+// é acessível. Atenção: as chaves não carregam dono/secretaria, então todo usuário
+// autenticado enxerga todos os documentos — o isolamento entre secretarias, se um
+// dia for necessário, exige as mudanças descritas em firestore.rules.
 
 import {
   collection, doc, getDoc, getDocs, setDoc, deleteDoc,
