@@ -5107,6 +5107,15 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
   const semPcaMatch = matches.filter(m => !m.pcaRow); // sem correspondência automática
+  // Itens ainda pendentes que já têm uma sugestão por descrição — dá pra confirmar todos de uma vez
+  const sugestoesPendentes = semPcaMatch.filter(m => m.sugestaoDescricao);
+  function confirmarTodasSugestoes() {
+    const novosManuais = { ...manuais };
+    sugestoesPendentes.forEach(m => {
+      novosManuais[m.item.id] = { codigoPca: m.sugestaoDescricao.codigo, sequencial: m.sugestaoDescricao.sequencial || "" };
+    });
+    onSalvar({ ...doc, manuais: novosManuais });
+  }
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
@@ -5310,6 +5319,19 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
               <button onClick={() => setShowFaltantes(false)} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
             </div>
 
+            {sugestoesPendentes.length > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: C.border, background: "rgba(166,131,46,0.06)" }}>
+                <span className="text-xs flex-1" style={{ color: C.ink }}>
+                  {sugestoesPendentes.length} item(ns) com sugestão de correspondência por descrição, ainda não confirmada.
+                </span>
+                <button onClick={confirmarTodasSugestoes}
+                  className="shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold"
+                  style={{ background: C.brass, color: C.navyDark }}>
+                  Confirmar todas ({sugestoesPendentes.length})
+                </button>
+              </div>
+            )}
+
             <div className="p-5">
               <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
                 Estes itens não foram localizados automaticamente na planilha do PCA importada. Se algum já
@@ -5350,7 +5372,7 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
                         )}
                       </div>
                       <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
-                        onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
+                        onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
                     </div>
                   );
                 })}
@@ -7182,6 +7204,15 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
   const semMatchAutomatico = matches.filter(m => !m.pcaRow);
+  // Itens ainda pendentes que já têm uma sugestão por descrição — dá pra confirmar todos de uma vez
+  const sugestoesPendentes = semMatchAutomatico.filter(m => m.sugestaoDescricao);
+  function confirmarTodasSugestoes() {
+    const novosManuais = { ...manuais };
+    sugestoesPendentes.forEach(m => {
+      novosManuais[m.item.id] = { codigoPca: m.sugestaoDescricao.codigo, sequencial: m.sugestaoDescricao.sequencial || "" };
+    });
+    onManuaisPca(novosManuais);
+  }
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item);
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
@@ -7301,6 +7332,19 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
               </button>
             </div>
 
+            {sugestoesPendentes.length > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: C.border, background: "rgba(166,131,46,0.06)" }}>
+                <span className="text-xs flex-1" style={{ color: C.ink }}>
+                  {sugestoesPendentes.length} item(ns) com sugestão de correspondência por descrição, ainda não confirmada.
+                </span>
+                <button onClick={confirmarTodasSugestoes}
+                  className="shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold"
+                  style={{ background: C.brass, color: C.navyDark }}>
+                  Confirmar todas ({sugestoesPendentes.length})
+                </button>
+              </div>
+            )}
+
             <div className="p-5">
               <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
                 Estes itens não foram localizados automaticamente na planilha importada. Se algum já estiver
@@ -7342,7 +7386,7 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
                         )}
                       </div>
                       <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
-                        onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
+                        onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
                     </div>
                   );
                 })}
