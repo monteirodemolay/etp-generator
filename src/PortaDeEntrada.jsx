@@ -7,8 +7,7 @@
 import React, { useState, useEffect } from "react";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
-  signInWithPopup, GoogleAuthProvider, setPersistence,
-  browserLocalPersistence, browserSessionPersistence,
+  setPersistence, browserLocalPersistence, browserSessionPersistence,
 } from "firebase/auth";
 import { auth } from "./firebase";
 import nuvem from "./storage";
@@ -32,12 +31,8 @@ function traduzirErro(codigo) {
     "auth/invalid-credential": "E-mail ou senha incorretos.",
     "auth/too-many-requests": "Muitas tentativas seguidas. Aguarde alguns minutos.",
     "auth/network-request-failed": "Sem conexão com a internet.",
-    "auth/operation-not-allowed": "Este método de login não está ativado no Firebase.",
+    "auth/operation-not-allowed": "O login por e-mail e senha não está ativado no Firebase.",
     "auth/admin-restricted-operation": "Esta conta não está cadastrada. Peça ao administrador para criá-la.",
-    "auth/popup-blocked": "O navegador bloqueou a janela do Google. Libere os pop-ups e tente de novo.",
-    "auth/unauthorized-domain": "Este endereço não está autorizado no Firebase para login com Google.",
-    "auth/account-exists-with-different-credential":
-      "Já existe uma conta com este e-mail usando outro método de login.",
   };
   return mapa[codigo] || "Não foi possível entrar. Tente novamente.";
 }
@@ -96,7 +91,6 @@ export default function PortaDeEntrada({ children }) {
   const [aviso, setAviso] = useState("");
   const [verSenha, setVerSenha] = useState(false);
   const [lembrar, setLembrar] = useState(true);
-  const [entrandoGoogle, setEntrandoGoogle] = useState(false);
 
   const [pendentes, setPendentes] = useState(0);
   const [migrando, setMigrando] = useState(false);
@@ -128,19 +122,6 @@ export default function PortaDeEntrada({ children }) {
     setEntrando(false);
   }
 
-  async function entrarComGoogle() {
-    setEntrandoGoogle(true);
-    setErro("");
-    try {
-      await aplicarPersistencia();
-      await signInWithPopup(auth, new GoogleAuthProvider());
-    } catch (err) {
-      if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
-        setErro(traduzirErro(err.code));
-      }
-    }
-    setEntrandoGoogle(false);
-  }
 
   async function recuperarSenha() {
     if (!email.trim()) { setErro("Digite seu e-mail para receber o link de redefinição."); return; }
@@ -365,24 +346,6 @@ export default function PortaDeEntrada({ children }) {
                 {entrando ? "Entrando..." : "Entrar no sistema"}
               </button>
             </form>
-
-            <div className="flex items-center gap-3 my-6">
-              <div className="flex-1 h-px" style={{ background: C.border }} />
-              <span className="text-xs" style={{ color: C.inkMuted }}>ou acesse com</span>
-              <div className="flex-1 h-px" style={{ background: C.border }} />
-            </div>
-
-            <button type="button" onClick={entrarComGoogle} disabled={entrandoGoogle}
-              className="w-full py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2.5 border disabled:opacity-60"
-              style={{ borderColor: C.border, color: C.ink, background: "white" }}>
-              <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.65l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1a11 11 0 0 0-9.82 6.05l3.66 2.84C6.71 7.29 9.14 5.38 12 5.38z" />
-              </svg>
-              {entrandoGoogle ? "Abrindo..." : "Login com Google"}
-            </button>
 
             <p className="text-[11px] text-center mt-6 leading-relaxed" style={{ color: C.inkMuted }}>
               O acesso é criado pelo administrador. Se você ainda não tem conta,
