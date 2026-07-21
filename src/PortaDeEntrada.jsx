@@ -7,10 +7,14 @@
 import React, { useState, useEffect } from "react";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
+  signInWithPopup, GoogleAuthProvider, setPersistence,
+  browserLocalPersistence, browserSessionPersistence,
 } from "firebase/auth";
 import { auth } from "./firebase";
 import nuvem from "./storage";
 import local from "./storage-local";
+
+const VERSAO = "2.0";
 
 const C = {
   navy: "#1C2E4A", navyDark: "#122032", paper: "#FAF7F0", paperDark: "#F1ECDF",
@@ -28,7 +32,12 @@ function traduzirErro(codigo) {
     "auth/invalid-credential": "E-mail ou senha incorretos.",
     "auth/too-many-requests": "Muitas tentativas seguidas. Aguarde alguns minutos.",
     "auth/network-request-failed": "Sem conexão com a internet.",
-    "auth/operation-not-allowed": "O login por e-mail e senha não está ativado no Firebase.",
+    "auth/operation-not-allowed": "Este método de login não está ativado no Firebase.",
+    "auth/admin-restricted-operation": "Esta conta não está cadastrada. Peça ao administrador para criá-la.",
+    "auth/popup-blocked": "O navegador bloqueou a janela do Google. Libere os pop-ups e tente de novo.",
+    "auth/unauthorized-domain": "Este endereço não está autorizado no Firebase para login com Google.",
+    "auth/account-exists-with-different-credential":
+      "Já existe uma conta com este e-mail usando outro método de login.",
   };
   return mapa[codigo] || "Não foi possível entrar. Tente novamente.";
 }
@@ -85,6 +94,9 @@ export default function PortaDeEntrada({ children }) {
   const [entrando, setEntrando] = useState(false);
   const [recuperando, setRecuperando] = useState(false);
   const [aviso, setAviso] = useState("");
+  const [verSenha, setVerSenha] = useState(false);
+  const [lembrar, setLembrar] = useState(true);
+  const [entrandoGoogle, setEntrandoGoogle] = useState(false);
 
   const [pendentes, setPendentes] = useState(0);
   const [migrando, setMigrando] = useState(false);
@@ -96,16 +108,38 @@ export default function PortaDeEntrada({ children }) {
     if (usuario) haDadosLocais().then(setPendentes).catch(() => {});
   }, [usuario]);
 
+  // "Lembrar-me" define se a sessão sobrevive ao fechar o navegador
+  async function aplicarPersistencia() {
+    try {
+      await setPersistence(auth, lembrar ? browserLocalPersistence : browserSessionPersistence);
+    } catch (e) { /* se falhar, segue com o padrão */ }
+  }
+
   async function entrar(e) {
     e.preventDefault();
     setEntrando(true);
     setErro("");
     try {
+      await aplicarPersistencia();
       await signInWithEmailAndPassword(auth, email.trim(), senha);
     } catch (err) {
       setErro(traduzirErro(err.code));
     }
     setEntrando(false);
+  }
+
+  async function entrarComGoogle() {
+    setEntrandoGoogle(true);
+    setErro("");
+    try {
+      await aplicarPersistencia();
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (err) {
+      if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
+        setErro(traduzirErro(err.code));
+      }
+    }
+    setEntrandoGoogle(false);
   }
 
   async function recuperarSenha() {
@@ -149,78 +183,234 @@ export default function PortaDeEntrada({ children }) {
   // ----- Sem sessão: tela de entrada -----
   if (!usuario) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4"
-        style={{ background: C.paperDark, fontFamily: "Inter, system-ui, sans-serif" }}>
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-6">
-            <div className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center"
-              style={{ background: C.navy }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={C.brassLight}
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                <rect x="8" y="2" width="8" height="4" rx="1" />
-                <path d="M9 12h6M9 16h4" />
+      <div className="min-h-screen flex" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
+
+        {/* ---------- Lado esquerdo: apresentação ---------- */}
+        <div className="hidden lg:flex flex-col justify-center relative overflow-hidden px-14 py-12"
+          style={{ width: "56%", background: `linear-gradient(140deg, ${C.navy} 0%, ${C.navyDark} 55%, #0C1622 100%)` }}>
+
+          {/* Malha geométrica de fundo */}
+          <svg className="absolute inset-0 w-full h-full" style={{ opacity: 0.16 }} aria-hidden="true">
+            <defs>
+              <pattern id="grade" width="46" height="46" patternUnits="userSpaceOnUse">
+                <path d="M46 0H0V46" fill="none" stroke={C.brassLight} strokeWidth="0.4" />
+              </pattern>
+              <radialGradient id="brilho" cx="30%" cy="35%" r="65%">
+                <stop offset="0%" stopColor={C.brassLight} stopOpacity="0.28" />
+                <stop offset="100%" stopColor={C.brassLight} stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#grade)" />
+            <rect width="100%" height="100%" fill="url(#brilho)" />
+          </svg>
+
+          <div className="relative z-10">
+            {/* Marca */}
+            <div className="flex items-center gap-4 mb-9">
+              <svg width="60" height="66" viewBox="0 0 60 66" fill="none" aria-hidden="true">
+                <path d="M30 2 L56 17 L56 49 L30 64 L4 49 L4 17 Z"
+                  stroke={C.brass} strokeWidth="2.5" fill="none" />
+                <rect x="19" y="18" width="23" height="30" rx="2.5" fill={C.paper} opacity="0.95" />
+                <path d="M24 26h13M24 32h13M24 38h9" stroke={C.navy} strokeWidth="2" strokeLinecap="round" />
               </svg>
+              <div>
+                <p style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 38, fontWeight: 700,
+                  color: C.paper, lineHeight: 1, letterSpacing: "-0.5px" }}>ETP</p>
+                <p style={{ fontSize: 13, letterSpacing: "6px", color: C.brassLight,
+                  marginTop: 4, fontWeight: 500 }}>INTELIGENTE</p>
+              </div>
             </div>
-            <h1 style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 24, fontWeight: 600, color: C.navy }}>
-              Gerador de ETP
+
+            <div style={{ width: 52, height: 3, background: C.brass, marginBottom: 26, borderRadius: 2 }} />
+
+            <h1 style={{ fontSize: 36, fontWeight: 700, color: C.paper, lineHeight: 1.22, letterSpacing: "-0.5px" }}>
+              Planejamento consistente<br />para contratações públicas.
             </h1>
-            <p className="text-xs mt-1" style={{ color: C.inkMuted }}>
-              Estudos Técnicos Preliminares · Lei nº 14.133/2021
+
+            <p className="mt-4 text-base leading-relaxed" style={{ color: "#A9B4C4", maxWidth: 520 }}>
+              Elaboração, organização e padronização da fase preparatória, conforme a{" "}
+              <span style={{ color: C.brassLight, fontWeight: 500 }}>Lei nº 14.133/2021</span>.
+            </p>
+
+            {/* Recursos */}
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-10" style={{ maxWidth: 620 }}>
+              {[
+                { rotulo: "Estudos Técnicos\nPreliminares", d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14l2 2 4-4" },
+                { rotulo: "Declaração de\nprevisão no PCA", d: "M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" },
+                { rotulo: "Justificativa\nde aquisição", d: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" },
+                { rotulo: "Pesquisa\nde preços", d: "M18 20V10M12 20V4M6 20v-6" },
+              ].map((r, i) => (
+                <div key={i} className="rounded-xl px-4 py-4 flex flex-col items-center text-center"
+                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,169,79,0.22)" }}>
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={C.brassLight}
+                    strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="mb-2.5">
+                    <path d={r.d} />
+                  </svg>
+                  <p className="text-[11.5px] leading-snug whitespace-pre-line" style={{ color: "#C3CCD9" }}>
+                    {r.rotulo}
+                  </p>
+                  <div style={{ width: 22, height: 2, background: C.brass, marginTop: 10, borderRadius: 1 }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ---------- Lado direito: formulário ---------- */}
+        <div className="flex-1 flex flex-col justify-center px-6 sm:px-12 lg:px-16 py-10"
+          style={{ background: "white" }}>
+          <div className="w-full max-w-sm mx-auto">
+
+            {/* Marca compacta, só quando o lado esquerdo está oculto */}
+            <div className="lg:hidden flex items-center gap-3 mb-8">
+              <svg width="42" height="46" viewBox="0 0 60 66" fill="none" aria-hidden="true">
+                <path d="M30 2 L56 17 L56 49 L30 64 L4 49 L4 17 Z" stroke={C.brass} strokeWidth="2.5" fill="none" />
+                <rect x="19" y="18" width="23" height="30" rx="2.5" fill={C.navy} opacity="0.9" />
+                <path d="M24 26h13M24 32h13M24 38h9" stroke={C.paper} strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <div>
+                <p style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 24,
+                  fontWeight: 700, color: C.navy, lineHeight: 1 }}>ETP</p>
+                <p style={{ fontSize: 9.5, letterSpacing: "4px", color: C.brass, marginTop: 2 }}>INTELIGENTE</p>
+              </div>
+            </div>
+
+            <h2 style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 30,
+              fontWeight: 600, color: C.navy, lineHeight: 1.2 }}>
+              Bem-vindo(a)!
+            </h2>
+            <p className="text-sm mt-1.5 mb-7" style={{ color: C.inkMuted }}>
+              Faça login para acessar sua área.
+            </p>
+
+            <form onSubmit={entrar}>
+              <label className="block mb-4">
+                <span className="text-xs font-semibold" style={{ color: C.ink }}>E-mail</span>
+                <div className="mt-1.5 flex items-center rounded-lg border overflow-hidden focus-within:ring-2"
+                  style={{ borderColor: C.border }}>
+                  <span className="pl-3 shrink-0" style={{ color: C.inkMuted }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                      <path d="m22 7-10 5L2 7" />
+                    </svg>
+                  </span>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                    autoComplete="username" required placeholder="Digite seu e-mail"
+                    className="w-full px-3 py-3 text-sm"
+                    style={{ border: "none", outline: "none" }} />
+                </div>
+              </label>
+
+              <label className="block mb-3">
+                <span className="text-xs font-semibold" style={{ color: C.ink }}>Senha</span>
+                <div className="mt-1.5 flex items-center rounded-lg border overflow-hidden"
+                  style={{ borderColor: C.border }}>
+                  <span className="pl-3 shrink-0" style={{ color: C.inkMuted }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  </span>
+                  <input type={verSenha ? "text" : "password"} value={senha} onChange={e => setSenha(e.target.value)}
+                    autoComplete="current-password" required placeholder="Digite sua senha"
+                    className="w-full px-3 py-3 text-sm"
+                    style={{ border: "none", outline: "none" }} />
+                  <button type="button" onClick={() => setVerSenha(v => !v)}
+                    className="px-3 shrink-0" style={{ color: C.inkMuted }}
+                    title={verSenha ? "Ocultar senha" : "Mostrar senha"}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      {verSenha
+                        ? <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>
+                        : <><path d="M9.9 4.24A9 9 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.6 3.8M6.6 6.6A18 18 0 0 0 2 12s3.5 7 10 7a9 9 0 0 0 3.6-.75" /><path d="m2 2 20 20" /></>}
+                    </svg>
+                  </button>
+                </div>
+              </label>
+
+              <div className="flex items-center justify-between mb-5 gap-2 flex-wrap">
+                <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: C.ink }}>
+                  <input type="checkbox" checked={lembrar} onChange={e => setLembrar(e.target.checked)}
+                    className="w-4 h-4" style={{ accentColor: C.navy }} />
+                  Lembrar-me
+                </label>
+                <button type="button" onClick={recuperarSenha} disabled={recuperando}
+                  className="text-xs font-medium underline" style={{ color: C.navy }}>
+                  {recuperando ? "Enviando..." : "Esqueci minha senha"}
+                </button>
+              </div>
+
+              {erro && (
+                <p className="text-xs mb-4 px-3 py-2.5 rounded-lg flex items-start gap-2"
+                  style={{ background: "rgba(166,64,61,0.09)", color: C.ink }}>
+                  <span style={{ color: C.red }}>●</span> {erro}
+                </p>
+              )}
+              {aviso && (
+                <p className="text-xs mb-4 px-3 py-2.5 rounded-lg flex items-start gap-2"
+                  style={{ background: "rgba(76,124,89,0.1)", color: C.ink }}>
+                  <span style={{ color: C.green }}>●</span> {aviso}
+                </p>
+              )}
+
+              <button type="submit" disabled={entrando}
+                className="w-full py-3.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+                style={{ background: C.navy, color: C.paper }}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
+                </svg>
+                {entrando ? "Entrando..." : "Entrar no sistema"}
+              </button>
+            </form>
+
+            <div className="flex items-center gap-3 my-6">
+              <div className="flex-1 h-px" style={{ background: C.border }} />
+              <span className="text-xs" style={{ color: C.inkMuted }}>ou acesse com</span>
+              <div className="flex-1 h-px" style={{ background: C.border }} />
+            </div>
+
+            <button type="button" onClick={entrarComGoogle} disabled={entrandoGoogle}
+              className="w-full py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2.5 border disabled:opacity-60"
+              style={{ borderColor: C.border, color: C.ink, background: "white" }}>
+              <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.65l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1a11 11 0 0 0-9.82 6.05l3.66 2.84C6.71 7.29 9.14 5.38 12 5.38z" />
+              </svg>
+              {entrandoGoogle ? "Abrindo..." : "Login com Google"}
+            </button>
+
+            <p className="text-[11px] text-center mt-6 leading-relaxed" style={{ color: C.inkMuted }}>
+              O acesso é criado pelo administrador. Se você ainda não tem conta,
+              procure o responsável pelo sistema no seu setor.
             </p>
           </div>
 
-          <form onSubmit={entrar} className="rounded-xl border p-6"
-            style={{ borderColor: C.border, background: "white" }}>
-            <label className="block mb-3">
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                E-mail
-              </span>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                autoComplete="username" required
-                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
-                style={{ borderColor: C.border }} />
-            </label>
-
-            <label className="block mb-4">
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                Senha
-              </span>
-              <input type="password" value={senha} onChange={e => setSenha(e.target.value)}
-                autoComplete="current-password" required
-                className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm"
-                style={{ borderColor: C.border }} />
-            </label>
-
-            {erro && (
-              <p className="text-xs mb-3 px-3 py-2 rounded-lg"
-                style={{ background: "rgba(166,64,61,0.1)", color: C.ink }}>{erro}</p>
-            )}
-            {aviso && (
-              <p className="text-xs mb-3 px-3 py-2 rounded-lg"
-                style={{ background: "rgba(76,124,89,0.1)", color: C.ink }}>{aviso}</p>
-            )}
-
-            <button type="submit" disabled={entrando}
-              className="w-full py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60"
-              style={{ background: C.navy, color: C.paper }}>
-              {entrando ? "Entrando..." : "Entrar"}
-            </button>
-
-            <button type="button" onClick={recuperarSenha} disabled={recuperando}
-              className="w-full mt-2 py-2 text-xs font-medium" style={{ color: C.brass }}>
-              {recuperando ? "Enviando..." : "Esqueci minha senha"}
-            </button>
-          </form>
-
-          <p className="text-[11px] text-center mt-4 leading-relaxed" style={{ color: C.inkMuted }}>
-            O acesso é criado pelo administrador. Se você não tem conta, procure o responsável
-            pelo sistema no seu setor.
-          </p>
+          {/* Rodapé */}
+          <div className="w-full max-w-sm mx-auto mt-10 pt-5 border-t" style={{ borderColor: C.border }}>
+            <div className="flex items-start gap-2.5">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke={C.navy}
+                strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+              <p className="text-[11px] leading-relaxed" style={{ color: C.inkMuted }}>
+                Segurança, padronização e conformidade<br />para uma gestão pública mais eficiente.
+              </p>
+            </div>
+            <p className="text-[10.5px] text-center mt-4" style={{ color: C.inkMuted }}>
+              ETP Inteligente · versão {VERSAO}
+            </p>
+          </div>
         </div>
       </div>
     );
   }
+
 
   // ----- Com sessão, mas há dados no navegador ainda não enviados -----
   if (pendentes > 0) {
