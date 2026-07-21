@@ -2277,6 +2277,7 @@ export default function App({ emailUsuario = null }) {
   const [declaracoes, setDeclaracoes] = useState([]);
   const [secretarias, setSecretarias] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
   const [currentDecl, setCurrentDecl] = useState(null);
@@ -2310,12 +2311,13 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaLixo] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
       carregarColecao("sec:"),
       carregarColecao("usr:"),
+      carregarColecao(PREFIXO_LIXO),
     ]);
 
     // Primeiro acesso: cria a secretaria padrão para que todo documento tenha onde se apoiar.
@@ -2334,6 +2336,9 @@ export default function App({ emailUsuario = null }) {
     setDeclaracoes(listaDecl);
     setSecretarias(secretariasFinais);
     setUsuarios(listaUsr.sort((a, b) => (a.nomeCompleto || a.email).localeCompare(b.nomeCompleto || b.email)));
+    // O que passou de 30 dias sai da lixeira sozinho
+    const lixoValido = await limparLixeiraVencida(listaLixo);
+    setLixeira(lixoValido.sort((a, b) => b.excluidoEm - a.excluidoEm));
     setLoading(false);
   }, [carregarColecao]);
 
@@ -2387,10 +2392,13 @@ export default function App({ emailUsuario = null }) {
   }
 
   async function deleteEtp(id, e) {
-    e.stopPropagation();
+    e?.stopPropagation?.();
+    const doc = etps.find(x => x.id === id);
+    if (!doc) return;
     try {
-      await storage.delete("etp:" + id, false);
+      const reg = await moverParaLixeira("etp:", id, doc);
       setEtps(prev => prev.filter(x => x.id !== id));
+      setLixeira(prev => [reg, ...prev]);
     } catch (err) { console.error(err); }
   }
 
@@ -2476,10 +2484,13 @@ export default function App({ emailUsuario = null }) {
     storage.set("just:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
   }
   async function excluirJustificativa(id, e) {
-    e.stopPropagation();
+    e?.stopPropagation?.();
+    const doc = justificativas.find(x => x.id === id);
+    if (!doc) return;
     try {
-      await storage.delete("just:" + id, false);
+      const reg = await moverParaLixeira("just:", id, doc);
       setJustificativas(prev => prev.filter(x => x.id !== id));
+      setLixeira(prev => [reg, ...prev]);
     } catch (err) { console.error(err); }
   }
 
@@ -2514,10 +2525,36 @@ export default function App({ emailUsuario = null }) {
     storage.set("decl:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
   }
   async function excluirDeclaracao(id, e) {
-    e.stopPropagation();
+    e?.stopPropagation?.();
+    const doc = declaracoes.find(x => x.id === id);
+    if (!doc) return;
     try {
-      await storage.delete("decl:" + id, false);
+      const reg = await moverParaLixeira("decl:", id, doc);
       setDeclaracoes(prev => prev.filter(x => x.id !== id));
+      setLixeira(prev => [reg, ...prev]);
+    } catch (err) { console.error(err); }
+  }
+
+  // ----- Lixeira -----
+  async function restaurarDocumento(registro) {
+    try {
+      await restaurarDaLixeira(registro);
+      setLixeira(prev => prev.filter(r => r.id !== registro.id));
+      await loadList();
+    } catch (err) { console.error(err); }
+  }
+
+  async function apagarDefinitivo(registro) {
+    try {
+      await excluirDefinitivo(registro);
+      setLixeira(prev => prev.filter(r => r.id !== registro.id));
+    } catch (err) { console.error(err); }
+  }
+
+  async function esvaziarLixeira() {
+    try {
+      for (const r of lixeira) await excluirDefinitivo(r).catch(() => {});
+      setLixeira([]);
     } catch (err) { console.error(err); }
   }
 
@@ -2682,6 +2719,8 @@ export default function App({ emailUsuario = null }) {
           onRecarregar={loadList}
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario}
+          lixeira={lixeira} onRestaurar={restaurarDocumento}
+          onApagarDefinitivo={apagarDefinitivo} onEsvaziar={esvaziarLixeira}
         />
       )}
 
@@ -3166,6 +3205,66 @@ function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
   );
 }
 
+// ---------- Lixeira ----------
+// Excluir não apaga na hora: o documento vai para a lixeira e fica 30 dias disponível para
+// restauração. Passado o prazo, some sozinho. Administradores podem esvaziar antes disso.
+const DIAS_NA_LIXEIRA = 30;
+const PREFIXO_LIXO = "lixo:";
+
+// Rótulo do tipo, a partir do prefixo original da chave
+const TIPOS_DOC = {
+  "etp:": { rotulo: "ETP", icone: "FileText" },
+  "just:": { rotulo: "Justificativa", icone: "FileEdit" },
+  "decl:": { rotulo: "Declaração de PCA", icone: "ListChecks" },
+};
+
+function diasRestantes(excluidoEm) {
+  const passados = (Date.now() - excluidoEm) / 86400000;
+  return Math.max(0, Math.ceil(DIAS_NA_LIXEIRA - passados));
+}
+
+// Move o documento para a lixeira, guardando de onde veio e quando saiu
+async function moverParaLixeira(prefixo, id, doc) {
+  const registro = {
+    id: "lx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    prefixoOriginal: prefixo,
+    idOriginal: id,
+    excluidoEm: Date.now(),
+    doc,
+  };
+  await storage.set(PREFIXO_LIXO + registro.id, JSON.stringify(registro), false);
+  await storage.delete(prefixo + id, false);
+  return registro;
+}
+
+// Devolve o documento ao lugar de origem
+async function restaurarDaLixeira(registro) {
+  await storage.set(
+    registro.prefixoOriginal + registro.idOriginal,
+    JSON.stringify(registro.doc), false);
+  await storage.delete(PREFIXO_LIXO + registro.id, false);
+}
+
+async function excluirDefinitivo(registro) {
+  await storage.delete(PREFIXO_LIXO + registro.id, false);
+}
+
+// Remove o que já passou dos 30 dias. Roda no carregamento, sem incomodar ninguém.
+async function limparLixeiraVencida(registros) {
+  const vencidos = registros.filter(r => diasRestantes(r.excluidoEm) <= 0);
+  for (const r of vencidos) {
+    await storage.delete(PREFIXO_LIXO + r.id, false).catch(() => {});
+  }
+  return registros.filter(r => diasRestantes(r.excluidoEm) > 0);
+}
+
+// Título do documento guardado, seja qual for o tipo
+function tituloNaLixeira(registro) {
+  const d = registro.doc || {};
+  if (registro.prefixoOriginal === "etp:") return d.meta?.titulo || "ETP sem título";
+  return (d.campos?.objeto ?? d.objeto ?? "").trim() || "Sem objeto definido";
+}
+
 // ---------- Backup: exportar e importar tudo ----------
 // Enquanto os dados vivem só no navegador, este é o único caminho de recuperação
 // caso a máquina seja formatada, o perfil corrompa ou alguém limpe os dados do site.
@@ -3324,16 +3423,11 @@ const DICAS = [
 // ---------- Lista de documentos avulsos (declarações e justificativas) ----------
 // Mesmo comportamento das duas listas: abrir, excluir com confirmação e criar novo.
 function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo, icone: Icone, vazio, secretarias, mostrarSecretaria }) {
-  const [confirmId, setConfirmId] = useState(null);
+  const [aExcluir, setAExcluir] = useState(null);
 
-  function handleExcluir(id, e) {
+  function pedirExclusao(doc, e) {
     e.stopPropagation();
-    if (confirmId === id) {
-      onExcluir(id, e);
-      setConfirmId(null);
-    } else {
-      setConfirmId(id);
-    }
+    setAExcluir(doc);
   }
 
   return (
@@ -3354,9 +3448,8 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo,
       ) : (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
           {docs.map((doc, idx) => {
-            const confirmando = confirmId === doc.id;
             return (
-              <div key={doc.id} onClick={() => (confirmando ? null : onAbrir(doc))}
+              <div key={doc.id} onClick={() => onAbrir(doc)}
                 className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-black/[0.02] group"
                 style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 <Icone size={15} className="shrink-0" style={{ color: C.brass }} />
@@ -3371,30 +3464,30 @@ function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo,
                     editado {fmtDateRelativa(doc.updatedAt)}
                   </p>
                 </div>
-                {confirmando ? (
-                  <div onClick={e => e.stopPropagation()} className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px]" style={{ color: C.red }}>Excluir?</span>
-                    <button onClick={e => handleExcluir(doc.id, e)}
-                      className="px-2 py-1 rounded text-[10px] font-semibold" style={{ background: C.red, color: "white" }}>Sim</button>
-                    <button onClick={e => { e.stopPropagation(); setConfirmId(null); }}
-                      className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={e => { e.stopPropagation(); onDuplicar(doc, e); }}
-                      className="p-1" style={{ color: C.inkMuted }} title="Duplicar">
-                      <Copy size={14} />
-                    </button>
-                    <button onClick={e => handleExcluir(doc.id, e)}
-                      className="p-1" style={{ color: C.red }} title="Excluir">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={e => { e.stopPropagation(); onDuplicar(doc, e); }}
+                    className="p-1" style={{ color: C.inkMuted }} title="Duplicar">
+                    <Copy size={14} />
+                  </button>
+                  <button onClick={e => pedirExclusao(doc, e)}
+                    className="p-1" style={{ color: C.inkMuted }} title="Excluir">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
+      )}
+
+      {aExcluir && (
+        <ConfirmarExclusao
+          titulo="Mover para a lixeira?"
+          descricao={`"${tituloDocumento(aExcluir)}" ficará na lixeira por ${DIAS_NA_LIXEIRA} dias e poderá ser restaurado nesse período.`}
+          textoBotao="Mover para a lixeira"
+          onConfirmar={() => { onExcluir(aExcluir.id, { stopPropagation() {} }); setAExcluir(null); }}
+          onCancelar={() => setAExcluir(null)}
+        />
       )}
     </div>
   );
@@ -3410,7 +3503,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
-  usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario }) {
+  usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
+  lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar }) {
 
   const [aba, setAba] = useState("painel");
   const [showGuia, setShowGuia] = useState(false);
@@ -3419,17 +3513,16 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   const [frase] = useState(() => Math.floor(Math.random() * FRASES.length));
   const saudacao = saudacaoPorHora();
   const nome = primeiroNomeDe(usuarioAtual?.nomeCompleto);
-  const [confirmId, setConfirmId] = useState(null);
+  const [aExcluir, setAExcluir] = useState(null);   // ETP aguardando confirmação
 
   useEffect(() => {
     const t = setInterval(() => setDica(d => (d + 1) % DICAS.length), 9000);
     return () => clearInterval(t);
   }, []);
 
-  function handleDeleteClick(id, e) {
+  function pedirExclusao(etp, e) {
     e.stopPropagation();
-    if (confirmId === id) { onDelete(id, e); setConfirmId(null); }
-    else setConfirmId(id);
+    setAExcluir(etp);
   }
 
   const base = todosEtps || etps;
@@ -3449,6 +3542,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "secretarias", rotulo: "Entidades", icone: Building2, contador: secretarias.length, somenteAdmin: true },
     { id: "usuarios", rotulo: "Usuários", icone: Users, contador: usuarios.length, somenteAdmin: true },
+    { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
     { id: "backup", rotulo: "Backup", icone: Download },
   ].filter(m => !m.somenteAdmin || permissoes.gerenciarEntidades);
 
@@ -3729,9 +3823,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                                         className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Duplicar">
                                         <Copy size={14} />
                                       </button>
-                                      <button onClick={e => handleDeleteClick(etp.id, e)}
-                                        className="p-1.5 rounded" style={{ color: confirmId === etp.id ? C.red : C.inkMuted }}
-                                        title={confirmId === etp.id ? "Clique de novo para excluir" : "Excluir"}>
+                                      <button onClick={e => pedirExclusao(etp, e)}
+                                        className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Excluir">
                                         <Trash2 size={14} />
                                       </button>
                                     </div>
@@ -3841,6 +3934,14 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                     const p = progress(etp);
                     const sit = situacaoEtp(etp);
                     const sec = secretariaDoDoc(etp, secretarias);
+                    const qtdItens = (etp.itens || []).length;
+                    const valorEtp = valorTotalEtp(etp);
+                    const pendencias = verificarConformidade(etp).filter(a => a.nivel === "impeditivo").length;
+                    const responsaveis = listaResponsaveis(etp);
+                    const responsavel = responsaveis.length === 0 ? null
+                      : responsaveis.length === 1 ? responsaveis[0].nome
+                      : `${responsaveis[0].nome} e +${responsaveis.length - 1}`;
+                    const previstosPca = etp.pca ? contarPrevistosNoPca(etp) : 0;
                     return (
                       <div key={etp.id} onClick={() => onOpen(etp)}
                         className="group relative p-5 rounded-xl border cursor-pointer hover:shadow-sm"
@@ -3850,9 +3951,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                             className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
                             <Copy size={15} />
                           </button>
-                          <button onClick={e => handleDeleteClick(etp.id, e)}
-                            className="p-1.5 rounded-md" style={{ color: confirmId === etp.id ? C.red : C.inkMuted }}
-                            title={confirmId === etp.id ? "Clique de novo para excluir" : "Excluir"}>
+                          <button onClick={e => pedirExclusao(etp, e)}
+                            className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Excluir">
                             <Trash2 size={15} />
                           </button>
                         </div>
@@ -3871,11 +3971,50 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                           </span>
                         </p>
 
+                        {/* Números que ajudam a decidir se vale abrir */}
+                        <div className="grid grid-cols-3 gap-2 mb-3 py-2 px-1 rounded-lg" style={{ background: C.paperDark }}>
+                          <div className="text-center">
+                            <p className="text-sm font-semibold leading-none" style={{ color: C.navy }}>{qtdItens}</p>
+                            <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>
+                              {qtdItens === 1 ? "item" : "itens"}
+                            </p>
+                          </div>
+                          <div className="text-center border-x" style={{ borderColor: C.border }}>
+                            <p className="text-sm font-semibold leading-none"
+                              style={{ color: valorEtp > 0 ? C.navy : C.inkMuted }}>
+                              {valorEtp > 0 ? brl(valorEtp) : "—"}
+                            </p>
+                            <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>estimado</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-semibold leading-none"
+                              style={{ color: pendencias > 0 ? C.red : C.green }}>
+                              {pendencias > 0 ? pendencias : "✓"}
+                            </p>
+                            <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>
+                              {pendencias > 0 ? "pendência(s)" : "conforme"}
+                            </p>
+                          </div>
+                        </div>
+
                         <div className="flex items-center gap-2 mb-2">
                           <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
                             <div className="h-1.5 rounded-full" style={{ width: p.pct + "%", background: sit.cor }} />
                           </div>
-                          <span className="text-[11px] shrink-0" style={{ color: C.inkMuted }}>{p.filled}/{p.total}</span>
+                          <span className="text-[11px] shrink-0" style={{ color: C.inkMuted }}>
+                            {p.filled}/{p.total} incisos
+                          </span>
+                        </div>
+
+                        {/* Detalhes em linha, cada um só aparece se houver dado */}
+                        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[10.5px] mb-2.5"
+                          style={{ color: C.inkMuted }}>
+                          {etp.meta.tipo && <span>{etp.meta.tipo}</span>}
+                          {responsavel && <span>· {responsavel}</span>}
+                          {etp.pca && (
+                            <span>· PCA: {previstosPca}/{qtdItens}</span>
+                          )}
+                          <span>· criado {fmtDate(etp.createdAt)}</span>
                         </div>
 
                         <div className="flex items-center justify-between text-[11px]">
@@ -3917,6 +4056,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
               onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
           )}
 
+          {aba === "lixeira" && (
+            <LixeiraView lixeira={lixeira} onRestaurar={onRestaurar} onApagar={onApagarDefinitivo}
+              onEsvaziar={onEsvaziar} podeEsvaziar={permissoes.esvaziarLixeira} />
+          )}
+
           {aba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}
 
           {aba === "justificativas" && (
@@ -3946,6 +4090,16 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
       </div>
 
       {showGuia && <GuiaRapido onFechar={() => setShowGuia(false)} />}
+
+      {aExcluir && (
+        <ConfirmarExclusao
+          titulo="Mover para a lixeira?"
+          descricao={`"${aExcluir.meta?.titulo || "ETP sem título"}" ficará na lixeira por ${DIAS_NA_LIXEIRA} dias e poderá ser restaurado nesse período.`}
+          textoBotao="Mover para a lixeira"
+          onConfirmar={() => { onDelete(aExcluir.id, { stopPropagation() {} }); setAExcluir(null); }}
+          onCancelar={() => setAExcluir(null)}
+        />
+      )}
 
       {novoDoc && (
         <JanelaNovoDocumento
@@ -4175,6 +4329,141 @@ function TelaBackup({ onRestaurado }) {
           )}
         </div>
       </div>
+    </>
+  );
+}
+
+// ---------- Confirmação de exclusão ----------
+// Substitui o clique duplo, que era fácil demais de disparar sem querer.
+function ConfirmarExclusao({ titulo, descricao, textoBotao = "Excluir", onConfirmar, onCancelar }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      style={{ background: "rgba(18,32,50,0.6)" }} onClick={onCancelar}>
+      <div onClick={e => e.stopPropagation()} className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: "rgba(166,64,61,0.1)" }}>
+            <AlertCircle size={19} style={{ color: C.red }} />
+          </div>
+          <div>
+            <h3 className="serif text-lg font-semibold leading-tight" style={{ color: C.navy }}>{titulo}</h3>
+            <p className="text-sm mt-1 leading-relaxed" style={{ color: C.inkMuted }}>{descricao}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onCancelar}
+            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium"
+            style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
+            Cancelar
+          </button>
+          <button onClick={onConfirmar}
+            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold"
+            style={{ background: C.red, color: "white" }}>
+            {textoBotao}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Lixeira ----------
+function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEsvaziar }) {
+  const [confirmando, setConfirmando] = useState(null);   // registro a apagar de vez
+  const [confirmandoTudo, setConfirmandoTudo] = useState(false);
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+            <Trash2 size={15} />
+            <span className="text-xs font-semibold tracking-widest uppercase">Recuperação</span>
+          </div>
+          <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Lixeira</h1>
+        </div>
+        {lixeira.length > 0 && podeEsvaziar && (
+          <button onClick={() => setConfirmandoTudo(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium shrink-0"
+            style={{ background: "white", color: C.red, border: `1px solid rgba(166,64,61,0.3)` }}>
+            <Trash2 size={14} /> Esvaziar lixeira
+          </button>
+        )}
+      </div>
+
+      <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+        Documentos excluídos ficam aqui por <b>{DIAS_NA_LIXEIRA} dias</b> e depois somem sozinhos.
+        Até lá, dá para restaurar a qualquer momento.
+      </p>
+
+      {lixeira.length === 0 ? (
+        <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <Trash2 size={30} className="mx-auto mb-3" style={{ color: C.border }} />
+          <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Lixeira vazia</p>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nada foi excluído nos últimos {DIAS_NA_LIXEIRA} dias.</p>
+        </div>
+      ) : (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+          {lixeira.map((r, idx) => {
+            const dias = diasRestantes(r.excluidoEm);
+            const tipo = TIPOS_DOC[r.prefixoOriginal]?.rotulo || "Documento";
+            const urgente = dias <= 5;
+            return (
+              <div key={r.id} className="flex items-center gap-3 px-4 py-3 flex-wrap"
+                style={{ borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                <div className="flex-1 min-w-[200px]">
+                  <p className="text-sm font-medium truncate" style={{ color: C.navy }}>{tituloNaLixeira(r)}</p>
+                  <p className="text-[11px] flex items-center gap-1.5 flex-wrap" style={{ color: C.inkMuted }}>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                      style={{ background: C.paperDark, color: C.inkMuted }}>{tipo}</span>
+                    excluído {fmtDateRelativa(r.excluidoEm)}
+                  </p>
+                </div>
+
+                <span className="text-[11px] font-semibold px-2 py-1 rounded-full shrink-0"
+                  style={{
+                    background: urgente ? "rgba(166,64,61,0.1)" : C.paperDark,
+                    color: urgente ? C.red : C.inkMuted,
+                  }}>
+                  {dias === 1 ? "resta 1 dia" : `restam ${dias} dias`}
+                </span>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => onRestaurar(r)}
+                    className="px-2.5 py-1.5 rounded-md text-xs font-semibold"
+                    style={{ background: C.navy, color: C.paper }}>
+                    Restaurar
+                  </button>
+                  <button onClick={() => setConfirmando(r)}
+                    className="p-1.5 rounded-md" style={{ color: C.red }} title="Excluir definitivamente">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {confirmando && (
+        <ConfirmarExclusao
+          titulo="Excluir definitivamente?"
+          descricao={`"${tituloNaLixeira(confirmando)}" será apagado de vez. Esta ação não pode ser desfeita.`}
+          textoBotao="Excluir de vez"
+          onConfirmar={() => { onApagar(confirmando); setConfirmando(null); }}
+          onCancelar={() => setConfirmando(null)}
+        />
+      )}
+
+      {confirmandoTudo && (
+        <ConfirmarExclusao
+          titulo="Esvaziar a lixeira?"
+          descricao={`Os ${lixeira.length} documento(s) da lixeira serão apagados de vez. Esta ação não pode ser desfeita.`}
+          textoBotao="Esvaziar"
+          onConfirmar={() => { onEsvaziar(); setConfirmandoTudo(false); }}
+          onCancelar={() => setConfirmandoTudo(false)}
+        />
+      )}
     </>
   );
 }
