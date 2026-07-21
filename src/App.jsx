@@ -2680,7 +2680,7 @@ export default function App({ emailUsuario = null }) {
           onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
           onExcluirSecretaria={excluirSecretaria}
           onRecarregar={loadList}
-          usuarios={usuarios} emailUsuario={emailUsuario} permissoes={permissoes}
+          usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario}
         />
       )}
@@ -3284,6 +3284,33 @@ function situacaoEtp(etp) {
   return { chave: "elaboracao", rotulo: "Em elaboração", cor: C.brass };
 }
 
+// Saudação conforme a hora do dia
+function saudacaoPorHora(agora = new Date()) {
+  const h = agora.getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+// Primeiro nome, para a saudação não ficar cerimoniosa demais
+function primeiroNomeDe(nomeCompleto) {
+  const limpo = String(nomeCompleto || "").trim();
+  if (!limpo) return null;
+  return limpo.split(/\s+/)[0];
+}
+
+// Frases que giram abaixo da saudação. Sóbrias, ligadas ao sentido do trabalho —
+// planejar bem uma contratação é o que garante que o recurso público chegue a quem precisa.
+const FRASES = [
+  "Cada estudo bem feito é dinheiro público que chega onde precisa.",
+  "Planejar com cuidado hoje evita o retrabalho de amanhã.",
+  "Um bom Estudo Técnico Preliminar é a base de uma contratação segura.",
+  "A clareza de agora é a tranquilidade da prestação de contas depois.",
+  "Contratar bem é uma forma silenciosa de servir ao cidadão.",
+  "O que está bem justificado dificilmente será questionado.",
+  "Documentar é proteger: o processo, a equipe e o interesse público.",
+];
+
 // Dicas curtas que giram no painel
 const DICAS = [
   "Cadastre o código do Sistema Centi nos itens — é por ele que o app localiza cada um no PCA.",
@@ -3383,12 +3410,15 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
-  usuarios, emailUsuario, permissoes, onSalvarUsuario, onExcluirUsuario }) {
+  usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario }) {
 
   const [aba, setAba] = useState("painel");
   const [showGuia, setShowGuia] = useState(false);
   const [novoDoc, setNovoDoc] = useState(null); // { tipo, tipoInicial }
   const [dica, setDica] = useState(0);
+  const [frase] = useState(() => Math.floor(Math.random() * FRASES.length));
+  const saudacao = saudacaoPorHora();
+  const nome = primeiroNomeDe(usuarioAtual?.nomeCompleto);
   const [confirmId, setConfirmId] = useState(null);
 
   useEffect(() => {
@@ -3587,9 +3617,11 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "painel" && (
             <>
-              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Painel</h1>
-              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
-                Elabore e acompanhe seus Estudos Técnicos Preliminares, do levantamento de itens ao documento assinado.
+              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
+                {nome ? `${saudacao}, ${nome}. Seja bem-vindo!` : `${saudacao}. Seja bem-vindo!`}
+              </h1>
+              <p className="text-sm italic mb-5" style={{ color: C.inkMuted }}>
+                {FRASES[frase]}
               </p>
 
               <div className="grid lg:grid-cols-[1fr,320px] gap-5 items-start">
