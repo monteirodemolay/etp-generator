@@ -5120,9 +5120,17 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) =>
-      `<tr><td>${idx + 1}</td><td>${escapeHtml(m.codigo)}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`
-    ).join("");
+    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) => {
+      // Quando o código do Pedido (Centi) é diferente do código sob o qual o item está
+      // cadastrado no PCA, mostra os dois juntos — "5241938422 / 14157343" (o segundo, do
+      // PCA, em negrito) — para comprovar que é o mesmo item, só sob outra numeração.
+      const centi = (m.item.idProduto || "").trim();
+      const pcaCodigo = (m.pcaRow?.codigo || "").trim();
+      const idCelula = (centi && pcaCodigo && !mesmoCodigo(centi, pcaCodigo))
+        ? `${escapeHtml(centi)} / <b>${escapeHtml(pcaCodigo)}</b>`
+        : escapeHtml(m.codigo || "-");
+      return `<tr><td>${idx + 1}</td><td>${idCelula}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`;
+    }).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }).catch(e => console.error(e));
   }
 
