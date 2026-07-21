@@ -6,7 +6,7 @@ O sistema foi criado para uso no âmbito da Secretaria Municipal de Assistência
 
 ## Sobre o projeto
 
-A elaboração de um ETP envolve reunir informações de fontes distintas — a relação de itens a adquirir, a verificação de que o objeto consta no PCA, a pesquisa de preços junto a fornecedores e o texto de cada um dos treze incisos exigidos pelo art. 18. Na prática, esse processo costuma ser feito manualmente, item por item, com alto risco de inconsistência entre o que foi levantado e o que efetivamente entra no documento final.
+A elaboração de um ETP envolve levantar uma necessidade, reunir informações de fontes distintas, a relação de itens a adquirir, a verificação de que o objeto consta no PCA, a pesquisa de preços junto a fornecedores e o texto de cada um dos treze incisos exigidos pelo art. 18. Na prática, esse processo costuma ser feito manualmente, item por item, com alto risco de inconsistência entre o que foi levantado e o que efetivamente entra no documento final.
 
 Este aplicativo organiza esse fluxo em etapas sequenciais e mantém os dados conectados entre si: o que é cadastrado na planilha de itens alimenta automaticamente o alinhamento ao PCA, o levantamento de preços e os textos-modelo dos incisos correspondentes, evitando digitação repetida e divergências entre as partes do documento.
 
@@ -49,9 +49,9 @@ O documento final pode ser copiado como texto simples, impresso ou salvo em PDF 
 - lucide-react (ícones)
 - xlsx / SheetJS (leitura e geração de planilhas Excel)
 
-Nenhuma dependência paga é exigida para o funcionamento do sistema. O recurso opcional de geração de texto por inteligência artificial utiliza a API da Anthropic mediante chave própria do usuário, informada em Configurações.
+Nenhuma dependência paga é exigida para o funcionamento do sistema. O recurso opcional de geração de texto por inteligência artificial utiliza outras plataformas do próprio usuário.
 
-## Rodando localmente
+## Rodando no GitHub Pages
 
 ```bash
 npm install
