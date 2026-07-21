@@ -2803,7 +2803,7 @@ export default function App({ emailUsuario = null }) {
         .timbre-fixed-print { display: none; }
       `}</style>
 
-      {view === "list" && (
+      {(view === "list" || (view === "justificativa" && currentJust) || (view === "declaracao" && currentDecl)) && (
         <ListView
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
@@ -2822,20 +2822,20 @@ export default function App({ emailUsuario = null }) {
           normativos={normativos} onUploadNormativo={uploadNormativo} onExcluirNormativo={excluirNormativo}
           lixeira={lixeira} onRestaurar={restaurarDocumento}
           onApagarDefinitivo={apagarDefinitivo} onEsvaziar={esvaziarLixeira}
+          viewAtual={view} onFecharDocumento={backToList}
+          documentoAberto={
+            view === "justificativa" && currentJust ? (
+              <JustificativaView doc={currentJust} secretarias={secretarias}
+                onSalvar={salvarJustificativa} onBack={backToList}
+                somenteLeitura={somenteLeituraPara(currentJust)} embutido />
+            ) : view === "declaracao" && currentDecl ? (
+              <DeclaracaoView doc={currentDecl} secretarias={secretarias}
+                onSalvar={salvarDeclaracao} onBack={backToList}
+                onGerarJustificativa={(dados) => novaJustificativa(dados)}
+                somenteLeitura={somenteLeituraPara(currentDecl)} embutido />
+            ) : null
+          }
         />
-      )}
-
-      {view === "justificativa" && currentJust && (
-        <JustificativaView doc={currentJust} secretarias={secretarias}
-          onSalvar={salvarJustificativa} onBack={backToList}
-          somenteLeitura={somenteLeituraPara(currentJust)} />
-      )}
-
-      {view === "declaracao" && currentDecl && (
-        <DeclaracaoView doc={currentDecl} secretarias={secretarias}
-          onSalvar={salvarDeclaracao} onBack={backToList}
-          onGerarJustificativa={(dados) => novaJustificativa(dados)}
-          somenteLeitura={somenteLeituraPara(currentDecl)} />
       )}
 
       {view === "editor" && current && (
@@ -3750,9 +3750,15 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
-  lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar }) {
+  lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
+  documentoAberto = null, viewAtual, onFecharDocumento }) {
 
   const [aba, setAba] = useState("painel");
+  // Enquanto um documento (Justificativa/Declaração) está aberto, ele ocupa o conteúdo, mas o
+  // menu lateral continua indicando a seção correspondente — não a última aba clicada.
+  const abaAtiva = documentoAberto
+    ? (viewAtual === "justificativa" ? "justificativas" : "declaracoes")
+    : aba;
   const [showGuia, setShowGuia] = useState(false);
   // Novo documento agora abre direto no editor (sem janela intermediária) — objeto, processo
   // e entidade ficam editáveis dentro do próprio documento, e nada é gravado até a primeira
@@ -3762,6 +3768,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   const saudacao = saudacaoPorHora();
   const nome = primeiroNomeDe(usuarioAtual?.nomeCompleto);
   const [aExcluir, setAExcluir] = useState(null);   // ETP aguardando confirmação
+  const [pendAberta, setPendAberta] = useState(null); // id do ETP com o detalhe de pendências aberto no cartão
 
   function pedirExclusao(etp, e) {
     e.stopPropagation();
@@ -3831,9 +3838,9 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 
         <nav className="px-3 mt-2 flex-1 overflow-y-auto etp-scroll">
           {menu.map(m => {
-            const ativo = !m.acao && aba === m.id;
+            const ativo = !m.acao && abaAtiva === m.id;
             return (
-              <button key={m.id} onClick={() => (m.acao ? m.acao() : setAba(m.id))}
+              <button key={m.id} onClick={() => { if (documentoAberto) onFecharDocumento(); setAba(m.id); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-1 text-sm"
                 style={{
                   background: ativo ? C.brass : "transparent",
@@ -3931,6 +3938,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
         </header>
 
         <main className="flex-1 px-7 py-6 overflow-y-auto etp-scroll">
+          {documentoAberto ? documentoAberto : (
+          <>
 
           {aba === "painel" && (
             <>
@@ -4073,6 +4082,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                           <th className="text-left px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Título / Objeto</th>
                           <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-28" style={{ color: C.inkMuted }}>Atualizado</th>
                           <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-32" style={{ color: C.inkMuted }}>Situação</th>
+                          <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-24" style={{ color: C.inkMuted }}>Pendências</th>
                           <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-20" style={{ color: C.inkMuted }}>Ações</th>
                         </tr>
                       </thead>
@@ -4080,8 +4090,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                         {recentes.map(etp => {
                           const sit = situacaoEtp(etp);
                           const sec = secretariaDoDoc(etp, secretarias);
+                          const pendenciasList = verificarConformidade(etp).filter(a => a.nivel === "impeditivo");
                           return (
-                            <tr key={etp.id} className="border-t hover:bg-black/[0.015] cursor-pointer"
+                            <Fragment key={etp.id}>
+                            <tr className="border-t hover:bg-black/[0.015] cursor-pointer"
                               style={{ borderColor: C.border }} onClick={() => onOpen(etp)}>
                               <td className="px-5 py-3">
                                 <p className="font-medium truncate" style={{ color: C.navy }}>
@@ -4102,6 +4114,19 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                                 </span>
                               </td>
                               <td className="px-3 py-3">
+                                <button onClick={e => { e.stopPropagation(); setPendAberta(pendAberta === etp.id ? null : (pendenciasList.length > 0 ? etp.id : null)); }}
+                                  disabled={pendenciasList.length === 0}
+                                  className="flex items-center gap-1 text-[11px] font-semibold"
+                                  style={{ color: pendenciasList.length > 0 ? C.red : C.green }}>
+                                  {pendenciasList.length > 0 ? (
+                                    <>
+                                      {pendenciasList.length} pend.
+                                      <ChevronRight size={10} style={{ transform: pendAberta === etp.id ? "rotate(90deg)" : "none" }} />
+                                    </>
+                                  ) : "✓ conforme"}
+                                </button>
+                              </td>
+                              <td className="px-3 py-3">
                                 <div className="flex items-center gap-1">
                                   {podeCriarDocumentos && (
                                     <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
@@ -4118,6 +4143,22 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                                 </div>
                               </td>
                             </tr>
+                            {pendAberta === etp.id && pendenciasList.length > 0 && (
+                              <tr style={{ borderTop: "none" }}>
+                                <td colSpan={5} className="px-5 pb-3 pt-0">
+                                  <div onClick={e => e.stopPropagation()}
+                                    className="rounded-lg px-3 py-2.5 space-y-1.5" style={{ background: "rgba(166,64,61,0.06)" }}>
+                                    {pendenciasList.map((a, i) => (
+                                      <p key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: C.ink }}>
+                                        <AlertTriangle size={11} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                                        {a.texto}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -4210,7 +4251,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                     const sec = secretariaDoDoc(etp, secretarias);
                     const qtdItens = (etp.itens || []).length;
                     const valorEtp = valorTotalEtp(etp);
-                    const pendencias = verificarConformidade(etp).filter(a => a.nivel === "impeditivo").length;
+                    const pendenciasList = verificarConformidade(etp).filter(a => a.nivel === "impeditivo");
+                    const pendencias = pendenciasList.length;
                     const responsaveis = listaResponsaveis(etp);
                     const responsavel = responsaveis.length === 0 ? null
                       : responsaveis.length === 1 ? responsaveis[0].nome
@@ -4264,16 +4306,31 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                             </p>
                             <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>estimado</p>
                           </div>
-                          <div className="text-center">
+                          <button onClick={e => { e.stopPropagation(); setPendAberta(pendAberta === etp.id ? null : (pendencias > 0 ? etp.id : null)); }}
+                            className="text-center" disabled={pendencias === 0} title={pendencias > 0 ? "Ver o que falta" : undefined}>
                             <p className="text-sm font-semibold leading-none"
                               style={{ color: pendencias > 0 ? C.red : C.green }}>
                               {pendencias > 0 ? pendencias : "✓"}
                             </p>
-                            <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>
+                            <p className="text-[9.5px] mt-1 flex items-center justify-center gap-0.5" style={{ color: C.inkMuted }}>
                               {pendencias > 0 ? "pendência(s)" : "conforme"}
+                              {pendencias > 0 && <ChevronRight size={9} style={{ transform: pendAberta === etp.id ? "rotate(90deg)" : "none" }} />}
                             </p>
-                          </div>
+                          </button>
                         </div>
+
+                        {pendAberta === etp.id && pendenciasList.length > 0 && (
+                          <div onClick={e => e.stopPropagation()}
+                            className="rounded-lg mb-3 px-3 py-2.5 space-y-1.5"
+                            style={{ background: "rgba(166,64,61,0.06)" }}>
+                            {pendenciasList.map((a, i) => (
+                              <p key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: C.ink }}>
+                                <AlertTriangle size={11} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                                {a.texto}
+                              </p>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="flex items-center gap-2 mb-2">
                           <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
@@ -4358,6 +4415,8 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
                 podeCriar={podeCriarDocumentos} podeExcluir={permissoes.excluirDocumentos} />
             </>
+          )}
+          </>
           )}
         </main>
 
@@ -4937,7 +4996,7 @@ function GuiaRapido({ onFechar }) {
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
-function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificativa, somenteLeitura = false }) {
+function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificativa, somenteLeitura = false, embutido = false }) {
   const itens = doc.itens || [];
   const objeto = doc.objeto || "";
   const orgao = doc.orgao || "";
@@ -5040,10 +5099,12 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
+    <div className={embutido ? "max-w-4xl mx-auto" : "max-w-4xl mx-auto px-6 py-10"}>
+      {!embutido && (
+        <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
+      )}
 
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
@@ -5287,7 +5348,7 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
 }
 
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
-function JustificativaView({ doc, secretarias, onSalvar, onBack, somenteLeitura = false }) {
+function JustificativaView({ doc, secretarias, onSalvar, onBack, somenteLeitura = false, embutido = false }) {
   const campos = doc.campos;
   const conteudo = doc.conteudo || "";
   const [timbreGlobal, setTimbreGlobal] = useState(null);
@@ -5325,10 +5386,12 @@ function JustificativaView({ doc, secretarias, onSalvar, onBack, somenteLeitura 
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
+    <div className={embutido ? "max-w-3xl mx-auto" : "max-w-3xl mx-auto px-6 py-10"}>
+      {!embutido && (
+        <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
+      )}
 
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
