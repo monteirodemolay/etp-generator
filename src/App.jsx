@@ -4424,7 +4424,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           style={{ borderColor: C.border, background: "white" }}>
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            ETP Inteligente — Para atender a Lei nº 14.133/2021, art. 18
+            ETP Inteligente - Planejamento consistente para contratações públicas
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
             Desenvolvido por Luís Eduardo Monteiro Lima
@@ -4946,47 +4946,63 @@ function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEsvaziar 
 }
 
 function GuiaRapido({ onFechar }) {
+
   const passos = [
-  [
-    "Cadastre ou importe os itens",
-    "Importe a planilha do Sistema Centi ou cadastre os itens manualmente. O código do produto é indispensável para localizar automaticamente sua previsão no Plano de Contratações Anual (PCA)."
-  ],
+    [
+      "Cadastre ou importe os itens",
+      "Importe a planilha do Sistema Centi ou cadastre os itens manualmente. O código do produto é indispensável para localizar automaticamente sua previsão no Plano de Contratações Anual (PCA)."
+    ],
 
-  [
-    "Verifique o alinhamento ao PCA",
-    "Importe a planilha do PCA. O sistema realizará automaticamente o cruzamento entre os itens cadastrados e o Plano de Contratações Anual. Havendo divergência de códigos, utilize a pesquisa integrada para realizar o vínculo manual."
-  ],
+    [
+      "Verifique o alinhamento ao PCA",
+      "Importe a planilha do PCA. O sistema realizará automaticamente o cruzamento entre os itens cadastrados e o Plano de Contratações Anual. Havendo divergência de códigos, utilize a pesquisa integrada para realizar o vínculo manual."
+    ],
 
-  [
-    "Preencha os dados da contratação",
-    "Informe objeto, processo administrativo, unidade requisitante, responsáveis, prazos e demais informações. Esses dados alimentarão automaticamente diversos trechos do Estudo Técnico Preliminar."
-  ],
+    [
+      "Preencha os dados da contratação",
+      "Informe objeto, processo administrativo, unidade requisitante, responsáveis, prazos e demais informações. Esses dados alimentarão automaticamente diversos trechos do Estudo Técnico Preliminar."
+    ],
 
-  [
-    "Realize o levantamento de preços",
-    "Cadastre as pesquisas de preços dos itens e selecione a metodologia de cálculo (média ou mediana). O sistema calculará automaticamente a estimativa do valor da contratação."
-  ],
+    [
+      "Realize o levantamento de preços",
+      "Cadastre as pesquisas de preços dos itens e selecione a metodologia de cálculo (média ou mediana). O sistema calculará automaticamente a estimativa do valor da contratação."
+    ],
 
-  [
-    "Elabore o Estudo Técnico Preliminar",
-    "Preencha os incisos utilizando os modelos sugeridos, escreva seus próprios textos ou utilize Inteligência Artificial como apoio técnico, revisando sempre o conteúdo antes da conclusão."
-  ],
+    [
+      "Elabore o Estudo Técnico Preliminar",
+      "Preencha os incisos utilizando os modelos sugeridos, escreva seus próprios textos ou utilize Inteligência Artificial como apoio técnico, revisando sempre o conteúdo antes da conclusão."
+    ],
 
-  [
-    "Verifique a conformidade",
-    "Execute a análise de conformidade para identificar pendências, inconsistências e campos obrigatórios ainda não preenchidos."
-  ],
+    [
+      "Verifique a conformidade",
+      "Execute a análise de conformidade para identificar pendências, inconsistências e campos obrigatórios ainda não preenchidos."
+    ],
 
-  [
-    "Analise a solução escolhida",
-    "Releia criticamente todo o ETP. Confirme se a solução realmente atende ao interesse público ou se existe alternativa mais eficiente, econômica ou vantajosa para a Administração."
-  ],
+    [
+      "Analise a solução escolhida",
+      "Releia criticamente todo o ETP. Confirme se a solução realmente atende ao interesse público ou se existe alternativa mais eficiente, econômica ou vantajosa para a Administração."
+    ],
 
-  [
-    "Exporte o documento",
-    "Após a conferência final, gere o Estudo Técnico Preliminar em Word ou PDF para instrução do processo administrativo."
-  ]
-];
+    [
+      "Exporte o documento",
+      "Após a conferência final, gere o Estudo Técnico Preliminar em Word ou PDF para instrução do processo administrativo."
+    ]
+  ];
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onFechar();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onFechar]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
       onClick={onFechar}>
