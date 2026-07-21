@@ -3959,8 +3959,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
             </p>
           </div>
         </header>
-
-        <main className="flex-1 px-7 py-6 overflow-y-auto etp-scroll">
+<main
+  className="flex-1 px-7 py-6 overflow-y-auto etp-scroll"
+  style={{ paddingBottom: "64px" }}
+>
           {documentoAberto ? documentoAberto : (
           <>
 
@@ -4443,8 +4445,13 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           )}
         </main>
 
-        <footer className="px-7 py-4 border-t flex items-center gap-2 flex-wrap"
-          style={{ borderColor: C.border, background: "white" }}>
+       <footer
+  className="fixed bottom-0 left-64 right-0 h-12 px-7 border-t flex items-center gap-2 z-50"
+  style={{
+    borderColor: C.border,
+    background: "white"
+  }}
+>
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
             ETP Inteligente — Para atender a Lei nº 14.133/2021, art. 18
