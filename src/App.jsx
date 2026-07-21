@@ -3483,6 +3483,8 @@ const DICAS = [
   "Incisos vazios não entram no documento. Para tirar um preenchido, use “Não incluir”.",
   "Cada Entidade pode ter timbre próprio — imagem, texto ou nenhum.",
   "Lance mais de uma cotação por item: a pesquisa de preços costuma exigir várias fontes.",
+  "Planeje sua compra por aqui e verifique se a sua demanda está ou não vinculada.",
+  "O Estudo precisa estar amparado pela sua real necessidade.",
 ];
 
 // ---------- Lista de documentos avulsos (declarações e justificativas) ----------
@@ -4152,10 +4154,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           style={{ borderColor: C.border, background: "white" }}>
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            Gerador de ETP — Lei nº 14.133/2021, art. 18
+            ETP Inteligente — Para atender a Lei nº 14.133/2021, art. 18
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
-            Desenvolvido para a Administração Pública
+            Desenvolvido por Luís Eduardo Monteiro Lima
           </span>
         </footer>
       </div>
@@ -4698,6 +4700,7 @@ function GuiaRapido({ onFechar }) {
     ["4. Levantamento de Preços", "Lance as cotações por item e escolha a metodologia (média ou mediana). Daí sai a estimativa de valor."],
     ["5. Documento", "Os 13 incisos numa página só. Use o texto-modelo, escreva do seu jeito, ou leve o prompt a uma IA gratuita."],
     ["6. Conformidade e exportação", "Confira as pendências antes de finalizar e baixe em Word ou PDF."],
+    ["7. Analise a melhor forma de atender à seu problema, lendo e verificando o Estudo. Às vezes outra solução é mais viável."],
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
