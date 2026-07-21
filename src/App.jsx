@@ -782,6 +782,11 @@ function cruzarComPca(itens, pca, manuais = {}) {
     const linhaVinculada = manual?.codigoPca ? linhaPcaPorCodigo(pca, manual.codigoPca) : null;
     const sequencialManual = linhaVinculada?.sequencial || manual?.sequencial?.trim() || null;
 
+    // Ainda sem vínculo nenhum? Verifica se existe uma linha no PCA com a mesma descrição,
+    // sob outro código — vira sugestão para o servidor confirmar (ver pcaSugestaoPorDescricao).
+    const sugestaoDescricao = (!automatico && !linhaVinculada && pca)
+      ? pcaSugestaoPorDescricao(it, pca.linhas) : null;
+
     const pcaRow = automatico || linhaVinculada;
     return {
       item: it,
@@ -789,6 +794,7 @@ function cruzarComPca(itens, pca, manuais = {}) {
       automatico: !!automatico,
       manual,
       linhaVinculada,
+      sugestaoDescricao,
       previsto: !!(automatico || sequencialManual),
       sequencial: automatico ? (automatico.sequencial || "—") : sequencialManual,
       codigo: automatico
@@ -1056,12 +1062,29 @@ function pcaMatchFor(item, pcaLinhas) {
     const porCodigo = pcaLinhas.find(l => mesmoCodigo(l.codigo, item.idProduto));
     if (porCodigo) return porCodigo;
   }
-  if (item.descricao) {
-    const alvo = item.descricao.trim().toLowerCase();
-    const porDescricao = pcaLinhas.find(l => l.produto && l.produto.trim().toLowerCase() === alvo);
-    if (porDescricao) return porDescricao;
-  }
+  // Corresponder só pela descrição deixou de ser automático: um mesmo texto pode indicar
+  // (ver pcaSugestaoPorDescricao) o mesmo item sob outro código, mas isso precisa de
+  // confirmação do servidor — os dois códigos ficam registrados como prova.
   return null;
+}
+
+function normalizarTexto(v) {
+  return String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Quando o código do item não bate com nenhuma linha do PCA, mas a descrição é igual (ou uma
+// contém a outra), é provável que seja o mesmo item cadastrado sob outra numeração no PCA.
+// Isso vira uma SUGESTÃO — não um vínculo automático — para o servidor confirmar visualmente
+// e, ao confirmar, os dois códigos (o do Centi e o do PCA) ficam registrados lado a lado.
+function pcaSugestaoPorDescricao(item, pcaLinhas) {
+  if (!pcaLinhas || pcaLinhas.length === 0 || !item.descricao) return null;
+  const alvo = normalizarTexto(item.descricao);
+  if (!alvo) return null;
+  return pcaLinhas.find(l => {
+    const doPca = normalizarTexto(l.produto);
+    if (!doPca) return false;
+    return doPca === alvo || doPca.includes(alvo) || alvo.includes(doPca);
+  }) || null;
 }
 
 // Gera a planilha de cotação a ser enviada a um fornecedor (Nome/CNPJ + itens, valor em branco)
@@ -4424,7 +4447,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
           style={{ borderColor: C.border, background: "white" }}>
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            ETP Inteligente - Planejamento consistente para contratações públicas
+            ETP Inteligente — Para atender a Lei nº 14.133/2021, art. 18
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
             Desenvolvido por Luís Eduardo Monteiro Lima
@@ -4946,63 +4969,15 @@ function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEsvaziar 
 }
 
 function GuiaRapido({ onFechar }) {
-
   const passos = [
-    [
-      "Cadastre ou importe os itens",
-      "Importe a planilha do Sistema Centi ou cadastre os itens manualmente. O código do produto é indispensável para localizar automaticamente sua previsão no Plano de Contratações Anual (PCA)."
-    ],
-
-    [
-      "Verifique o alinhamento ao PCA",
-      "Importe a planilha do PCA. O sistema realizará automaticamente o cruzamento entre os itens cadastrados e o Plano de Contratações Anual. Havendo divergência de códigos, utilize a pesquisa integrada para realizar o vínculo manual."
-    ],
-
-    [
-      "Preencha os dados da contratação",
-      "Informe objeto, processo administrativo, unidade requisitante, responsáveis, prazos e demais informações. Esses dados alimentarão automaticamente diversos trechos do Estudo Técnico Preliminar."
-    ],
-
-    [
-      "Realize o levantamento de preços",
-      "Cadastre as pesquisas de preços dos itens e selecione a metodologia de cálculo (média ou mediana). O sistema calculará automaticamente a estimativa do valor da contratação."
-    ],
-
-    [
-      "Elabore o Estudo Técnico Preliminar",
-      "Preencha os incisos utilizando os modelos sugeridos, escreva seus próprios textos ou utilize Inteligência Artificial como apoio técnico, revisando sempre o conteúdo antes da conclusão."
-    ],
-
-    [
-      "Verifique a conformidade",
-      "Execute a análise de conformidade para identificar pendências, inconsistências e campos obrigatórios ainda não preenchidos."
-    ],
-
-    [
-      "Analise a solução escolhida",
-      "Releia criticamente todo o ETP. Confirme se a solução realmente atende ao interesse público ou se existe alternativa mais eficiente, econômica ou vantajosa para a Administração."
-    ],
-
-    [
-      "Exporte o documento",
-      "Após a conferência final, gere o Estudo Técnico Preliminar em Word ou PDF para instrução do processo administrativo."
-    ]
+    ["1. Planilha de Itens", "Importe do Sistema Centi ou cadastre à mão. O código do produto é essencial: é por ele que o app localiza cada item no PCA."],
+    ["2. Alinhamento ao PCA", "Importe a planilha do painel do PCA. O cruzamento é automático; para códigos divergentes, você vincula a linha certa pela busca."],
+    ["3. Dados do Processo", "Objeto, setor, responsáveis, prazos e demais campos que alimentam os textos-modelo dos incisos."],
+    ["4. Levantamento de Preços", "Lance as cotações por item e escolha a metodologia (média ou mediana). Daí sai a estimativa de valor."],
+    ["5. Documento", "Os 13 incisos numa página só. Use o texto-modelo, escreva do seu jeito, ou leve o prompt a uma IA gratuita."],
+    ["6. Conformidade e exportação", "Confira as pendências antes de finalizar e baixe em Word ou PDF."],
+    ["7. Analise a melhor forma de atender à seu problema, lendo e verificando o Estudo. Às vezes outra solução é mais viável."],
   ];
-
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        onFechar();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onFechar]);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
       onClick={onFechar}>
@@ -5013,84 +4988,27 @@ function GuiaRapido({ onFechar }) {
           <div>
             <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
               <FileText size={15} />
-              <span className="text-xs font-semibold tracking-widest uppercase">Bem Vindo</span>
+              <span className="text-xs font-semibold tracking-widest uppercase">Como funciona</span>
             </div>
             <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Guia rápido</h3>
           </div>
           <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
         </div>
         <div className="p-5 space-y-3">
-          <div
-  className="rounded-lg p-4 mb-5"
-  style={{
-    background: "#FFF8E6",
-    border: `1px solid ${C.brassLight}`
-  }}
->
-  <p
-    className="text-sm leading-relaxed"
-    style={{ color: C.ink }}
-  >
-    <strong>Importante:</strong> O Estudo Técnico Preliminar é um instrumento de
-    planejamento previsto na Lei nº 14.133/2021. Seu objetivo é identificar a
-    solução mais adequada para atender ao interesse público, podendo concluir,
-    inclusive, pela adoção de solução diversa da inicialmente imaginada ou até
-    mesmo pela não contratação.
-  </p>
-</div>
-{passos.map(([titulo, texto], i) => (
-  <div key={i} className="flex gap-3">
-    <div
-      className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center serif text-xs font-bold"
-      style={{
-        background: C.paperDark,
-        color: C.brass
-      }}
-    >
-      {i + 1}
-    </div>
-
-    <div className="flex-1">
-      <p
-        className="text-sm font-semibold"
-        style={{ color: C.navy }}
-      >
-        {i + 1}. {titulo}
-      </p>
-
-      <p
-        className="text-xs leading-relaxed mt-0.5"
-        style={{ color: C.inkMuted }}
-      >
-        {texto}
-      </p>
-    </div>
-  </div>
-))}
-          <p
-  className="text-[11px] leading-relaxed pt-3 border-t"
-  style={{
-    borderColor: C.border,
-    color: C.inkMuted
-  }}
->
-  <strong>Dica:</strong> As Declarações de PCA, as Justificativas de Aquisição e
-  os demais módulos podem ser elaborados independentemente do ETP. Todos os
-  documentos permanecem salvos em suas respectivas listas para consulta,
-  edição e exportação.
-</p>
-  <div className="pt-4 flex justify-end">
-  <button
-    onClick={onFechar}
-    className="px-5 py-2 rounded-lg font-medium transition"
-    style={{
-      background: C.navy,
-      color: "#fff"
-    }}
-  >
-    Entendi
-  </button>
-</div>
+          {passos.map(([titulo, texto], i) => (
+            <div key={i} className="flex gap-3">
+              <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center serif text-xs font-bold"
+                style={{ background: C.paperDark, color: C.brass }}>{i + 1}</div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: C.navy }}>{titulo}</p>
+                <p className="text-xs leading-relaxed mt-0.5" style={{ color: C.inkMuted }}>{texto}</p>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] leading-relaxed pt-2 border-t" style={{ borderColor: C.border, color: C.inkMuted }}>
+            As Declarações de PCA e as Justificativas de aquisição são documentos independentes — não precisam
+            de um ETP aberto e ficam salvas em listas próprias.
+          </p>
         </div>
       </div>
     </div>
@@ -5188,7 +5106,7 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
 
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
-  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática
+  const semPcaMatch = matches.filter(m => !m.pcaRow); // sem correspondência automática
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
@@ -5410,7 +5328,8 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
               )}
 
               <div className="space-y-3 mb-5">
-                {semPcaMatch.map((it, idx) => {
+                {semPcaMatch.map((m, idx) => {
+                  const it = m.item;
                   const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
                   const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
                   return (
@@ -5430,7 +5349,7 @@ function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificati
                           </span>
                         )}
                       </div>
-                      <VinculoPca item={it} pca={pca} dados={dados}
+                      <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
                         onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
                     </div>
                   );
@@ -6365,9 +6284,10 @@ function SolucoesMercadoManager({ solucoes, onChange }) {
 // ---------- Vínculo de um item a uma linha do PCA ----------
 // Resolve o caso em que o código do item no Centi é diferente do código no PCA: o servidor
 // busca a linha certa (por código, sequencial ou descrição) e vincula manualmente.
-function VinculoPca({ item, pca, dados, onAlterar }) {
+function VinculoPca({ item, pca, dados, onAlterar, sugestao }) {
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState(false);
+  const [sugestaoDispensada, setSugestaoDispensada] = useState(false);
   const vinculada = dados?.codigoPca ? linhaPcaPorCodigo(pca, dados.codigoPca) : null;
   const resultados = buscarNoPca(pca, busca);
 
@@ -6412,6 +6332,36 @@ function VinculoPca({ item, pca, dados, onAlterar }) {
           Código deste item no Centi: <b style={{ color: C.ink }}>{item.idProduto}</b> — não localizado no PCA.
         </p>
       )}
+
+      {sugestao && !sugestaoDispensada && (
+        <div className="p-3 rounded-lg mb-3" style={{ background: "rgba(166,131,46,0.08)", border: `1px solid ${C.brass}` }}>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.brass }}>
+            Possível correspondência por descrição
+          </p>
+          <p className="text-xs leading-snug mb-2" style={{ color: C.ink }}>{sugestao.produto}</p>
+          <div className="flex items-center gap-3 flex-wrap mb-2.5 text-[11px]" style={{ color: C.inkMuted }}>
+            <span>Código no PCA: <b style={{ color: C.ink }}>{sugestao.codigo || "—"}</b></span>
+            <span>Código no Centi: <b style={{ color: C.ink }}>{item.idProduto || "—"}</b></span>
+            <span>Sequencial: <b style={{ color: C.ink }}>{sugestao.sequencial || "—"}</b></span>
+          </div>
+          <p className="text-[10.5px] leading-snug mb-2.5" style={{ color: C.inkMuted }}>
+            A descrição bate, mas o código é diferente — provavelmente o mesmo item, cadastrado sob outra
+            numeração no PCA. Confirmando, os dois códigos ficam registrados aqui como comprovação.
+          </p>
+          <div className="flex items-center gap-2">
+            <button onClick={() => vincular(sugestao)}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold"
+              style={{ background: C.brass, color: C.navyDark }}>
+              Confirmar correspondência
+            </button>
+            <button onClick={() => setSugestaoDispensada(true)}
+              className="px-3 py-1.5 rounded-md text-xs font-medium" style={{ color: C.inkMuted }}>
+              Não é este
+            </button>
+          </div>
+        </div>
+      )}
+
       <label className="block">
         <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
           Localizar no PCA
@@ -6451,7 +6401,10 @@ function VinculoPca({ item, pca, dados, onAlterar }) {
               style={{ borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
               <p className="text-xs font-medium leading-snug" style={{ color: C.navy }}>{l.produto || "(sem descrição)"}</p>
               <p className="text-[10.5px] mt-0.5" style={{ color: C.inkMuted }}>
-                cód. <b>{l.codigo || "—"}</b> · seq. <b>{l.sequencial || "—"}</b>
+                cód. no PCA <b>{l.codigo || "—"}</b> · seq. <b>{l.sequencial || "—"}</b>
+                {item.idProduto && item.idProduto !== l.codigo && (
+                  <> · <span style={{ color: C.brass }}>no Centi: <b>{item.idProduto}</b></span></>
+                )}
                 {l.local ? ` · ${l.local}` : ""}
               </p>
             </button>
@@ -7228,7 +7181,7 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
 
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
-  const semMatchAutomatico = matches.filter(m => !m.pcaRow).map(m => m.item);
+  const semMatchAutomatico = matches.filter(m => !m.pcaRow);
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item);
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
@@ -7357,7 +7310,8 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
               </p>
 
               <div className="space-y-3 mb-5">
-                {semMatchAutomatico.map((it, idx) => {
+                {semMatchAutomatico.map((m, idx) => {
+                  const it = m.item;
                   const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
                   const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
                   return (
@@ -7387,7 +7341,7 @@ function PCAForm({ etp, onPca, onManuaisPca }) {
                           </span>
                         )}
                       </div>
-                      <VinculoPca item={it} pca={pca} dados={dados}
+                      <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
                         onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
                     </div>
                   );
