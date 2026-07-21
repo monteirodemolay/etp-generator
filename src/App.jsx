@@ -4947,14 +4947,46 @@ function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEsvaziar 
 
 function GuiaRapido({ onFechar }) {
   const passos = [
-    ["1. Planilha de Itens", "Importe do Sistema Centi ou cadastre à mão. O código do produto é essencial: é por ele que o app localiza cada item no PCA."],
-    ["2. Alinhamento ao PCA", "Importe a planilha do painel do PCA. O cruzamento é automático; para códigos divergentes, você vincula a linha certa pela busca."],
-    ["3. Dados do Processo", "Objeto, setor, responsáveis, prazos e demais campos que alimentam os textos-modelo dos incisos."],
-    ["4. Levantamento de Preços", "Lance as cotações por item e escolha a metodologia (média ou mediana). Daí sai a estimativa de valor."],
-    ["5. Documento", "Os 13 incisos numa página só. Use o texto-modelo, escreva do seu jeito, ou leve o prompt a uma IA gratuita."],
-    ["6. Conformidade e exportação", "Confira as pendências antes de finalizar e baixe em Word ou PDF."],
-    ["7. Analise a melhor forma de atender à seu problema, lendo e verificando o Estudo. Às vezes outra solução é mais viável."],
-  ];
+  [
+    "Cadastre ou importe os itens",
+    "Importe a planilha do Sistema Centi ou cadastre os itens manualmente. O código do produto é indispensável para localizar automaticamente sua previsão no Plano de Contratações Anual (PCA)."
+  ],
+
+  [
+    "Verifique o alinhamento ao PCA",
+    "Importe a planilha do PCA. O sistema realizará automaticamente o cruzamento entre os itens cadastrados e o Plano de Contratações Anual. Havendo divergência de códigos, utilize a pesquisa integrada para realizar o vínculo manual."
+  ],
+
+  [
+    "Preencha os dados da contratação",
+    "Informe objeto, processo administrativo, unidade requisitante, responsáveis, prazos e demais informações. Esses dados alimentarão automaticamente diversos trechos do Estudo Técnico Preliminar."
+  ],
+
+  [
+    "Realize o levantamento de preços",
+    "Cadastre as pesquisas de preços dos itens e selecione a metodologia de cálculo (média ou mediana). O sistema calculará automaticamente a estimativa do valor da contratação."
+  ],
+
+  [
+    "Elabore o Estudo Técnico Preliminar",
+    "Preencha os incisos utilizando os modelos sugeridos, escreva seus próprios textos ou utilize Inteligência Artificial como apoio técnico, revisando sempre o conteúdo antes da conclusão."
+  ],
+
+  [
+    "Verifique a conformidade",
+    "Execute a análise de conformidade para identificar pendências, inconsistências e campos obrigatórios ainda não preenchidos."
+  ],
+
+  [
+    "Analise a solução escolhida",
+    "Releia criticamente todo o ETP. Confirme se a solução realmente atende ao interesse público ou se existe alternativa mais eficiente, econômica ou vantajosa para a Administração."
+  ],
+
+  [
+    "Exporte o documento",
+    "Após a conferência final, gere o Estudo Técnico Preliminar em Word ou PDF para instrução do processo administrativo."
+  ]
+];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}
       onClick={onFechar}>
@@ -4965,27 +4997,84 @@ function GuiaRapido({ onFechar }) {
           <div>
             <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
               <FileText size={15} />
-              <span className="text-xs font-semibold tracking-widest uppercase">Como funciona</span>
+              <span className="text-xs font-semibold tracking-widest uppercase">Bem Vindo</span>
             </div>
             <h3 className="serif text-xl font-semibold" style={{ color: C.navy }}>Guia rápido</h3>
           </div>
           <button onClick={onFechar} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
         </div>
         <div className="p-5 space-y-3">
-          {passos.map(([titulo, texto], i) => (
-            <div key={i} className="flex gap-3">
-              <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center serif text-xs font-bold"
-                style={{ background: C.paperDark, color: C.brass }}>{i + 1}</div>
-              <div>
-                <p className="text-sm font-semibold" style={{ color: C.navy }}>{titulo}</p>
-                <p className="text-xs leading-relaxed mt-0.5" style={{ color: C.inkMuted }}>{texto}</p>
-              </div>
-            </div>
-          ))}
-          <p className="text-[11px] leading-relaxed pt-2 border-t" style={{ borderColor: C.border, color: C.inkMuted }}>
-            As Declarações de PCA e as Justificativas de aquisição são documentos independentes — não precisam
-            de um ETP aberto e ficam salvas em listas próprias.
-          </p>
+          <div
+  className="rounded-lg p-4 mb-5"
+  style={{
+    background: "#FFF8E6",
+    border: `1px solid ${C.brassLight}`
+  }}
+>
+  <p
+    className="text-sm leading-relaxed"
+    style={{ color: C.ink }}
+  >
+    <strong>Importante:</strong> O Estudo Técnico Preliminar é um instrumento de
+    planejamento previsto na Lei nº 14.133/2021. Seu objetivo é identificar a
+    solução mais adequada para atender ao interesse público, podendo concluir,
+    inclusive, pela adoção de solução diversa da inicialmente imaginada ou até
+    mesmo pela não contratação.
+  </p>
+</div>
+{passos.map(([titulo, texto], i) => (
+  <div key={i} className="flex gap-3">
+    <div
+      className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center serif text-xs font-bold"
+      style={{
+        background: C.paperDark,
+        color: C.brass
+      }}
+    >
+      {i + 1}
+    </div>
+
+    <div className="flex-1">
+      <p
+        className="text-sm font-semibold"
+        style={{ color: C.navy }}
+      >
+        {i + 1}. {titulo}
+      </p>
+
+      <p
+        className="text-xs leading-relaxed mt-0.5"
+        style={{ color: C.inkMuted }}
+      >
+        {texto}
+      </p>
+    </div>
+  </div>
+))}
+          <p
+  className="text-[11px] leading-relaxed pt-3 border-t"
+  style={{
+    borderColor: C.border,
+    color: C.inkMuted
+  }}
+>
+  <strong>Dica:</strong> As Declarações de PCA, as Justificativas de Aquisição e
+  os demais módulos podem ser elaborados independentemente do ETP. Todos os
+  documentos permanecem salvos em suas respectivas listas para consulta,
+  edição e exportação.
+</p>
+  <div className="pt-4 flex justify-end">
+  <button
+    onClick={onFechar}
+    className="px-5 py-2 rounded-lg font-medium transition"
+    style={{
+      background: C.navy,
+      color: "#fff"
+    }}
+  >
+    Entendi
+  </button>
+</div>
         </div>
       </div>
     </div>
