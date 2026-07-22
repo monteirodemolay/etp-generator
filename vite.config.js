@@ -6,5 +6,5 @@ import react from "@vitejs/plugin-react";
 // quanto em qualquer outro lugar, sem precisar configurar o nome do repositório.
 export default defineConfig({
   plugins: [react()],
-  base: "./",
+  base: "/etp-generator/",
 });
