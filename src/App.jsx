@@ -3845,10 +3845,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   ].filter(m => (m.somenteAdmin ? permissoes.gerenciarEntidades : permissoes.paginas?.[m.id] !== false));
 
   return (
-    <div className="flex <div className="flex min-h-screen" style={{ background: C.paperDark }}>
+    <div className="flex min-h-screen" style={{ background: C.paperDark }}>
 
       {/* ---------- Barra lateral ---------- */}
-<aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
+      <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
       <div className="px-5 py-5 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.brass }}>
             <ClipboardList size={20} style={{ color: C.navyDark }} />
