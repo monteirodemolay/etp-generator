@@ -3845,10 +3845,10 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
   ].filter(m => (m.somenteAdmin ? permissoes.gerenciarEntidades : permissoes.paginas?.[m.id] !== false));
 
   return (
-    <div className="flex min-h-screen" style={{ background: C.paperDark }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: C.paperDark }}>
 
       {/* ---------- Barra lateral ---------- */}
-      <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
+      <aside className="w-60 shrink-0 flex flex-col h-full"> style={{ background: C.navyDark }}>
         <div className="px-5 py-5 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.brass }}>
             <ClipboardList size={20} style={{ color: C.navyDark }} />
@@ -3885,7 +3885,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
       </aside>
 
       {/* ---------- Conteúdo ---------- */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 
         <header className="flex items-center gap-3 px-7 py-3.5 border-b flex-wrap"
           style={{ borderColor: C.border, background: "white" }}>
@@ -3959,9 +3959,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
             </p>
           </div>
         </header>
-<main
-  className="flex-1 px-7 py-6 overflow-y-auto etp-scroll"
-  style={{ paddingBottom: "64px" }}
+<main className="flex-1 px-7 py-6 overflow-y-auto etp-scroll"
 >
           {documentoAberto ? documentoAberto : (
           <>
@@ -4454,7 +4452,7 @@ function ListView({ etps, todosEtps, justificativas, declaracoes,
 >
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            ETP Inteligente — Para atender a Lei nº 14.133/2021, art. 18
+            ETP Inteligente — Planejamento consistente para contratações públicas
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
             Desenvolvido por Luís Eduardo Monteiro Lima
