@@ -145,24 +145,36 @@ function continuarSessao() {
   
     clearInterval(timerContagem.current);
     setMostrarAvisoSessao(false);
-    
+
+    setSegundosRestantes(120);
+    setMostrarAvisoSessao(false);
+  
     renovarSessao();
 }
 
 async function sairAgora() {
-    avisoSessaoAberto.current = false
-    
+    avisoSessaoAberto.current = false;
+
     clearTimeout(timerSessao.current);
     clearInterval(timerContagem.current);
-    
+
+    setMostrarAvisoSessao(false);
+    setSegundosRestantes(120);
+
     await signOut(auth);
 }
   
   useEffect(() => onAuthStateChanged(auth, u => setUsuario(u)), []);
 
   useEffect(() => {
-    if (usuario) haDadosLocais().then(setPendentes).catch(() => {});
-  }, [usuario]);
+    if (!usuario) return;
+
+    avisoSessaoAberto.current = false;
+    setMostrarAvisoSessao(false);
+    setSegundosRestantes(120);
+
+    haDadosLocais().then(setPendentes).catch(() => {});
+}, [usuario]);
 
   useEffect(() => {
     if (!usuario) return;
