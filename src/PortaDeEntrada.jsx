@@ -142,19 +142,7 @@ function renovarSessao() {
     );
 }
 
-function continuarSessao() {
-    avisoSessaoAberto.current = false;
-  
-    clearInterval(timerContagem.current);
-    setMostrarAvisoSessao(false);
-
-    setSegundosRestantes(TEMPO_CONTAGEM);
-    setMostrarAvisoSessao(false);
-  
-    renovarSessao();
-}
-
-async function sairAgora() {
+function resetarSessao() {
     avisoSessaoAberto.current = false;
 
     clearTimeout(timerSessao.current);
@@ -162,7 +150,15 @@ async function sairAgora() {
 
     setMostrarAvisoSessao(false);
     setSegundosRestantes(TEMPO_CONTAGEM);
+}
+  
+function continuarSessao() {
+    resetarSessao();
+    renovarSessao();
+}
 
+async function sairAgora() {
+    resetarSessao();
     await signOut(auth);
 }
   
@@ -171,9 +167,7 @@ async function sairAgora() {
   useEffect(() => {
     if (!usuario) return;
 
-    avisoSessaoAberto.current = false;
-    setMostrarAvisoSessao(false);
-    setSegundosRestantes(TEMPO_CONTAGEM);
+    resetarSessao();
 
     haDadosLocais().then(setPendentes).catch(() => {});
 }, [usuario]);
@@ -197,14 +191,14 @@ async function sairAgora() {
 
     renovarSessao();
 
-    return () => {
-        clearTimeout(timerSessao.current);
-        clearInterval(timerContagem.current);
+return () => {
+    resetarSessao();
 
-        eventos.forEach(e =>
-            window.removeEventListener(e, renovarSessao)
-        );
-    };
+    eventos.forEach(e =>
+        window.removeEventListener(e, renovarSessao)
+    );
+};
+    
 }, [usuario]);
 
   // "Lembrar-me" define se a sessão sobrevive ao fechar o navegador
