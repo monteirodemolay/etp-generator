@@ -102,7 +102,7 @@ export default function PortaDeEntrada({ children }) {
   const timerSessao = useRef(null);
   const timerContagem = useRef(null);
   
-  const TEMPO_AVISO = 28 * 60 * 1000;
+  const TEMPO_AVISO = 1000;
 
 function abrirAvisoSessao() {
     clearInterval(timerContagem.current);
