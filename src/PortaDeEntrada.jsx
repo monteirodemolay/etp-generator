@@ -103,7 +103,9 @@ export default function PortaDeEntrada({ children }) {
   const timerContagem = useRef(null);
   const avisoSessaoAberto = useRef(false);
   
-  const TEMPO_AVISO = 1000;
+  const HORA = 60 * 60 * 1000;
+  const TEMPO_AVISO = 4 * HORA;
+  const TEMPO_CONTAGEM = 120;
 
 function abrirAvisoSessao() {
     avisoSessaoAberto.current = true;
@@ -111,7 +113,7 @@ function abrirAvisoSessao() {
     clearInterval(timerContagem.current);
 
     setMostrarAvisoSessao(true);
-    setSegundosRestantes(120);
+    setSegundosRestantes(TEMPO_CONTAGEM);
 
     timerContagem.current = setInterval(() => {
 
@@ -146,7 +148,7 @@ function continuarSessao() {
     clearInterval(timerContagem.current);
     setMostrarAvisoSessao(false);
 
-    setSegundosRestantes(120);
+    setSegundosRestantes(TEMPO_CONTAGEM);
     setMostrarAvisoSessao(false);
   
     renovarSessao();
@@ -159,7 +161,7 @@ async function sairAgora() {
     clearInterval(timerContagem.current);
 
     setMostrarAvisoSessao(false);
-    setSegundosRestantes(120);
+    setSegundosRestantes(TEMPO_CONTAGEM);
 
     await signOut(auth);
 }
@@ -171,7 +173,7 @@ async function sairAgora() {
 
     avisoSessaoAberto.current = false;
     setMostrarAvisoSessao(false);
-    setSegundosRestantes(120);
+    setSegundosRestantes(TEMPO_CONTAGEM);
 
     haDadosLocais().then(setPendentes).catch(() => {});
 }, [usuario]);
