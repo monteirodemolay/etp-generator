@@ -101,10 +101,13 @@ export default function PortaDeEntrada({ children }) {
 
   const timerSessao = useRef(null);
   const timerContagem = useRef(null);
+  const avisoSessaoAberto = useRef(false);
   
   const TEMPO_AVISO = 1000;
 
 function abrirAvisoSessao() {
+    avisoSessaoAberto.current = true;
+  
     clearInterval(timerContagem.current);
 
     setMostrarAvisoSessao(true);
@@ -126,10 +129,10 @@ function abrirAvisoSessao() {
 }
 
 function renovarSessao() {
+    if (avisoSessaoAberto.current) return;
+  
     clearTimeout(timerSessao.current);
     clearInterval(timerContagem.current);
-
-    setMostrarAvisoSessao(false);
 
     timerSessao.current = setTimeout(
         abrirAvisoSessao,
@@ -138,14 +141,20 @@ function renovarSessao() {
 }
 
 function continuarSessao() {
+    avisoSessaoAberto.current = false;
+  
     clearInterval(timerContagem.current);
     setMostrarAvisoSessao(false);
+    
     renovarSessao();
 }
 
 async function sairAgora() {
+    avisoSessaoAberto.current = false
+    
     clearTimeout(timerSessao.current);
     clearInterval(timerContagem.current);
+    
     await signOut(auth);
 }
   
