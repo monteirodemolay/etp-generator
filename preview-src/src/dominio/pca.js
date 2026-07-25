@@ -78,6 +78,11 @@ export function cruzarComPca(itens, pca, manuais = {}) {
     const linhaVinculada = manual?.codigoPca ? linhaPcaPorCodigo(pca, manual.codigoPca) : null;
     const sequencialManual = linhaVinculada?.sequencial || manual?.sequencial?.trim() || null;
 
+    // Ainda sem vínculo nenhum? Verifica se existe uma linha no PCA com a mesma descrição,
+    // sob outro código — vira sugestão para o servidor confirmar (ver pcaSugestaoPorDescricao).
+    const sugestaoDescricao = (!automatico && !linhaVinculada && pca)
+      ? pcaSugestaoPorDescricao(it, pca.linhas) : null;
+
     const pcaRow = automatico || linhaVinculada;
     return {
       item: it,
@@ -85,6 +90,7 @@ export function cruzarComPca(itens, pca, manuais = {}) {
       automatico: !!automatico,
       manual,
       linhaVinculada,
+      sugestaoDescricao,
       previsto: !!(automatico || sequencialManual),
       sequencial: automatico ? (automatico.sequencial || "—") : sequencialManual,
       codigo: automatico
@@ -98,4 +104,24 @@ export function cruzarComPca(itens, pca, manuais = {}) {
 // Quantos itens do ETP estão previstos no PCA (incluindo os preenchidos manualmente)
 export function contarPrevistosNoPca(etp) {
   return cruzarComPca(etp.itens, etp.pca, etp.manuaisPca).filter(m => m.previsto).length;
+}
+
+
+export function normalizarTexto(v) {
+  return String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Quando o código do item não bate com nenhuma linha do PCA, mas a descrição é igual (ou uma
+// contém a outra), é provável que seja o mesmo item cadastrado sob outra numeração no PCA.
+// Isso vira uma SUGESTÃO — não um vínculo automático — para o servidor confirmar visualmente
+// e, ao confirmar, os dois códigos (o do Centi e o do PCA) ficam registrados lado a lado.
+export function pcaSugestaoPorDescricao(item, pcaLinhas) {
+  if (!pcaLinhas || pcaLinhas.length === 0 || !item.descricao) return null;
+  const alvo = normalizarTexto(item.descricao);
+  if (!alvo) return null;
+  return pcaLinhas.find(l => {
+    const doPca = normalizarTexto(l.produto);
+    if (!doPca) return false;
+    return doPca === alvo || doPca.includes(alvo) || alvo.includes(doPca);
+  }) || null;
 }

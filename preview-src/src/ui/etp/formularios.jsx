@@ -546,6 +546,7 @@ export function ItemsForm({ etp, onItens, onMeta }) {
 }
 
 // ---------- Alinhamento ao PCA ----------
+// ---------- Alinhamento ao PCA ----------
 export function PCAForm({ etp, onPca, onManuaisPca }) {
   const itens = etp.itens || [];
   const pca = etp.pca;
@@ -582,7 +583,16 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
 
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
-  const semMatchAutomatico = matches.filter(m => !m.pcaRow).map(m => m.item);
+  const semMatchAutomatico = matches.filter(m => !m.pcaRow);
+  // Itens ainda pendentes que já têm uma sugestão por descrição — dá pra confirmar todos de uma vez
+  const sugestoesPendentes = semMatchAutomatico.filter(m => m.sugestaoDescricao);
+  function confirmarTodasSugestoes() {
+    const novosManuais = { ...manuais };
+    sugestoesPendentes.forEach(m => {
+      novosManuais[m.item.id] = { codigoPca: m.sugestaoDescricao.codigo, sequencial: m.sugestaoDescricao.sequencial || "" };
+    });
+    onManuaisPca(novosManuais);
+  }
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item);
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
@@ -702,6 +712,19 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
               </button>
             </div>
 
+            {sugestoesPendentes.length > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: C.border, background: "rgba(166,131,46,0.06)" }}>
+                <span className="text-xs flex-1" style={{ color: C.ink }}>
+                  {sugestoesPendentes.length} item(ns) com sugestão de correspondência por descrição, ainda não confirmada.
+                </span>
+                <button onClick={confirmarTodasSugestoes}
+                  className="shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold"
+                  style={{ background: C.brass, color: C.navyDark }}>
+                  Confirmar todas ({sugestoesPendentes.length})
+                </button>
+              </div>
+            )}
+
             <div className="p-5">
               <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
                 Estes itens não foram localizados automaticamente na planilha importada. Se algum já estiver
@@ -711,7 +734,8 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
               </p>
 
               <div className="space-y-3 mb-5">
-                {semMatchAutomatico.map((it, idx) => {
+                {semMatchAutomatico.map((m, idx) => {
+                  const it = m.item;
                   const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
                   const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
                   return (
@@ -741,8 +765,8 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
                           </span>
                         )}
                       </div>
-                      <VinculoPca item={it} pca={pca} dados={dados}
-                        onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
+                      <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
+                        onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
                     </div>
                   );
                 })}
@@ -766,9 +790,13 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
 // ---------- Vínculo de um item a uma linha do PCA ----------
 // Resolve o caso em que o código do item no Centi é diferente do código no PCA: o servidor
 // busca a linha certa (por código, sequencial ou descrição) e vincula manualmente.
-export function VinculoPca({ item, pca, dados, onAlterar }) {
+// ---------- Vínculo de um item a uma linha do PCA ----------
+// Resolve o caso em que o código do item no Centi é diferente do código no PCA: o servidor
+// busca a linha certa (por código, sequencial ou descrição) e vincula manualmente.
+export function VinculoPca({ item, pca, dados, onAlterar, sugestao }) {
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState(false);
+  const [sugestaoDispensada, setSugestaoDispensada] = useState(false);
   const vinculada = dados?.codigoPca ? linhaPcaPorCodigo(pca, dados.codigoPca) : null;
   const resultados = buscarNoPca(pca, busca);
 
@@ -813,6 +841,36 @@ export function VinculoPca({ item, pca, dados, onAlterar }) {
           Código deste item no Centi: <b style={{ color: C.ink }}>{item.idProduto}</b> — não localizado no PCA.
         </p>
       )}
+
+      {sugestao && !sugestaoDispensada && (
+        <div className="p-3 rounded-lg mb-3" style={{ background: "rgba(166,131,46,0.08)", border: `1px solid ${C.brass}` }}>
+          <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.brass }}>
+            Possível correspondência por descrição
+          </p>
+          <p className="text-xs leading-snug mb-2" style={{ color: C.ink }}>{sugestao.produto}</p>
+          <div className="flex items-center gap-3 flex-wrap mb-2.5 text-[11px]" style={{ color: C.inkMuted }}>
+            <span>Código no PCA: <b style={{ color: C.ink }}>{sugestao.codigo || "—"}</b></span>
+            <span>Código no Centi: <b style={{ color: C.ink }}>{item.idProduto || "—"}</b></span>
+            <span>Sequencial: <b style={{ color: C.ink }}>{sugestao.sequencial || "—"}</b></span>
+          </div>
+          <p className="text-[10.5px] leading-snug mb-2.5" style={{ color: C.inkMuted }}>
+            A descrição bate, mas o código é diferente — provavelmente o mesmo item, cadastrado sob outra
+            numeração no PCA. Confirmando, os dois códigos ficam registrados aqui como comprovação.
+          </p>
+          <div className="flex items-center gap-2">
+            <button onClick={() => vincular(sugestao)}
+              className="px-3 py-1.5 rounded-md text-xs font-semibold"
+              style={{ background: C.brass, color: C.navyDark }}>
+              Confirmar correspondência
+            </button>
+            <button onClick={() => setSugestaoDispensada(true)}
+              className="px-3 py-1.5 rounded-md text-xs font-medium" style={{ color: C.inkMuted }}>
+              Não é este
+            </button>
+          </div>
+        </div>
+      )}
+
       <label className="block">
         <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
           Localizar no PCA
@@ -852,7 +910,10 @@ export function VinculoPca({ item, pca, dados, onAlterar }) {
               style={{ borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
               <p className="text-xs font-medium leading-snug" style={{ color: C.navy }}>{l.produto || "(sem descrição)"}</p>
               <p className="text-[10.5px] mt-0.5" style={{ color: C.inkMuted }}>
-                cód. <b>{l.codigo || "—"}</b> · seq. <b>{l.sequencial || "—"}</b>
+                cód. no PCA <b>{l.codigo || "—"}</b> · seq. <b>{l.sequencial || "—"}</b>
+                {item.idProduto && item.idProduto !== l.codigo && (
+                  <> · <span style={{ color: C.brass }}>no Centi: <b>{item.idProduto}</b></span></>
+                )}
                 {l.local ? ` · ${l.local}` : ""}
               </p>
             </button>

@@ -4,11 +4,13 @@
  * As senhas NÃO ficam aqui — vivem no Firebase Authentication.
  */
 
-import React, { useState } from "react";
-import { Building2, Plus, Trash2, ChevronRight, Info } from "lucide-react";
-import { C } from "../tokens.js";
-import { PAPEIS, emptyUsuario, resumoEntidades } from "../../dominio/permissoes.js";
+import { ACOES_PADRAO, PAGINAS_PADRAO } from "../../dominio/permissoes.js";
 
+import React, { useState } from "react";
+import { Building2, Plus, Trash2, ChevronRight, Info, Lock } from "lucide-react";
+import { C } from "../tokens.js";
+import { PAPEIS, PAGINAS_CONFIGURAVEIS, ACOES_CONFIGURAVEIS,
+         emptyUsuario, resumoEntidades } from "../../dominio/permissoes.js";
 
 // ---------- Usuários e permissões ----------
 export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNovo, onExcluir }) {
@@ -36,7 +38,25 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
     const atuais = u.entidades || [];
     const novas = atuais.includes(entId) ? atuais.filter(x => x !== entId) : [...atuais, entId];
     const principal = novas.includes(u.entidadePrincipal) ? u.entidadePrincipal : (novas[0] || "");
-    onSalvar({ ...u, entidades: novas, entidadePrincipal: principal });
+    // Ao remover o acesso a uma entidade, ela também sai da lista de "somente leitura"
+    const somenteLeitura = (u.entidadesSomenteLeitura || []).filter(x => novas.includes(x));
+    onSalvar({ ...u, entidades: novas, entidadePrincipal: principal, entidadesSomenteLeitura: somenteLeitura });
+  }
+
+  function alternarSomenteLeitura(u, entId) {
+    const atuais = u.entidadesSomenteLeitura || [];
+    const novas = atuais.includes(entId) ? atuais.filter(x => x !== entId) : [...atuais, entId];
+    onSalvar({ ...u, entidadesSomenteLeitura: novas });
+  }
+
+  function alternarPagina(u, paginaId) {
+    const atuais = { ...PAGINAS_PADRAO, ...(u.paginas || {}) };
+    onSalvar({ ...u, paginas: { ...atuais, [paginaId]: !atuais[paginaId] } });
+  }
+
+  function alternarAcao(u, acaoId) {
+    const atuais = { ...ACOES_PADRAO, ...(u.acoes || {}) };
+    onSalvar({ ...u, acoes: { ...atuais, [acaoId]: !atuais[acaoId] } });
   }
 
   return (
@@ -186,14 +206,16 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
                           Entidades a que tem acesso
                         </span>
                         <p className="text-[11px] mb-2" style={{ color: C.inkMuted }}>
-                          Marque as entidades. A estrela indica qual abre por padrão ao entrar.
+                          Marque as entidades. A estrela indica qual abre por padrão ao entrar. "Só ver" impede
+                          criar, editar ou excluir documentos daquela entidade — a pessoa só consulta.
                         </p>
                         <div className="space-y-1.5 mb-4">
                           {secretarias.map(sec => {
                             const marcada = (u.entidades || []).includes(sec.id);
                             const principal = u.entidadePrincipal === sec.id;
+                            const apenasLeitura = (u.entidadesSomenteLeitura || []).includes(sec.id);
                             return (
-                              <div key={sec.id} className="flex items-center gap-2.5 p-2.5 rounded-lg border"
+                              <div key={sec.id} className="flex items-center gap-2.5 p-2.5 rounded-lg border flex-wrap"
                                 style={{ borderColor: marcada ? C.brass : C.border, background: marcada ? "rgba(166,131,46,0.05)" : "white" }}>
                                 <input type="checkbox" checked={marcada}
                                   onChange={() => alternarEntidade(u, sec.id)}
@@ -207,15 +229,26 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
                                   )}
                                 </div>
                                 {marcada && (
-                                  <button onClick={() => onSalvar({ ...u, entidadePrincipal: sec.id })}
-                                    className="text-[10px] font-semibold px-2 py-1 rounded shrink-0"
-                                    style={{
-                                      background: principal ? C.brass : C.paperDark,
-                                      color: principal ? C.navyDark : C.inkMuted,
-                                    }}
-                                    title="Definir como entidade principal">
-                                    {principal ? "★ Principal" : "☆ Tornar principal"}
-                                  </button>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <button onClick={() => alternarSomenteLeitura(u, sec.id)}
+                                      className="text-[10px] font-semibold px-2 py-1 rounded"
+                                      style={{
+                                        background: apenasLeitura ? "rgba(166,64,61,0.12)" : C.paperDark,
+                                        color: apenasLeitura ? C.red : C.inkMuted,
+                                      }}
+                                      title="Quando ativo, a pessoa só visualiza esta entidade — não grava nada">
+                                      {apenasLeitura ? "👁 Só ver" : "✎ Pode gravar"}
+                                    </button>
+                                    <button onClick={() => onSalvar({ ...u, entidadePrincipal: sec.id })}
+                                      className="text-[10px] font-semibold px-2 py-1 rounded"
+                                      style={{
+                                        background: principal ? C.brass : C.paperDark,
+                                        color: principal ? C.navyDark : C.inkMuted,
+                                      }}
+                                      title="Definir como entidade principal">
+                                      {principal ? "★ Principal" : "☆ Tornar principal"}
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             );
@@ -224,6 +257,52 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
                         <p className="text-[11px] mb-4 px-3 py-2 rounded-lg" style={{ background: C.paperDark, color: C.inkMuted }}>
                           Resumo: <b style={{ color: C.ink }}>{resumoEntidades(u, secretarias)}</b>
                         </p>
+
+                        <span className="text-xs font-semibold uppercase tracking-wide block mb-1" style={{ color: C.inkMuted }}>
+                          Páginas visíveis
+                        </span>
+                        <p className="text-[11px] mb-2" style={{ color: C.inkMuted }}>
+                          Desmarque para tirar a página inteira do menu desta pessoa. "Entidades" e "Usuários"
+                          são sempre exclusivas do Administrador.
+                        </p>
+                        <div className="grid sm:grid-cols-2 gap-1.5 mb-4">
+                          {PAGINAS_CONFIGURAVEIS.map(pg => {
+                            const ligada = (u.paginas || PAGINAS_PADRAO)[pg.id] !== false;
+                            return (
+                              <label key={pg.id} className="flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs"
+                                style={{ borderColor: ligada ? C.brass : C.border, background: ligada ? "rgba(166,131,46,0.05)" : "white", color: C.ink }}>
+                                <input type="checkbox" checked={ligada} onChange={() => alternarPagina(u, pg.id)}
+                                  style={{ accentColor: C.brass }} className="w-4 h-4 shrink-0" />
+                                {pg.rotulo}
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        <span className="text-xs font-semibold uppercase tracking-wide block mb-1" style={{ color: C.inkMuted }}>
+                          Ações permitidas
+                        </span>
+                        <p className="text-[11px] mb-2" style={{ color: C.inkMuted }}>
+                          Vale para todas as entidades marcadas como "Pode gravar" acima.
+                        </p>
+                        <div className="space-y-1.5 mb-4">
+                          {ACOES_CONFIGURAVEIS.map(ac => {
+                            const ligada = (u.acoes || ACOES_PADRAO)[ac.id] !== false;
+                            return (
+                              <label key={ac.id} className="flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer"
+                                style={{ borderColor: ligada ? C.brass : C.border, background: ligada ? "rgba(166,131,46,0.05)" : "white" }}>
+                                <input type="checkbox" checked={ligada} onChange={() => alternarAcao(u, ac.id)}
+                                  className="mt-0.5 w-4 h-4 shrink-0" style={{ accentColor: C.brass }} />
+                                <span>
+                                  <span className="block text-xs font-semibold" style={{ color: C.navy }}>{ac.rotulo}</span>
+                                  <span className="block text-[11px] leading-snug mt-0.5" style={{ color: C.inkMuted }}>
+                                    {ac.descricao}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
                       </>
                     )}
 

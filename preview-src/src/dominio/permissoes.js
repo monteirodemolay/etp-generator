@@ -2,41 +2,47 @@
  * Papéis e permissões dentro do sistema.
  *
  * As SENHAS não ficam aqui — vivem no Firebase Authentication. Este cadastro
- * guarda apenas quem é a pessoa, qual o papel e a quais entidades tem acesso.
+ * guarda apenas quem é a pessoa, qual o papel e o que ela pode fazer.
  *
- * Estas permissões organizam a interface: escondem o que não cabe a cada
- * papel. A barreira de verdade são as Regras de Segurança do Firestore, que
- * decidem quem consegue sequer ler o banco.
+ * Três dimensões de controle, todas configuráveis por usuário padrão:
+ *   - paginas: quais abas do menu a pessoa vê
+ *   - acoes: o que pode fazer (criar, editar, excluir, esvaziar lixeira)
+ *   - entidadesSomenteLeitura: subconjunto das entidades atribuídas onde a
+ *     pessoa só consulta, sem poder gravar nada
+ *
+ * Estas permissões organizam a interface. A barreira de verdade são as
+ * Regras de Segurança do Firestore.
  */
 
-
-// ---------- Usuários e permissões ----------
-// As SENHAS não ficam aqui: elas vivem no Firebase Authentication. Este cadastro guarda
-// apenas quem é a pessoa, qual o papel e a quais entidades ela tem acesso.
 export const PAPEIS = {
   admin: {
     rotulo: "Administrador",
-    descricao: "Gerencia entidades, usuários e permissões, além de criar e excluir documentos.",
+    descricao: "Acesso total: todas as páginas, todas as entidades, todas as ações. A \"chave geral\".",
   },
   padrao: {
     rotulo: "Usuário padrão",
-    descricao: "Cria e edita documentos das entidades que lhe forem atribuídas.",
+    descricao: "Acesso configurado individualmente: você escolhe páginas, entidades e ações permitidas.",
   },
 };
 
-// O que cada papel pode fazer. Serve para a interface esconder o que não cabe;
-// a barreira de verdade continua sendo as Regras de Segurança do Firestore.
-export const PERMISSOES = {
-  admin: {
-    gerenciarUsuarios: true, gerenciarEntidades: true,
-    criarDocumentos: true, editarDocumentos: true,
-    excluirDocumentos: true, esvaziarLixeira: true,
-  },
-  padrao: {
-    gerenciarUsuarios: false, gerenciarEntidades: false,
-    criarDocumentos: true, editarDocumentos: true,
-    excluirDocumentos: true, esvaziarLixeira: false,
-  },
+export const PAGINAS_CONFIGURAVEIS = [
+  { id: "etps", rotulo: "Meus ETPs" },
+  { id: "declaracoes", rotulo: "Declarações de PCA" },
+  { id: "justificativas", rotulo: "Justificativas" },
+  { id: "normativos", rotulo: "Materiais Normativos" },
+  { id: "lixeira", rotulo: "Lixeira" },
+  { id: "backup", rotulo: "Backup" },
+];
+export const PAGINAS_PADRAO = Object.fromEntries(PAGINAS_CONFIGURAVEIS.map(p => [p.id, true]));
+
+export const ACOES_CONFIGURAVEIS = [
+  { id: "criarDocumentos", rotulo: "Criar documentos", descricao: "Abrir novo ETP, Declaração ou Justificativa." },
+  { id: "editarDocumentos", rotulo: "Editar documentos", descricao: "Alterar e gravar documentos já existentes." },
+  { id: "excluirDocumentos", rotulo: "Excluir documentos", descricao: "Mover documentos para a lixeira." },
+  { id: "esvaziarLixeira", rotulo: "Esvaziar lixeira", descricao: "Apagar em definitivo, sem possibilidade de restaurar." },
+];
+export const ACOES_PADRAO = {
+  criarDocumentos: true, editarDocumentos: true, excluirDocumentos: true, esvaziarLixeira: false,
 };
 
 export function emptyUsuario(email) {
@@ -46,8 +52,11 @@ export function emptyUsuario(email) {
     nomeCompleto: "",
     cargo: "",
     papel: "padrao",
-    entidades: [],          // ids das entidades a que tem acesso
-    entidadePrincipal: "",  // qual delas abre por padrão
+    entidades: [],               // ids das entidades a que tem acesso (visualizar e/ou editar)
+    entidadesSomenteLeitura: [], // subconjunto de "entidades": pode ver, mas não gravar nada
+    entidadePrincipal: "",       // qual delas abre por padrão
+    paginas: { ...PAGINAS_PADRAO },
+    acoes: { ...ACOES_PADRAO },
     ativo: true,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -58,37 +67,56 @@ export function emptyUsuario(email) {
 export function usuarioPorEmail(usuarios, email) {
   const alvo = String(email || "").trim().toLowerCase();
   if (!alvo) return null;
-  return usuarios.find(u => u.email === alvo) || null;
+  return (usuarios || []).find(u => u.email === alvo) || null;
 }
 
-// Permissões de quem está usando. Sem cadastro correspondente, trata como administrador:
-// só chega aqui quem já passou pelas Regras do Firestore, e isso evita travar o primeiro
-// acesso, quando ainda não há nenhum usuário cadastrado.
+// Permissões de quem está usando. Sem cadastro correspondente, trata como
+// administrador — só chega aqui quem já passou pelas Regras do Firestore, e
+// isso evita travar o primeiro acesso, quando ainda não há ninguém cadastrado.
 export function permissoesDe(usuario) {
-  if (!usuario) return { ...PERMISSOES.admin, papel: "admin", semCadastro: true };
-  if (!usuario.ativo) return { gerenciarUsuarios: false, gerenciarEntidades: false,
-    criarDocumentos: false, editarDocumentos: false, excluirDocumentos: false,
-    esvaziarLixeira: false, papel: usuario.papel, inativo: true };
-  return { ...PERMISSOES[usuario.papel || "padrao"], papel: usuario.papel || "padrao" };
+  if (!usuario || usuario.papel === "admin") {
+    return {
+      admin: true, gerenciarUsuarios: true, gerenciarEntidades: true,
+      criarDocumentos: true, editarDocumentos: true, excluirDocumentos: true, esvaziarLixeira: true,
+      paginas: Object.fromEntries(PAGINAS_CONFIGURAVEIS.map(p => [p.id, true])),
+      papel: "admin", semCadastro: !usuario,
+    };
+  }
+  if (!usuario.ativo) {
+    return {
+      admin: false, gerenciarUsuarios: false, gerenciarEntidades: false,
+      criarDocumentos: false, editarDocumentos: false, excluirDocumentos: false, esvaziarLixeira: false,
+      paginas: {}, papel: usuario.papel, inativo: true,
+    };
+  }
+  const acoes = { ...ACOES_PADRAO, ...(usuario.acoes || {}) };
+  const paginas = { ...PAGINAS_PADRAO, ...(usuario.paginas || {}) };
+  return { admin: false, gerenciarUsuarios: false, gerenciarEntidades: false, ...acoes, paginas, papel: "padrao" };
 }
 
-// Entidades que a pessoa enxerga. Administrador vê todas; sem cadastro, também.
+// Uma entidade é "somente leitura" para o usuário quando ele tem acesso a
+// ela, mas o Administrador marcou explicitamente que não pode gravar nada
+// ali — só consultar.
+export function entidadeEhSomenteLeitura(usuario, entidadeId) {
+  if (!usuario || usuario.papel === "admin" || !entidadeId) return false;
+  return (usuario.entidadesSomenteLeitura || []).includes(entidadeId);
+}
+
 // Entidades que a pessoa enxerga.
 //
 // Administrador vê todas. Usuário padrão vê SOMENTE as que lhe foram
 // atribuídas — sem entidade atribuída, não vê nenhuma.
 //
-// Antes esta função devolvia todas as entidades quando o usuário não tinha
-// nenhuma atribuída, como rede de proteção para não travar o acesso. Era o
-// contrário do correto: um esquecimento do administrador ao cadastrar alguém
-// virava acesso irrestrito. Agora a pessoa vê uma tela explicando a quem
-// pedir, e o administrador precisa atribuir explicitamente.
+// Esta função já teve um bug: devolvia todas as entidades quando o usuário
+// não tinha nenhuma atribuída, como rede de proteção para não travar o
+// acesso. Era o contrário do correto — um esquecimento do administrador ao
+// cadastrar alguém virava acesso irrestrito. Fica registrado aqui porque essa
+// versão errada chegou a ir para produção; esta é a corrigida.
 export function entidadesVisiveis(usuario, secretarias) {
-  // Sem cadastro nenhum no sistema — primeiro acesso, ainda configurando
-  if (!usuario) return secretarias;
+  if (!usuario) return secretarias; // sem cadastro nenhum — primeiro acesso, ainda configurando
   if (usuario.papel === "admin") return secretarias;
   const permitidas = usuario.entidades || [];
-  return secretarias.filter(s => permitidas.includes(s.id));
+  return (secretarias || []).filter(s => permitidas.includes(s.id));
 }
 
 // Pode escolher "Todas as Entidades" no seletor do painel?
@@ -117,7 +145,7 @@ export function resumoEntidades(usuario, secretarias) {
 
   const principalId = usuario.entidadePrincipal && ids.includes(usuario.entidadePrincipal)
     ? usuario.entidadePrincipal : ids[0];
-  const principal = secretarias.find(s => s.id === principalId);
+  const principal = (secretarias || []).find(s => s.id === principalId);
   const nome = principal?.sigla || principal?.nome || "Entidade";
   const extras = ids.length - 1;
   return extras > 0 ? `${nome} e +${extras}` : nome;

@@ -3,13 +3,14 @@
  * alinhamento dos itens ao Plano de Contratações Anual.
  */
 
+import { mesmoCodigo } from "../../dominio/pca.js";
+
 import React, { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
-         Info, Loader2, ListChecks, ListX, X } from "lucide-react";
+         Info, Loader2, ListChecks, ListX, X, Lock } from "lucide-react";
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
 import { cruzarComPca } from "../../dominio/pca.js";
-import { chavePcaEntidade } from "../../dominio/entidades.js";
 import { parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti } from "../../dominio/planilhas.js";
 import { fmtDate } from "../../dominio/datas.js";
@@ -17,12 +18,12 @@ import { escapeHtml } from "../../dominio/texto.js";
 import { gerarDocumentoPCAAvulso } from "../../docx/documentos.js";
 import { resolverCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
+import { chavePcaEntidade } from "../../dominio/entidades.js";
 import storage from "../../storage.js";
-
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
-export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificativa }) {
+export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJustificativa, somenteLeitura = false, embutido = false }) {
   const itens = doc.itens || [];
   const objeto = doc.objeto || "";
   const orgao = doc.orgao || "";
@@ -31,7 +32,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   // A planilha do PCA é uma tabela de referência compartilhada entre todas as declarações —
   // fica numa chave própria para não duplicar milhares de linhas em cada documento.
   const [pca, setPca] = useState(null);
-  const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
+  const [timbreGlobal, setTimbreGlobal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showFaltantes, setShowFaltantes] = useState(false);
   const cabecalho = resolverCabecalho(doc, secretarias, timbreGlobal);
@@ -44,28 +45,22 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const [errorItens, setErrorItens] = useState("");
   const [errorPca, setErrorPca] = useState("");
 
-  // O PCA é próprio de cada entidade — a chave de armazenamento inclui o id
-  // dela. Trocar a entidade da declaração (raro, mas possível) recarrega o
-  // PCA correspondente.
-  const chavePca = chavePcaEntidade(doc.secretariaId);
-
   useEffect(() => {
-    setLoading(true);
     Promise.all([
-      window.storage.get(chavePca, false).catch(() => null),
-      window.storage.get("timbre:padrao", false).catch(() => null),
-    ]).then(([pcaRes, timbreRes]) => {
-      setPca(pcaRes?.value ? JSON.parse(pcaRes.value) : null);
-      setTimbreGlobal(timbreRes?.value || TIMBRE_PADRAO);
+      storage.get("pca:planilha", false).catch(() => null),
+      obterTimbreGlobal().catch(() => null),
+    ]).then(([pcaRes, timbre]) => {
+      if (pcaRes?.value) setPca(JSON.parse(pcaRes.value));
+      if (timbre) setTimbreGlobal(timbre);
     }).finally(() => setLoading(false));
-  }, [chavePca]);
+  }, []);
 
   function atualizarItens(v) { onSalvar({ ...doc, itens: v }); }
   function atualizarObjeto(v) { onSalvar({ ...doc, objeto: v }); }
   function atualizarOrgao(v) { onSalvar({ ...doc, orgao: v }); }
   function atualizarPca(v) {
     setPca(v);
-    window.storage.set(chavePca, JSON.stringify(v), false).catch(() => {});
+    storage.set("pca:planilha", JSON.stringify(v), false).catch(() => {});
   }
   function atualizarManual(itemId, campo, valor) {
     const atual = manuais[itemId] || { codigo: "", sequencial: "" };
@@ -115,14 +110,31 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
 
   const matches = cruzarComPca(itens, pca, manuais);
   const encontrados = matches.filter(m => m.previsto).length;
-  const semPcaMatch = matches.filter(m => !m.pcaRow).map(m => m.item); // sem correspondência automática
+  const semPcaMatch = matches.filter(m => !m.pcaRow); // sem correspondência automática
+  // Itens ainda pendentes que já têm uma sugestão por descrição — dá pra confirmar todos de uma vez
+  const sugestoesPendentes = semPcaMatch.filter(m => m.sugestaoDescricao);
+  function confirmarTodasSugestoes() {
+    const novosManuais = { ...manuais };
+    sugestoesPendentes.forEach(m => {
+      novosManuais[m.item.id] = { codigoPca: m.sugestaoDescricao.codigo, sequencial: m.sugestaoDescricao.sequencial || "" };
+    });
+    onSalvar({ ...doc, manuais: novosManuais });
+  }
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
   function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) =>
-      `<tr><td>${idx + 1}</td><td>${escapeHtml(m.codigo)}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`
-    ).join("");
+    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) => {
+      // Quando o código do Pedido (Centi) é diferente do código sob o qual o item está
+      // cadastrado no PCA, mostra os dois juntos — "5241938422 / 14157343" (o segundo, do
+      // PCA, em negrito) — para comprovar que é o mesmo item, só sob outra numeração.
+      const centi = (m.item.idProduto || "").trim();
+      const pcaCodigo = (m.pcaRow?.codigo || "").trim();
+      const idCelula = (centi && pcaCodigo && !mesmoCodigo(centi, pcaCodigo))
+        ? `${escapeHtml(centi)} / <b>${escapeHtml(pcaCodigo)}</b>`
+        : escapeHtml(m.codigo || "-");
+      return `<tr><td>${idx + 1}</td><td>${idCelula}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`;
+    }).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }).catch(e => console.error(e));
   }
 
@@ -131,10 +143,12 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
+    <div className={embutido ? "max-w-4xl mx-auto" : "max-w-4xl mx-auto px-6 py-10"}>
+      {!embutido && (
+        <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
+      )}
 
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
@@ -146,7 +160,14 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
         </h1>
       </div>
 
-      <div>
+      {somenteLeitura && (
+        <p className="flex items-center gap-2 text-xs font-medium px-3 py-2.5 rounded-lg mb-5"
+          style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+          <Info size={13} style={{ color: C.brass }} /> Modo somente leitura — as alterações feitas aqui não serão salvas.
+        </p>
+      )}
+
+      <div style={somenteLeitura ? { pointerEvents: "none", opacity: 0.75 } : undefined}>
         <div>
           {loading ? (
             <p className="text-sm" style={{ color: C.inkMuted }}>Carregando...</p>
@@ -310,6 +331,19 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
               <button onClick={() => setShowFaltantes(false)} className="shrink-0" style={{ color: C.inkMuted }}><X size={20} /></button>
             </div>
 
+            {sugestoesPendentes.length > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: C.border, background: "rgba(166,131,46,0.06)" }}>
+                <span className="text-xs flex-1" style={{ color: C.ink }}>
+                  {sugestoesPendentes.length} item(ns) com sugestão de correspondência por descrição, ainda não confirmada.
+                </span>
+                <button onClick={confirmarTodasSugestoes}
+                  className="shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold"
+                  style={{ background: C.brass, color: C.navyDark }}>
+                  Confirmar todas ({sugestoesPendentes.length})
+                </button>
+              </div>
+            )}
+
             <div className="p-5">
               <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
                 Estes itens não foram localizados automaticamente na planilha do PCA importada. Se algum já
@@ -328,7 +362,8 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
               )}
 
               <div className="space-y-3 mb-5">
-                {semPcaMatch.map((it, idx) => {
+                {semPcaMatch.map((m, idx) => {
+                  const it = m.item;
                   const dados = manuais[it.id] || { codigo: "", codigoPca: "", sequencial: "" };
                   const resolvido = !!(dados.codigoPca?.trim() || dados.sequencial?.trim());
                   return (
@@ -348,8 +383,8 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                           </span>
                         )}
                       </div>
-                      <VinculoPca item={it} pca={pca} dados={dados}
-                        onAlterar={novos => onManuaisPca({ ...manuais, [it.id]: novos })} />
+                      <VinculoPca item={it} pca={pca} dados={dados} sugestao={m.sugestaoDescricao}
+                        onAlterar={novos => onSalvar({ ...doc, manuais: { ...manuais, [it.id]: novos } })} />
                     </div>
                   );
                 })}

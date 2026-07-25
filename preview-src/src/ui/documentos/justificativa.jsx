@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, FileEdit, Download } from "lucide-react";
+import { ArrowLeft, FileEdit, Download, Lock } from "lucide-react";
 import { C } from "../tokens.js";
 import { Field, RichTextEditor } from "../comuns/index.jsx";
 import { gerarTextoPadraoJustificativa } from "../../conteudo/justificativa.js";
@@ -13,21 +13,20 @@ import { resolverCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import storage from "../../storage.js";
 
-
 // ---------- Justificativa de Aquisição (ferramenta avulsa) ----------
-export function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
+export function JustificativaView({ doc, secretarias, onSalvar, onBack, somenteLeitura = false, embutido = false }) {
   const campos = doc.campos;
   const conteudo = doc.conteudo || "";
-  const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
+  const [timbreGlobal, setTimbreGlobal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modoPreview, setModoPreview] = useState(false);
   const cabecalho = resolverCabecalho(doc, secretarias, timbreGlobal);
   const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   useEffect(() => {
-    window.storage.get("timbre:padrao", false)
-      .then(r => setTimbreGlobal(r?.value || TIMBRE_PADRAO))
-      .catch(() => setTimbreGlobal(TIMBRE_PADRAO))
+    obterTimbreGlobal()
+      .then(setTimbreGlobal)
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -53,10 +52,12 @@ export function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
-        <ArrowLeft size={16} /> Voltar
-      </button>
+    <div className={embutido ? "max-w-3xl mx-auto" : "max-w-3xl mx-auto px-6 py-10"}>
+      {!embutido && (
+        <button onClick={onBack} className="flex items-center gap-2 text-sm mb-6" style={{ color: C.navy }}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
+      )}
 
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
@@ -73,6 +74,13 @@ export function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
         jeito no editor formatado. As alterações são salvas automaticamente.
       </p>
 
+      {somenteLeitura && (
+        <p className="flex items-center gap-2 text-xs font-medium px-3 py-2.5 rounded-lg mb-5"
+          style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+          <Info size={13} style={{ color: C.brass }} /> Modo somente leitura — as alterações feitas aqui não serão salvas.
+        </p>
+      )}
+
       <div className="inline-flex p-1 rounded-lg mb-5" style={{ background: C.paperDark }}>
         <button onClick={() => setModoPreview(false)}
           className="px-3.5 py-1.5 rounded-md text-xs font-semibold"
@@ -87,7 +95,7 @@ export function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
       </div>
 
       {!modoPreview ? (
-        <>
+        <div style={somenteLeitura ? { pointerEvents: "none", opacity: 0.75 } : undefined}>
           <div className="p-4 rounded-lg border mb-5" style={{ borderColor: C.border, background: "white" }}>
             <span className="text-xs font-semibold uppercase tracking-wide block mb-3" style={{ color: C.inkMuted }}>
               Dados da aquisição ({camposPreenchidos}/8 preenchidos)
@@ -131,7 +139,7 @@ export function JustificativaView({ doc, secretarias, onSalvar, onBack }) {
             </button>
           </div>
           <RichTextEditor value={conteudo} onChange={atualizarConteudo} />
-        </>
+        </div>
       ) : (
         <div className="rounded-lg border p-8 bg-white" style={{ borderColor: C.border }}>
           {timbre && (

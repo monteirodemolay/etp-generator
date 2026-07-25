@@ -6,7 +6,7 @@
 import { contarPrevistosNoPca } from "../../dominio/pca.js";
 
 import React, { useState } from "react";
-import { ArrowLeft, FileText, Check, AlertCircle } from "lucide-react";
+import { ArrowLeft, FileText, Check, AlertCircle, Lock } from "lucide-react";
 import { C, COR_SITUACAO } from "../tokens.js";
 import { SECOES } from "../../conteudo/incisos.js";
 import { numeracaoFinal } from "../../dominio/numeracao.js";
@@ -17,9 +17,9 @@ import { MetaForm, ItemsForm, PCAForm, CotacoesForm } from "./formularios.jsx";
 import { DocumentoIncisos } from "./documento.jsx";
 import { ChecklistConformidade } from "./checklist.jsx";
 
-
 export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSection, onItens, onCotacoes,
-  onValoresAdotados, onPca, onManuaisPca, onSolucoesMercado, onExcluidos, secretarias, saveState, onBack, onPreview }) {
+  onValoresAdotados, onPca, onManuaisPca, onSolucoesMercado, onExcluidos, secretarias, saveState, onBack, onPreview,
+  somenteLeitura = false }) {
   const p = progress(etp);
   const numeros = numeracaoFinal(etp);
   const excluidos = etp.incisosExcluidos || [];
@@ -72,9 +72,16 @@ export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSec
           </div>
         </div>
         <div className="flex items-center gap-4 shrink-0">
-          <span className="text-xs" style={{ color: saveState === "saving" ? C.brassLight : "#9FE0B0" }}>
-            {saveState === "saving" ? "Salvando..." : "● Salvo"}
-          </span>
+          {somenteLeitura ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md"
+              style={{ background: "rgba(255,255,255,0.12)", color: C.paper }}>
+              <Info size={13} /> Somente leitura
+            </span>
+          ) : (
+            <span className="text-xs" style={{ color: saveState === "saving" ? C.brassLight : "#9FE0B0" }}>
+              {saveState === "saving" ? "Salvando..." : "● Salvo"}
+            </span>
+          )}
           <button onClick={() => setShowChecklist(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{
@@ -94,7 +101,8 @@ export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSec
       </header>
 
       <div className="flex flex-1 min-h-0">
-        {/* Índice lateral — fixo, rola por conta própria e fica sempre visível */}
+        {/* Índice lateral — fixo, rola por conta própria e fica sempre visível. Continua navegável
+            mesmo em modo somente leitura, pois só serve para ler/mudar de seção, não para gravar. */}
         <nav className="no-print w-60 shrink-0 overflow-y-auto etp-scroll" style={{ background: C.navyDark }}>
           <div className="px-4 pt-4 pb-1 text-[9.5px] font-bold tracking-widest uppercase" style={{ color: C.brass }}>
             Preparação
@@ -146,7 +154,14 @@ export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSec
           </div>
         </nav>
 
-        <main className="flex-1 overflow-y-auto etp-scroll" style={{ background: C.paper }}>
+        <main className="flex-1 overflow-y-auto etp-scroll relative" style={{ background: C.paper }}>
+          {somenteLeitura && (
+            <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-2 text-xs font-medium"
+              style={{ background: "rgba(166,131,46,0.12)", color: C.ink }}>
+              <Info size={13} style={{ color: C.brass }} /> Modo somente leitura — as alterações feitas aqui não serão salvas.
+            </div>
+          )}
+          <div style={somenteLeitura ? { pointerEvents: "none", opacity: 0.75 } : undefined}>
           {activeSection === "documento" ? (
             <DocumentoIncisos etp={etp} onSection={onSection} onSolucoesMercado={onSolucoesMercado}
               onExcluidos={onExcluidos} secretarias={secretarias} />
@@ -163,6 +178,7 @@ export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSec
               )}
             </div>
           )}
+          </div>
         </main>
       </div>
 

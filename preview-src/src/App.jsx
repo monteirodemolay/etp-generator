@@ -22,7 +22,8 @@ import { C } from "./ui/tokens.js";
 import { emptyEtp, emptyJustificativa, emptyDeclaracao, duplicarDocumento } from "./dominio/modelos.js";
 import { emptySecretaria, secretariaDoDoc } from "./dominio/entidades.js";
 import { usuarioPorEmail, permissoesDe, entidadesVisiveis, emptyUsuario,
-         podeVerTodasEntidades, entidadeInicial } from "./dominio/permissoes.js";
+         podeVerTodasEntidades, entidadeInicial, entidadeEhSomenteLeitura } from "./dominio/permissoes.js";
+import { criarRegistroNormativo } from "./dominio/normativos.js";
 import { moverParaLixeira, restaurarDaLixeira, excluirDefinitivo,
          limparLixeiraVencida, PREFIXO_LIXO } from "./dominio/lixeira.js";
 import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-entidade.js";
@@ -37,6 +38,7 @@ export default function App({ emailUsuario = null }) {
   const [declaracoes, setDeclaracoes] = useState([]);
   const [secretarias, setSecretarias] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [normativos, setNormativos] = useState([]);
   const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
@@ -71,12 +73,13 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaLixo] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaLixo] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
       carregarColecao("sec:"),
       carregarColecao("usr:"),
+      carregarColecao("norma:"),
       carregarColecao(PREFIXO_LIXO),
     ]);
 
@@ -106,6 +109,7 @@ export default function App({ emailUsuario = null }) {
     setDeclaracoes(listaDecl);
     setSecretarias(secretariasFinais);
     setUsuarios(listaUsr.sort((a, b) => (a.nomeCompleto || a.email).localeCompare(b.nomeCompleto || b.email)));
+    setNormativos(listaNormas.sort((a, b) => b.enviadoEm - a.enviadoEm));
     // O que passou de 30 dias sai da lixeira sozinho
     const lixoValido = await limparLixeiraVencida(storage, listaLixo);
     setLixeira(lixoValido.sort((a, b) => b.excluidoEm - a.excluidoEm));
@@ -115,6 +119,7 @@ export default function App({ emailUsuario = null }) {
   useEffect(() => { loadList(); }, [loadList]);
 
   const persist = useCallback((etp) => {
+    if (somenteLeituraPara(etp)) return; // trava de segurança: a tela já bloqueia a edição, isto é reforço
     setSaveState("saving");
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -196,6 +201,31 @@ export default function App({ emailUsuario = null }) {
     } catch (err) { console.error(err); }
   }
 
+  // ----- Materiais Normativos -----
+  // Lê o PDF como data URL e grava o registro inteiro (metadados + conteúdo) numa única chave;
+  // o storage.js já fatia automaticamente valores grandes, então não é preciso tratar isso aqui.
+  async function uploadNormativo(file, descricao) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const leitor = new FileReader();
+      leitor.onload = () => resolve(leitor.result);
+      leitor.onerror = () => reject(new Error("Falha ao ler o arquivo"));
+      leitor.readAsDataURL(file);
+    });
+    const registro = criarRegistroNormativo({
+      file, descricao, dataUrl,
+      enviadoPor: usuarioAtual?.nomeCompleto?.trim() || emailUsuario || "",
+    });
+    await storage.set("norma:" + registro.id, JSON.stringify(registro), false);
+    setNormativos(prev => [registro, ...prev]);
+  }
+
+  async function excluirNormativo(id) {
+    try {
+      await storage.delete("norma:" + id, false);
+      setNormativos(prev => prev.filter(x => x.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
   // ----- Secretarias -----
   function salvarSecretaria(sec) {
     const atualizada = { ...sec, updatedAt: Date.now() };
@@ -248,6 +278,7 @@ export default function App({ emailUsuario = null }) {
     storage.set("just:" + copia.id, JSON.stringify(copia), false).catch(() => {});
   }
   function salvarJustificativa(doc) {
+    if (somenteLeituraPara(doc)) return; // trava de segurança: a tela já bloqueia a edição
     const atualizado = { ...doc, updatedAt: Date.now() };
     setCurrentJust(atualizado);
     setJustificativas(prev => prev.map(d => (d.id === atualizado.id ? atualizado : d)));
@@ -289,6 +320,7 @@ export default function App({ emailUsuario = null }) {
     storage.set("decl:" + copia.id, JSON.stringify(copia), false).catch(() => {});
   }
   function salvarDeclaracao(doc) {
+    if (somenteLeituraPara(doc)) return; // trava de segurança: a tela já bloqueia a edição
     const atualizado = { ...doc, updatedAt: Date.now() };
     setCurrentDecl(atualizado);
     setDeclaracoes(prev => prev.map(d => (d.id === atualizado.id ? atualizado : d)));
@@ -411,6 +443,14 @@ export default function App({ emailUsuario = null }) {
   const secretariasVisiveis = entidadesVisiveis(usuarioAtual, secretarias);
   const podeTodas = podeVerTodasEntidades(usuarioAtual);
 
+  // Se a entidade do documento aberto foi marcada como "somente leitura" para este usuário,
+  // ou se a conta não tem permissão geral de edição, a tela abre travada para consulta.
+  function somenteLeituraPara(doc) {
+    if (!doc) return false;
+    if (!permissoes.editarDocumentos) return true;
+    return entidadeEhSomenteLeitura(usuarioAtual, doc.secretariaId);
+  }
+
   // O usuário padrão trabalha numa entidade por vez. Assim que o cadastro
   // carrega, posiciona na entidade principal dele — nunca em "todas".
   useEffect(() => {
@@ -482,7 +522,7 @@ export default function App({ emailUsuario = null }) {
         .timbre-fixed-print { display: none; }
       `}</style>
 
-      {view === "list" && (
+      {(view === "list" || (view === "justificativa" && currentJust) || (view === "declaracao" && currentDecl)) && (
         <ListView
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
@@ -499,20 +539,23 @@ export default function App({ emailUsuario = null }) {
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           podeVerTodasEntidades={podeTodas}
           onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario}
+          normativos={normativos} onUploadNormativo={uploadNormativo} onExcluirNormativo={excluirNormativo}
           lixeira={lixeira} onRestaurar={restaurarDocumento}
           onApagarDefinitivo={apagarDefinitivo} onEsvaziar={esvaziarLixeira}
+          viewAtual={view} onFecharDocumento={backToList}
+          documentoAberto={
+            view === "justificativa" && currentJust ? (
+              <JustificativaView doc={currentJust} secretarias={secretarias}
+                onSalvar={salvarJustificativa} onBack={backToList}
+                somenteLeitura={somenteLeituraPara(currentJust)} embutido />
+            ) : view === "declaracao" && currentDecl ? (
+              <DeclaracaoView doc={currentDecl} secretarias={secretarias}
+                onSalvar={salvarDeclaracao} onBack={backToList}
+                onGerarJustificativa={(dados) => novaJustificativa(dados)}
+                somenteLeitura={somenteLeituraPara(currentDecl)} embutido />
+            ) : null
+          }
         />
-      )}
-
-      {view === "justificativa" && currentJust && (
-        <JustificativaView doc={currentJust} secretarias={secretarias}
-          onSalvar={salvarJustificativa} onBack={backToList} />
-      )}
-
-      {view === "declaracao" && currentDecl && (
-        <DeclaracaoView doc={currentDecl} secretarias={secretarias}
-          onSalvar={salvarDeclaracao} onBack={backToList}
-          onGerarJustificativa={(dados) => novaJustificativa(dados)} />
       )}
 
       {view === "editor" && current && (
@@ -523,6 +566,7 @@ export default function App({ emailUsuario = null }) {
           onManuaisPca={updateManuaisPca}
           onValoresAdotados={updateValoresAdotados} onPca={updatePca}
           saveState={saveState} onBack={backToList} onPreview={() => setView("preview")}
+          somenteLeitura={somenteLeituraPara(current)}
         />
       )}
 

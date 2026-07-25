@@ -3,10 +3,12 @@
  * documentos. As abas trocam o conteúdo sem sair da tela.
  */
 
+import { entidadeEhSomenteLeitura } from "../../dominio/permissoes.js";
+
 import React, { useState, useEffect } from "react";
 import {
   ClipboardList, FileText, Plus, ListChecks, FileEdit, Building2, Users,
-  Download, Trash2, Search, Copy, Info, Check, AlertCircle, TrendingUp, X,
+  Download, Trash2, Search, Copy, Info, Check, AlertCircle, TrendingUp, X, Scale,
 } from "lucide-react";
 import { C, COR_SITUACAO } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
@@ -23,10 +25,14 @@ import { DIAS_NA_LIXEIRA } from "../../dominio/lixeira.js";
 import { UsuariosView } from "../admin/usuarios.jsx";
 import { SecretariasView } from "../admin/entidades.jsx";
 import { LixeiraView } from "./lixeira.jsx";
+import { NormativosView } from "./normativos.jsx";
 import { TelaBackup } from "./backup.jsx";
 import { GuiaRapido, JanelaNovoDocumento } from "./janelas.jsx";
 
 
+// ---------- List View ----------
+// ---------- Painel principal ----------
+// Barra lateral fixa + área de conteúdo. As abas trocam o conteúdo sem sair da tela.
 // ---------- List View ----------
 // ---------- Painel principal ----------
 // Barra lateral fixa + área de conteúdo. As abas trocam o conteúdo sem sair da tela.
@@ -38,21 +44,26 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
-  lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar , podeVerTodasEntidades }) {
+  normativos, onUploadNormativo, onExcluirNormativo,
+  lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
+  documentoAberto = null, viewAtual, onFecharDocumento, podeVerTodasEntidades }) {
 
   const [aba, setAba] = useState("painel");
+  // Enquanto um documento (Justificativa/Declaração) está aberto, ele ocupa o conteúdo, mas o
+  // menu lateral continua indicando a seção correspondente — não a última aba clicada.
+  const abaAtiva = documentoAberto
+    ? (viewAtual === "justificativa" ? "justificativas" : "declaracoes")
+    : aba;
   const [showGuia, setShowGuia] = useState(false);
-  const [novoDoc, setNovoDoc] = useState(null); // { tipo, tipoInicial }
-  const [dica, setDica] = useState(0);
+  // Novo documento agora abre direto no editor (sem janela intermediária) — objeto, processo
+  // e entidade ficam editáveis dentro do próprio documento, e nada é gravado até a primeira
+  // alteração real (ver persist/salvarJustificativa/salvarDeclaracao).
   const [frase] = useState(sortearFrase);
+  const [notifAberta, setNotifAberta] = useState(false);
   const saudacao = saudacaoPorHora();
   const nome = primeiroNomeDe(usuarioAtual?.nomeCompleto);
   const [aExcluir, setAExcluir] = useState(null);   // ETP aguardando confirmação
-
-  useEffect(() => {
-    const t = setInterval(() => setDica(d => (d + 1) % DICAS.length), 9000);
-    return () => clearInterval(t);
-  }, []);
+  const [pendAberta, setPendAberta] = useState(null); // id do ETP com o detalhe de pendências aberto no cartão
 
   function pedirExclusao(etp, e) {
     e.stopPropagation();
@@ -60,6 +71,30 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   }
 
   const base = todosEtps || etps;
+
+  // A entidade selecionada no filtro pode ter sido marcada como "somente leitura" para este
+  // usuário — nesse caso, mesmo quem tem permissão geral de criar não pode criar aqui.
+  const entidadeAtivaSomenteLeitura = secretariaAtiva !== "todas" && entidadeEhSomenteLeitura(usuarioAtual, secretariaAtiva);
+  const podeCriarDocumentos = permissoes.criarDocumentos && !entidadeAtivaSomenteLeitura;
+
+  // ---- Notificações: pendências reais, calculadas a partir dos próprios ETPs — nunca inventadas ----
+  // Dois sinais: (1) impeditivos do checklist de conformidade e (2) ETP sem edição há mais
+  // de 15 dias e ainda não concluído. Ordenado do mais urgente (mais impeditivos) para o menos.
+  const DIAS_ETP_PARADO = 15;
+  const notificacoes = useMemo(() => {
+    const agora = Date.now();
+    return base
+      .filter(e => situacaoEtp(e).chave !== "concluido")
+      .map(etp => {
+        const impeditivos = verificarConformidade(etp).filter(a => a.nivel === "impeditivo").length;
+        const diasParado = Math.floor((agora - etp.updatedAt) / 86400000);
+        const parado = diasParado >= DIAS_ETP_PARADO;
+        if (impeditivos === 0 && !parado) return null;
+        return { etp, impeditivos, diasParado, parado };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.impeditivos - a.impeditivos || b.diasParado - a.diasParado);
+  }, [base]);
   const porSituacao = { concluido: [], elaboracao: [], rascunho: [] };
   base.forEach(e => porSituacao[situacaoEtp(e).chave].push(e));
   const valorTotal = base.reduce((soma, e) => soma + valorTotalEtp(e), 0);
@@ -76,110 +111,31 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "secretarias", rotulo: "Entidades", icone: Building2, contador: secretarias.length, somenteAdmin: true },
     { id: "usuarios", rotulo: "Usuários", icone: Users, contador: usuarios.length, somenteAdmin: true },
+    { id: "normativos", rotulo: "Materiais Normativos", icone: Scale, contador: normativos.length },
     { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
     { id: "backup", rotulo: "Backup", icone: Download },
-  ].filter(m => !m.somenteAdmin || permissoes.gerenciarEntidades);
-
-  // ---- Blocos reutilizados ----
-  const cartao = (conteudo, extra = "") => (
-    <div className={`rounded-xl border p-5 ${extra}`} style={{ borderColor: C.border, background: "white" }}>
-      {conteudo}
-    </div>
-  );
-
-  const indicador = (valor, rotulo, nota, Icone, corIcone, fundoIcone) => (
-    <div className="rounded-xl border p-4 flex items-center gap-3.5" style={{ borderColor: C.border, background: "white" }}>
-      <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: fundoIcone }}>
-        <Icone size={20} style={{ color: corIcone }} />
-      </div>
-      <div className="min-w-0">
-        <p className="serif text-2xl font-semibold leading-none" style={{ color: C.navy }}>{valor}</p>
-        <p className="text-xs mt-1 truncate" style={{ color: C.ink }}>{rotulo}</p>
-        {nota && <p className="text-[10.5px] truncate" style={{ color: C.inkMuted }}>{nota}</p>}
-      </div>
-    </div>
-  );
-
-  // Rosca de progresso desenhada em SVG, sem biblioteca
-  function Rosca() {
-    const fatias = [
-      { rotulo: "Concluídos", n: porSituacao.concluido.length, cor: C.green },
-      { rotulo: "Em elaboração", n: porSituacao.elaboracao.length, cor: C.brass },
-      { rotulo: "Rascunhos", n: porSituacao.rascunho.length, cor: C.border },
-    ];
-    const total = base.length || 1;
-    const raio = 54, circ = 2 * Math.PI * raio;
-    let offset = 0;
-    return (
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="relative shrink-0" style={{ width: 132, height: 132 }}>
-          <svg width="132" height="132" style={{ transform: "rotate(-90deg)" }}>
-            <circle cx="66" cy="66" r={raio} fill="none" stroke={C.paperDark} strokeWidth="14" />
-            {fatias.map(f => {
-              if (f.n === 0) return null;
-              const comp = (f.n / total) * circ;
-              const el = (
-                <circle key={f.rotulo} cx="66" cy="66" r={raio} fill="none" stroke={f.cor} strokeWidth="14"
-                  strokeDasharray={`${comp} ${circ - comp}`} strokeDashoffset={-offset} />
-              );
-              offset += comp;
-              return el;
-            })}
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="serif text-2xl font-semibold" style={{ color: C.navy }}>{pctConcluidos}%</span>
-            <span className="text-[9.5px] text-center leading-tight" style={{ color: C.inkMuted }}>ETPs<br />concluídos</span>
-          </div>
-        </div>
-        <div className="flex-1 min-w-[150px] space-y-2">
-          {fatias.map(f => (
-            <div key={f.rotulo} className="flex items-center gap-2 text-xs">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: f.cor }} />
-              <span className="flex-1" style={{ color: C.ink }}>{f.rotulo}</span>
-              <span className="font-semibold" style={{ color: C.navy }}>
-                {f.n} <span className="font-normal" style={{ color: C.inkMuted }}>
-                  ({base.length ? Math.round((f.n / base.length) * 100) : 0}%)
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const acaoRapida = (Icone, titulo, sub, onClick) => (
-    <button onClick={onClick}
-      className="flex items-start gap-2.5 p-3 rounded-lg border text-left hover:bg-black/[0.02]"
-      style={{ borderColor: C.border, background: "white" }}>
-      <Icone size={16} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
-      <span className="min-w-0">
-        <span className="block text-xs font-semibold" style={{ color: C.navy }}>{titulo}</span>
-        <span className="block text-[10.5px] leading-snug" style={{ color: C.inkMuted }}>{sub}</span>
-      </span>
-    </button>
-  );
+  ].filter(m => (m.somenteAdmin ? permissoes.gerenciarEntidades : permissoes.paginas?.[m.id] !== false));
 
   return (
     <div className="flex min-h-screen" style={{ background: C.paperDark }}>
 
       {/* ---------- Barra lateral ---------- */}
       <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
-        <div className="px-5 py-5 flex items-center gap-3">
+      <div className="px-5 py-5 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.brass }}>
             <ClipboardList size={20} style={{ color: C.navyDark }} />
           </div>
           <div className="min-w-0">
-            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>Gerador de ETP</p>
+            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>ETP Inteligente</p>
             <p className="text-[10px] leading-tight" style={{ color: "#8A93A3" }}>Estudo Técnico Preliminar</p>
           </div>
         </div>
 
         <nav className="px-3 mt-2 flex-1 overflow-y-auto etp-scroll">
           {menu.map(m => {
-            const ativo = !m.acao && aba === m.id;
+            const ativo = !m.acao && abaAtiva === m.id;
             return (
-              <button key={m.id} onClick={() => (m.acao ? m.acao() : setAba(m.id))}
+              <button key={m.id} onClick={() => { if (documentoAberto) onFecharDocumento(); setAba(m.id); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-1 text-sm"
                 style={{
                   background: ativo ? C.brass : "transparent",
@@ -198,19 +154,6 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             );
           })}
         </nav>
-
-        <div className="m-3 p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }}>
-          <p className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color: C.brassLight }}>
-            <Info size={13} /> Dica do dia
-          </p>
-          <p className="text-[11px] leading-relaxed" style={{ color: "#B7C0CC" }}>{DICAS[dica]}</p>
-          <div className="flex gap-1 mt-3">
-            {DICAS.map((_, i) => (
-              <button key={i} onClick={() => setDica(i)} className="h-1 rounded-full transition-all"
-                style={{ width: i === dica ? 16 : 6, background: i === dica ? C.brass : "rgba(255,255,255,0.18)" }} />
-            ))}
-          </div>
-        </div>
       </aside>
 
       {/* ---------- Conteúdo ---------- */}
@@ -229,6 +172,54 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               ))}
             </select>
           </div>
+          <div className="relative shrink-0">
+            <button onClick={() => setNotifAberta(v => !v)}
+              className="relative flex items-center justify-center w-8 h-8 rounded-lg border"
+              style={{ borderColor: C.border, color: C.navy, background: "white" }}
+              title="Notificações" aria-label="Notificações">
+              <Bell size={15} />
+              {notificacoes.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                  style={{ background: C.red, color: "white" }}>
+                  {notificacoes.length}
+                </span>
+              )}
+            </button>
+            {notifAberta && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setNotifAberta(false)} />
+                <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border z-20 overflow-hidden"
+                  style={{ borderColor: C.border, background: "white", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                  <div className="px-4 py-3 border-b" style={{ borderColor: C.border }}>
+                    <p className="text-sm font-semibold" style={{ color: C.navy }}>Notificações</p>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto etp-scroll">
+                    {notificacoes.length === 0 ? (
+                      <p className="px-4 py-6 text-xs text-center" style={{ color: C.inkMuted }}>
+                        Nenhuma pendência no momento.
+                      </p>
+                    ) : notificacoes.slice(0, 8).map(n => (
+                      <button key={n.etp.id} onClick={() => { setNotifAberta(false); onOpen(n.etp); }}
+                        className="w-full text-left flex items-start gap-2.5 px-4 py-3 border-b hover:bg-black/[0.02]"
+                        style={{ borderColor: C.border }}>
+                        <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: n.impeditivos > 0 ? C.red : C.brass }} />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium truncate" style={{ color: C.navy }}>
+                            {n.etp.meta.titulo || "ETP sem título"}
+                          </span>
+                          <span className="block text-[11px]" style={{ color: C.inkMuted }}>
+                            {n.impeditivos > 0
+                              ? `${n.impeditivos} pendência(s) impeditiva(s)`
+                              : `Sem atualização há ${n.diasParado} dias`}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => setShowGuia(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
             style={{ borderColor: C.border, color: C.navy, background: "white" }}>
@@ -240,8 +231,12 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             </p>
           </div>
         </header>
-
-        <main className="flex-1 px-7 py-6 overflow-y-auto etp-scroll">
+<main
+  className="flex-1 px-7 py-6 overflow-y-auto etp-scroll"
+  style={{ paddingBottom: "64px" }}
+>
+          {documentoAberto ? documentoAberto : (
+          <>
 
           {!podeVerTodasEntidades && secretarias.length === 0 && (
             <div className="max-w-md mx-auto mt-16 text-center">
@@ -258,182 +253,259 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {(podeVerTodasEntidades || secretarias.length > 0) && aba === "painel" && (
             <>
-              <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
-                {nome ? `${saudacao}, ${nome}. Seja bem-vindo!` : `${saudacao}. Seja bem-vindo!`}
-              </h1>
-              <p className="text-sm mb-5 leading-relaxed" style={{ color: C.inkMuted }}>
-                <span className="italic">“{FRASES[frase].texto}”</span>
-                <span className="ml-1.5 whitespace-nowrap" style={{ color: C.brass }}>
-                  — {FRASES[frase].autor}
-                </span>
-                {FRASES[frase].obra && (
-                  <span className="text-[11px]" style={{ color: C.inkMuted }}> ({FRASES[frase].obra})</span>
-                )}
-              </p>
-
-              <div className="grid lg:grid-cols-[1fr,320px] gap-5 items-start">
+              {/* ---------- Cabeçalho: saudação + ações principais ---------- */}
+              <div className="flex items-end justify-between gap-4 flex-wrap mb-6">
                 <div className="min-w-0">
-                  {/* Faixa de destaque */}
-                  <div className="rounded-xl p-7 mb-5 relative overflow-hidden"
-                    style={{ background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navyDark} 100%)` }}>
-                    <div className="relative z-10 max-w-lg">
-                      <h2 className="serif text-2xl font-bold leading-tight" style={{ color: C.paper }}>
-                        Planeje melhor.{" "}
-                        <span style={{ color: C.brassLight }}>Contrate com segurança.</span>
-                      </h2>
-                      <p className="text-sm mt-2 leading-relaxed" style={{ color: "#B7C0CC" }}>
-                        O app organiza a elaboração do ETP conforme o art. 18 da Lei nº 14.133/2021,
-                        aproveitando os dados que você já cadastrou.
-                      </p>
-                      <div className="flex gap-5 mt-5 flex-wrap">
-                        {[
-                          [ClipboardList, "13 incisos", "do art. 18"],
-                          [Check, "Conformidade", "verificada antes de finalizar"],
-                          [Download, "Exportação", "em Word e PDF"],
-                        ].map(([Ic, t, sub], i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                              style={{ background: "rgba(255,255,255,0.1)" }}>
-                              <Ic size={15} style={{ color: C.brassLight }} />
-                            </div>
-                            <div className="leading-tight">
-                              <p className="text-[11px] font-semibold" style={{ color: C.paper }}>{t}</p>
-                              <p className="text-[10px]" style={{ color: "#8A93A3" }}>{sub}</p>
-                            </div>
-                          </div>
-                        ))}
+                  <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>
+                    {nome ? `${saudacao}, ${nome}.` : `${saudacao}.`}
+                  </h1>
+                  <p className="text-sm mt-1 leading-relaxed" style={{ color: C.inkMuted }}>
+                    <span className="italic">“{FRASES[frase].texto}”</span>
+                    <span className="ml-1.5 whitespace-nowrap" style={{ color: C.brass }}>— {FRASES[frase].autor}</span>
+                  </p>
+                </div>
+                {podeCriarDocumentos && (
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <button onClick={() => onNovaDeclaracao({})}
+                      className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border text-sm font-medium hover:bg-black/[0.02]"
+                      style={{ borderColor: C.border, color: C.navy, background: "white" }}>
+                      <ListChecks size={15} style={{ color: C.brass }} /> Declaração de PCA
+                    </button>
+                    <button onClick={() => onNovaJustificativa({})}
+                      className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border text-sm font-medium hover:bg-black/[0.02]"
+                      style={{ borderColor: C.border, color: C.navy, background: "white" }}>
+                      <FileEdit size={15} style={{ color: C.brass }} /> Justificativa
+                    </button>
+                    <button onClick={() => onNew({})}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm"
+                      style={{ background: C.navy, color: C.paper }}>
+                      <Plus size={16} /> Novo ETP
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ---------- Faixa proativa: pendências reais, mesmo dado do sino de notificações ---------- */}
+              {notificacoes.length > 0 && (() => {
+                const impeditivosTotais = notificacoes.filter(n => n.impeditivos > 0).length;
+                const paradosTotais = notificacoes.filter(n => n.impeditivos === 0 && n.parado).length;
+                const partes = [];
+                if (impeditivosTotais > 0) partes.push(`${impeditivosTotais} ETP${impeditivosTotais > 1 ? "s" : ""} com pendência impeditiva`);
+                if (paradosTotais > 0) partes.push(`${paradosTotais} ETP${paradosTotais > 1 ? "s" : ""} sem atualização há mais de ${DIAS_ETP_PARADO} dias`);
+                return (
+                  <div className="rounded-xl px-4 py-3 flex items-center gap-3 mb-5"
+                    style={{ background: "rgba(166,131,46,0.1)" }}>
+                    <AlertTriangle size={17} className="shrink-0" style={{ color: C.brass }} />
+                    <span className="text-sm flex-1" style={{ color: C.ink }}>{partes.join(" · ")}.</span>
+                    <button onClick={() => setNotifAberta(true)}
+                      className="text-xs font-semibold shrink-0" style={{ color: C.brass }}>
+                      Ver pendências
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* ---------- Resumo: um único cartão com números + barra de progresso ---------- */}
+              {base.length > 0 && (() => {
+                const fatias = [
+                  { rotulo: "Concluídos", n: porSituacao.concluido.length, cor: C.green },
+                  { rotulo: "Em elaboração", n: porSituacao.elaboracao.length, cor: C.brass },
+                  { rotulo: "Rascunhos", n: porSituacao.rascunho.length, cor: "#C9C2B2" },
+                ];
+                return (
+                  <div className="rounded-xl border p-5 mb-5" style={{ borderColor: C.border, background: "white" }}>
+                    <div className="flex items-start justify-between gap-6 flex-wrap">
+                      <div className="flex items-baseline gap-2">
+                        <span className="serif text-3xl font-semibold leading-none" style={{ color: C.navy }}>{base.length}</span>
+                        <span className="text-sm" style={{ color: C.ink }}>
+                          ETP{base.length === 1 ? "" : "s"}{secAtiva ? ` em ${secAtiva.sigla || secAtiva.nome}` : ""}
+                        </span>
+                        <span className="text-sm ml-1" style={{ color: C.inkMuted }}>
+                          · {pctConcluidos}% concluído{pctConcluidos === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs" style={{ color: C.inkMuted }}>Valor estimado somado</span>
+                        <span className="serif text-xl font-semibold" style={{ color: C.navy }}>{brl(valorTotal)}</span>
                       </div>
                     </div>
-                    <div className="absolute right-0 top-0 bottom-0 w-56 opacity-10 hidden md:block"
-                      style={{ background: `radial-gradient(circle at 70% 50%, ${C.brassLight} 0%, transparent 70%)` }} />
-                  </div>
 
-                  {/* Indicadores */}
-                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
-                    {indicador(base.length, "ETPs criados", null, FileText, C.navy, "rgba(28,46,74,0.08)")}
-                    {indicador(porSituacao.concluido.length, "Concluídos", "obrigatórios preenchidos", Check, C.green, "rgba(76,124,89,0.1)")}
-                    {indicador(porSituacao.elaboracao.length, "Em elaboração", "ainda faltam incisos", FileEdit, C.brass, "rgba(166,131,46,0.12)")}
-                    {indicador(brl(valorTotal), "Valor estimado", "somado de todos os ETPs", TrendingUp, C.navy, "rgba(28,46,74,0.08)")}
-                  </div>
-
-                  {/* ETPs recentes */}
-                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b" style={{ borderColor: C.border }}>
-                      <h3 className="serif text-base font-semibold" style={{ color: C.navy }}>ETPs recentes</h3>
-                      <button onClick={() => setAba("etps")} className="text-xs font-medium" style={{ color: C.brass }}>
-                        Ver todos
-                      </button>
+                    <div className="flex h-2.5 rounded-full overflow-hidden mt-4" style={{ background: C.paperDark }}>
+                      {fatias.map(f => f.n > 0 && (
+                        <div key={f.rotulo} style={{ width: `${(f.n / base.length) * 100}%`, background: f.cor }} />
+                      ))}
                     </div>
-                    {recentes.length === 0 ? (
-                      <div className="px-5 py-10 text-center">
-                        <FileText size={28} className="mx-auto mb-2" style={{ color: C.border }} />
-                        <p className="text-sm mb-3" style={{ color: C.inkMuted }}>Nenhum ETP criado ainda.</p>
-                        <button onClick={() => setNovoDoc({ tipo: "etp" })}
-                          className="px-4 py-2 rounded-lg text-sm font-medium"
+                    <div className="flex items-center gap-5 mt-2.5 flex-wrap">
+                      {fatias.map(f => (
+                        <span key={f.rotulo} className="flex items-center gap-1.5 text-xs" style={{ color: C.ink }}>
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: f.cor }} />
+                          {f.rotulo}
+                          <b style={{ color: C.navy }}>{f.n}</b>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ---------- ETPs recentes ---------- */}
+              <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
+                <div className="flex items-center justify-between px-5 py-3.5 border-b" style={{ borderColor: C.border }}>
+                  <h3 className="serif text-base font-semibold" style={{ color: C.navy }}>ETPs recentes</h3>
+                  {recentes.length > 0 && (
+                    <button onClick={() => setAba("etps")} className="text-xs font-medium" style={{ color: C.brass }}>
+                      Ver todos
+                    </button>
+                  )}
+                </div>
+                {recentes.length === 0 ? (
+                  <div className="px-5 py-12 text-center">
+                    <FileText size={28} className="mx-auto mb-2" style={{ color: C.border }} />
+                    <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+                      {podeCriarDocumentos ? "Comece pelo primeiro ETP" : "Nenhum ETP disponível"}
+                    </p>
+                    {podeCriarDocumentos ? (
+                      <>
+                        <p className="text-sm mb-4 max-w-sm mx-auto leading-relaxed" style={{ color: C.inkMuted }}>
+                          O app conduz as etapas — itens, PCA, preços e os 13 incisos do art. 18 — e exporta o documento pronto.
+                        </p>
+                        <button onClick={() => onNew({})}
+                          className="px-4 py-2.5 rounded-lg text-sm font-semibold"
                           style={{ background: C.navy, color: C.paper }}>
                           Criar o primeiro ETP
                         </button>
-                      </div>
+                        <p className="text-[11px] mt-3" style={{ color: C.inkMuted }}>
+                          Primeira vez por aqui? Abra o <button onClick={() => setShowGuia(true)} className="underline font-medium" style={{ color: C.brass }}>guia rápido</button>.
+                        </p>
+                      </>
                     ) : (
-                      <div className="overflow-x-auto etp-scroll">
-                        <table className="w-full text-sm" style={{ minWidth: "560px" }}>
-                          <thead>
-                            <tr style={{ background: C.paperDark }}>
-                              <th className="text-left px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Título / Objeto</th>
-                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-28" style={{ color: C.inkMuted }}>Atualizado</th>
-                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-32" style={{ color: C.inkMuted }}>Situação</th>
-                              <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-20" style={{ color: C.inkMuted }}>Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {recentes.map(etp => {
-                              const sit = situacaoEtp(etp);
-                              const sec = secretariaDoDoc(etp, secretarias);
-                              return (
-                                <tr key={etp.id} className="border-t hover:bg-black/[0.015] cursor-pointer"
-                                  style={{ borderColor: C.border }} onClick={() => onOpen(etp)}>
-                                  <td className="px-5 py-3">
-                                    <p className="font-medium truncate" style={{ color: C.navy }}>
-                                      {etp.meta.titulo || "ETP sem título"}
-                                    </p>
-                                    <p className="text-[11px] truncate" style={{ color: C.inkMuted }}>
-                                      {sec?.sigla ? `${sec.sigla} · ` : ""}{etp.meta.setor || etp.meta.orgao || "Setor não informado"}
-                                    </p>
-                                  </td>
-                                  <td className="px-3 py-3 text-xs" style={{ color: C.inkMuted }}>
-                                    {fmtDateRelativa(etp.updatedAt)}
-                                  </td>
-                                  <td className="px-3 py-3">
-                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full"
-                                      style={{ background: `${sit.cor}1A`, color: sit.cor }}>
-                                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: sit.cor }} />
-                                      {sit.rotulo}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-3">
-                                    <div className="flex items-center gap-1">
-                                      <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
-                                        className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Duplicar">
-                                        <Copy size={14} />
-                                      </button>
-                                      <button onClick={e => pedirExclusao(etp, e)}
-                                        className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Excluir">
-                                        <Trash2 size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                      <p className="text-sm max-w-sm mx-auto leading-relaxed" style={{ color: C.inkMuted }}>
+                        Sua conta não tem permissão para criar documentos nesta entidade.
+                      </p>
                     )}
                   </div>
-                </div>
+                ) : (
+                  <div className="overflow-x-auto etp-scroll">
+                    <table className="w-full text-sm" style={{ minWidth: "560px" }}>
+                      <thead>
+                        <tr style={{ background: C.paperDark }}>
+                          <th className="text-left px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Título / Objeto</th>
+                          <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-28" style={{ color: C.inkMuted }}>Atualizado</th>
+                          <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-32" style={{ color: C.inkMuted }}>Situação</th>
+                          <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-24" style={{ color: C.inkMuted }}>Pendências</th>
+                          <th className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide w-20" style={{ color: C.inkMuted }}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentes.map(etp => {
+                          const sit = situacaoEtp(etp);
+                          const sec = secretariaDoDoc(etp, secretarias);
+                          const pendenciasList = verificarConformidade(etp).filter(a => a.nivel === "impeditivo");
+                          return (
+                            <Fragment key={etp.id}>
+                            <tr className="border-t hover:bg-black/[0.015] cursor-pointer"
+                              style={{ borderColor: C.border }} onClick={() => onOpen(etp)}>
+                              <td className="px-5 py-3">
+                                <p className="font-medium truncate" style={{ color: C.navy }}>
+                                  {etp.meta.titulo || "ETP sem título"}
+                                </p>
+                                <p className="text-[11px] truncate" style={{ color: C.inkMuted }}>
+                                  {sec?.sigla ? `${sec.sigla} · ` : ""}{etp.meta.setor || etp.meta.orgao || "Setor não informado"}
+                                </p>
+                              </td>
+                              <td className="px-3 py-3 text-xs" style={{ color: C.inkMuted }}>
+                                {fmtDateRelativa(etp.updatedAt)}
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full"
+                                  style={{ background: `${sit.cor}1A`, color: sit.cor }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: sit.cor }} />
+                                  {sit.rotulo}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3">
+                                <button onClick={e => { e.stopPropagation(); setPendAberta(pendAberta === etp.id ? null : (pendenciasList.length > 0 ? etp.id : null)); }}
+                                  disabled={pendenciasList.length === 0}
+                                  className="flex items-center gap-1 text-[11px] font-semibold"
+                                  style={{ color: pendenciasList.length > 0 ? C.red : C.green }}>
+                                  {pendenciasList.length > 0 ? (
+                                    <>
+                                      {pendenciasList.length} pend.
+                                      <ChevronRight size={10} style={{ transform: pendAberta === etp.id ? "rotate(90deg)" : "none" }} />
+                                    </>
+                                  ) : "✓ conforme"}
+                                </button>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="flex items-center gap-1">
+                                  {podeCriarDocumentos && (
+                                    <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
+                                      className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Duplicar">
+                                      <Copy size={14} />
+                                    </button>
+                                  )}
+                                  {permissoes.excluirDocumentos && (
+                                    <button onClick={e => pedirExclusao(etp, e)}
+                                      className="p-1.5 rounded" style={{ color: C.inkMuted }} title="Excluir">
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                            {pendAberta === etp.id && pendenciasList.length > 0 && (
+                              <tr style={{ borderTop: "none" }}>
+                                <td colSpan={5} className="px-5 pb-3 pt-0">
+                                  <div onClick={e => e.stopPropagation()}
+                                    className="rounded-lg px-3 py-2.5 space-y-1.5" style={{ background: "rgba(166,64,61,0.06)" }}>
+                                    {pendenciasList.map((a, i) => (
+                                      <p key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: C.ink }}>
+                                        <AlertTriangle size={11} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                                        {a.texto}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
 
-                {/* Coluna direita */}
-                <div className="space-y-5">
-                  {cartao(
-                    <>
-                      <h3 className="serif text-base font-semibold mb-4" style={{ color: C.navy }}>Progresso geral</h3>
-                      {base.length === 0
-                        ? <p className="text-xs" style={{ color: C.inkMuted }}>Sem ETPs para acompanhar ainda.</p>
-                        : <Rosca />}
-                    </>
-                  )}
-
-                  {cartao(
-                    <>
-                      <h3 className="serif text-base font-semibold mb-3" style={{ color: C.navy }}>Ações rápidas</h3>
-                      <div className="grid grid-cols-2 gap-2">
-                        {acaoRapida(Plus, "Novo ETP", "Criar do zero", () => setNovoDoc({ tipo: "etp" }))}
-                        {acaoRapida(ListChecks, "Declaração", "Verificar PCA", () => setNovoDoc({ tipo: "declaracao" }))}
-                        {acaoRapida(FileEdit, "Justificativa", "De aquisição", () => setNovoDoc({ tipo: "justificativa" }))}
-                        {acaoRapida(Building2, "Entidades", "Timbre e cadastro", () => setAba("secretarias"))}
+              {/* ---------- Documentos suplementares: menores que o ETP, mas com referência própria ---------- */}
+              <div className="grid sm:grid-cols-2 gap-3 mt-5">
+                {[
+                  { tipo: "declaracoes", titulo: "Declarações de PCA", icone: ListChecks, lista: declaracoes,
+                    vazio: "Nenhuma declaração criada ainda.", onNovo: onNovaDeclaracao },
+                  { tipo: "justificativas", titulo: "Justificativas", icone: FileEdit, lista: justificativas,
+                    vazio: "Nenhuma justificativa criada ainda.", onNovo: onNovaJustificativa },
+                ].map(bloco => {
+                  const recente = [...bloco.lista].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+                  return (
+                    <button key={bloco.tipo} onClick={() => setAba(bloco.tipo)}
+                      className="text-left rounded-xl border p-4 hover:bg-black/[0.015]"
+                      style={{ borderColor: C.border, background: "white" }}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <bloco.icone size={15} style={{ color: C.brass }} />
+                        <span className="text-sm font-semibold flex-1" style={{ color: C.navy }}>{bloco.titulo}</span>
+                        <span className="text-xs font-medium" style={{ color: C.inkMuted }}>{bloco.lista.length}</span>
                       </div>
-                    </>
-                  )}
-
-                  {cartao(
-                    <>
-                      <h3 className="serif text-base font-semibold mb-1" style={{ color: C.navy }}>Começar por tipo</h3>
-                      <p className="text-[11px] mb-3" style={{ color: C.inkMuted }}>
-                        Cria um ETP já com o tipo de objeto definido — os textos-modelo se ajustam a ele.
-                      </p>
-                      <div className="space-y-1.5">
-                        {TIPOS_OBJETO.map(t => (
-                          <button key={t} onClick={() => setNovoDoc({ tipo: "etp", tipoObjeto: t })}
-                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs hover:bg-black/[0.02]"
-                            style={{ borderColor: C.border, color: C.ink }}>
-                            <span>{t}</span>
-                            <Plus size={13} style={{ color: C.brass }} />
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
+                      {recente ? (
+                        <p className="text-xs truncate" style={{ color: C.inkMuted }}>
+                          Mais recente: <span style={{ color: C.ink }}>{recente.meta?.titulo || recente.objeto || recente.campos?.objeto || "Sem título"}</span>
+                          {" "}· {fmtDateRelativa(recente.updatedAt)}
+                        </p>
+                      ) : (
+                        <p className="text-xs" style={{ color: C.inkMuted }}>{bloco.vazio}</p>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}
@@ -447,9 +519,9 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                     {base.length} estudo(s){secAtiva ? ` em ${secAtiva.sigla || secAtiva.nome}` : ""}.
                   </p>
                 </div>
-                <button onClick={() => setNovoDoc({ tipo: "etp" })}
+                <button onClick={() => onNew({})}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm shadow-sm shrink-0"
-                  style={{ background: C.navy, color: C.paper }}>
+                  style={{ background: C.navy, color: C.paper, display: podeCriarDocumentos ? "flex" : "none" }}>
                   <Plus size={16} /> Novo ETP
                 </button>
               </div>
@@ -473,8 +545,8 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                   <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
                     {search ? "Tente outro termo de busca." : "Comece cadastrando os itens da contratação."}
                   </p>
-                  {!search && (
-                    <button onClick={() => setNovoDoc({ tipo: "etp" })}
+                  {!search && podeCriarDocumentos && (
+                    <button onClick={() => onNew({})}
                       className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm"
                       style={{ background: C.navy, color: C.paper }}>
                       <Plus size={16} /> Criar o primeiro ETP
@@ -489,7 +561,8 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                     const sec = secretariaDoDoc(etp, secretarias);
                     const qtdItens = (etp.itens || []).length;
                     const valorEtp = valorTotalEtp(etp);
-                    const pendencias = verificarConformidade(etp).filter(a => a.nivel === "impeditivo").length;
+                    const pendenciasList = verificarConformidade(etp).filter(a => a.nivel === "impeditivo");
+                    const pendencias = pendenciasList.length;
                     const responsaveis = listaResponsaveis(etp);
                     const responsavel = responsaveis.length === 0 ? null
                       : responsaveis.length === 1 ? responsaveis[0].nome
@@ -500,14 +573,18 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                         className="group relative p-5 rounded-xl border cursor-pointer hover:shadow-sm"
                         style={{ borderColor: C.border, background: "white" }}>
                         <div className="absolute top-4 right-4 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
-                            className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
-                            <Copy size={15} />
-                          </button>
-                          <button onClick={e => pedirExclusao(etp, e)}
-                            className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Excluir">
-                            <Trash2 size={15} />
-                          </button>
+                          {podeCriarDocumentos && (
+                            <button onClick={e => { e.stopPropagation(); onDuplicar(etp, e); }}
+                              className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Duplicar">
+                              <Copy size={15} />
+                            </button>
+                          )}
+                          {permissoes.excluirDocumentos && (
+                            <button onClick={e => pedirExclusao(etp, e)}
+                              className="p-1.5 rounded-md" style={{ color: C.inkMuted }} title="Excluir">
+                              <Trash2 size={15} />
+                            </button>
+                          )}
                         </div>
 
                         <h3 className="serif text-lg font-semibold pr-16 mb-1" style={{ color: C.navy }}>
@@ -539,16 +616,31 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                             </p>
                             <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>estimado</p>
                           </div>
-                          <div className="text-center">
+                          <button onClick={e => { e.stopPropagation(); setPendAberta(pendAberta === etp.id ? null : (pendencias > 0 ? etp.id : null)); }}
+                            className="text-center" disabled={pendencias === 0} title={pendencias > 0 ? "Ver o que falta" : undefined}>
                             <p className="text-sm font-semibold leading-none"
                               style={{ color: pendencias > 0 ? C.red : C.green }}>
                               {pendencias > 0 ? pendencias : "✓"}
                             </p>
-                            <p className="text-[9.5px] mt-1" style={{ color: C.inkMuted }}>
+                            <p className="text-[9.5px] mt-1 flex items-center justify-center gap-0.5" style={{ color: C.inkMuted }}>
                               {pendencias > 0 ? "pendência(s)" : "conforme"}
+                              {pendencias > 0 && <ChevronRight size={9} style={{ transform: pendAberta === etp.id ? "rotate(90deg)" : "none" }} />}
                             </p>
-                          </div>
+                          </button>
                         </div>
+
+                        {pendAberta === etp.id && pendenciasList.length > 0 && (
+                          <div onClick={e => e.stopPropagation()}
+                            className="rounded-lg mb-3 px-3 py-2.5 space-y-1.5"
+                            style={{ background: "rgba(166,64,61,0.06)" }}>
+                            {pendenciasList.map((a, i) => (
+                              <p key={i} className="flex items-start gap-1.5 text-[11px] leading-snug" style={{ color: C.ink }}>
+                                <AlertTriangle size={11} className="shrink-0 mt-0.5" style={{ color: C.red }} />
+                                {a.texto}
+                              </p>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="flex items-center gap-2 mb-2">
                           <div className="flex-1 h-1.5 rounded-full" style={{ background: C.paperDark }}>
@@ -594,8 +686,9 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               </p>
               <ListaDocumentos titulo="Declarações" docs={declaracoes}
                 onAbrir={onAbrirDeclaracao} onExcluir={onExcluirDeclaracao} onDuplicar={onDuplicarDeclaracao}
-                onNovo={() => setNovoDoc({ tipo: "declaracao" })} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
-                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
+                onNovo={() => onNovaDeclaracao({})} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
+                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
+                podeCriar={podeCriarDocumentos} podeExcluir={permissoes.excluirDocumentos} />
             </>
           )}
 
@@ -607,6 +700,10 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           {aba === "secretarias" && (
             <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
               onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
+          )}
+
+          {aba === "normativos" && (
+            <NormativosView normativos={normativos} onUpload={onUploadNormativo} onExcluir={onExcluirNormativo} />
           )}
 
           {aba === "lixeira" && (
@@ -624,20 +721,28 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               </p>
               <ListaDocumentos titulo="Justificativas" docs={justificativas}
                 onAbrir={onAbrirJustificativa} onExcluir={onExcluirJustificativa} onDuplicar={onDuplicarJustificativa}
-                onNovo={() => setNovoDoc({ tipo: "justificativa" })} icone={FileEdit} vazio="Nenhuma justificativa criada ainda."
-                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"} />
+                onNovo={() => onNovaJustificativa({})} icone={FileEdit} vazio="Nenhuma justificativa criada ainda."
+                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
+                podeCriar={podeCriarDocumentos} podeExcluir={permissoes.excluirDocumentos} />
             </>
+          )}
+          </>
           )}
         </main>
 
-        <footer className="px-7 py-4 border-t flex items-center gap-2 flex-wrap"
-          style={{ borderColor: C.border, background: "white" }}>
+       <footer
+  className="fixed bottom-0 left-64 right-0 h-12 px-7 border-t flex items-center gap-2 z-50"
+  style={{
+    borderColor: C.border,
+    background: "white"
+  }}
+>
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            Gerador de ETP — Lei nº 14.133/2021, art. 18
+            ETP Inteligente — Planejamento consistente para contratações públicas
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
-            Desenvolvido para a Administração Pública
+            Desenvolvido por Luís Eduardo Monteiro Lima
           </span>
         </footer>
       </div>
@@ -651,21 +756,6 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           textoBotao="Mover para a lixeira"
           onConfirmar={() => { onDelete(aExcluir.id, { stopPropagation() {} }); setAExcluir(null); }}
           onCancelar={() => setAExcluir(null)}
-        />
-      )}
-
-      {novoDoc && (
-        <JanelaNovoDocumento
-          inicial={novoDoc}
-          secretarias={secretarias}
-          secretariaAtiva={secretariaAtiva}
-          onFechar={() => setNovoDoc(null)}
-          onCriar={dados => {
-            setNovoDoc(null);
-            if (dados.tipo === "etp") onNew(dados);
-            else if (dados.tipo === "declaracao") onNovaDeclaracao(dados);
-            else onNovaJustificativa(dados);
-          }}
         />
       )}
     </div>

@@ -2,6 +2,8 @@
  * Como nasce cada documento e como se lê seu estado.
  */
 
+import { chavePcaEntidade } from "./entidades.js";
+
 import { todayISO } from "./datas.js";
 
 import { TIPOS_OBJETO } from "./opcoes.js";
