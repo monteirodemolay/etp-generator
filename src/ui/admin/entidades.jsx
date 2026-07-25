@@ -4,18 +4,20 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Building2, Plus, Trash2, Upload, Info, ArrowLeft } from "lucide-react";
+import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle } from "lucide-react";
 import { C } from "../tokens.js";
-import { RichTextEditor } from "../comuns/index.jsx";
+import { RichTextEditor, ConfirmarExclusao } from "../comuns/index.jsx";
 import { TIPOS_ENTIDADE } from "../../dominio/opcoes.js";
 import { redimensionarImagem } from "../../docx/timbre.js";
 import { escapeHtml } from "../../dominio/texto.js";
+import { contarDocumentosDaEntidade } from "../../dominio/entidades.js";
 
 
 // ---------- Cadastro de Secretarias ----------
-export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack }) {
+export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack,
+  etps = [], justificativas = [], declaracoes = [] }) {
+  const [aExcluir, setAExcluir] = useState(null); // entidade aguardando confirmação
   // Quando usada como aba do painel não recebe onBack — o menu lateral já faz a navegação
-  const [confirmId, setConfirmId] = useState(null);
   const fileRefs = useRef({});
 
   async function trocarTimbre(sec, e) {
@@ -169,16 +171,8 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
               <div className="flex justify-end mt-3">
                 {secretarias.length <= 1 ? (
                   <span className="text-[10px]" style={{ color: C.inkMuted }}>A última entidade não pode ser excluída</span>
-                ) : confirmId === sec.id ? (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px]" style={{ color: C.red }}>Excluir?</span>
-                    <button onClick={() => { onExcluir(sec.id); setConfirmId(null); }}
-                      className="px-2 py-1 rounded text-[10px] font-semibold" style={{ background: C.red, color: "white" }}>Sim</button>
-                    <button onClick={() => setConfirmId(null)}
-                      className="px-2 py-1 rounded text-[10px] font-medium" style={{ background: C.paperDark, color: C.inkMuted }}>Não</button>
-                  </div>
                 ) : (
-                  <button onClick={() => setConfirmId(sec.id)} style={{ color: C.red }} title="Excluir entidade">
+                  <button onClick={() => setAExcluir(sec)} style={{ color: C.red }} title="Excluir entidade">
                     <Trash2 size={14} />
                   </button>
                 )}
@@ -187,6 +181,27 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
           </div>
         ))}
       </div>
+
+      {aExcluir && (() => {
+        const qtd = contarDocumentosDaEntidade(aExcluir.id, { etps, justificativas, declaracoes });
+        const destino = secretarias.find(s => s.id !== aExcluir.id); // a próxima na lista, sempre a mais antiga
+        return (
+          <ConfirmarExclusao
+            titulo="Excluir esta entidade?"
+            descricao={
+              qtd > 0
+                ? `"${aExcluir.sigla || aExcluir.nome}" tem ${qtd} documento(s) vinculado(s) (ETPs, Justificativas ou Declarações). ` +
+                  `Eles NÃO serão apagados — mas passarão a aparecer sob "${destino?.sigla || destino?.nome || "outra entidade"}", ` +
+                  `pois deixarão de ter uma entidade própria à qual pertencer. Se isso não for o que você quer, cancele e reatribua ` +
+                  `esses documentos a outra entidade antes de excluir.`
+                : `"${aExcluir.sigla || aExcluir.nome}" não tem nenhum documento vinculado. A exclusão é definitiva.`
+            }
+            textoBotao="Excluir mesmo assim"
+            onConfirmar={() => { onExcluir(aExcluir.id); setAExcluir(null); }}
+            onCancelar={() => setAExcluir(null)}
+          />
+        );
+      })()}
 
       <div className="mt-5 flex items-start gap-2 p-3 rounded-lg text-xs leading-relaxed" style={{ background: C.paperDark, color: C.inkMuted }}>
         <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />

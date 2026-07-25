@@ -700,6 +700,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "secretarias" && (
             <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
+              etps={base} justificativas={justificativas} declaracoes={declaracoes}
               onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
           )}
 

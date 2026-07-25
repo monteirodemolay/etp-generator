@@ -33,3 +33,15 @@ export function secretariaDoDoc(doc, secretarias) {
   if (!secretarias?.length) return null;
   return secretarias.find(s => s.id === doc.secretariaId) || secretarias[0];
 }
+
+// Quantos documentos (de qualquer tipo) apontam para esta entidade — usado para
+// avisar antes de excluir, em vez de deixá-los ficar "órfãos" em silêncio.
+//
+// Um documento sem entidade cadastrada, ou apontando para uma que foi excluída,
+// passa a aparecer sob a entidade mais antiga (a primeira da lista) só na tela —
+// nada é reescrito no armazenamento. Sem aviso, isso pode gerar dúvida depois
+// sobre a quem um ETP realmente pertence.
+export function contarDocumentosDaEntidade(entidadeId, { etps = [], justificativas = [], declaracoes = [] }) {
+  const conta = lista => lista.filter(d => d.secretariaId === entidadeId).length;
+  return conta(etps) + conta(justificativas) + conta(declaracoes);
+}
