@@ -1,31 +1,51 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
- <head>
-  <meta charset="UTF-8" />
-
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <title>ETP Inteligente — Planejamento consistente para contratações públicas</title>
-
-  <meta
-    name="description"
-    content="Sistema inteligente para elaboração de Estudos Técnicos Preliminares conforme a Lei nº 14.133/2021."
-  />
-
-  <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="apple-touch-icon" href="/favicon.png" />
-
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <style>
-    html,
-    body,
-    #root {
-      height: 100%;
-      margin: 0;
-    }
-  </style>
-</head>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gerador de ETP — Lei nº 14.133/2021</title>
+    <!-- Tailwind via CDN: o app usa só classes utilitárias padrão do Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Necessário para o menu lateral poder ficar fixo com rolagem própria */
+      html, body, #root { height: 100%; margin: 0; }
+    </style>
+    <script>
+      // Captura erros que o limite de erro do React não alcança: falhas em
+      // código assíncrono (ex.: carregamento de dados) viram rejeições de
+      // promessa não tratadas, não erros de renderização. Sem isto, a tela
+      // fica em branco sem nenhuma pista — especialmente ruim no celular,
+      // onde não dá para abrir o console do navegador.
+      function mostrarErroGlobal(titulo, texto) {
+        if (document.getElementById("erro-global-overlay")) return;
+        var div = document.createElement("div");
+        div.id = "erro-global-overlay";
+        div.style.cssText = "position:fixed;inset:0;z-index:99999;background:#FAF7F0;" +
+          "display:flex;align-items:center;justify-content:center;padding:20px;" +
+          "font-family:system-ui,sans-serif;";
+        div.innerHTML =
+          '<div style="max-width:560px;width:100%;">' +
+          '<h1 style="color:#1C2E4A;font-size:20px;margin-bottom:8px;">' + titulo + '</h1>' +
+          '<p style="color:#6B675E;font-size:14px;margin-bottom:16px;line-height:1.5;">' +
+          'Copie o texto abaixo e envie para quem está dando manutenção no sistema.</p>' +
+          '<pre style="background:white;border:1px solid #DAD3C2;border-radius:8px;padding:14px;' +
+          'font-size:12px;color:#A6403D;overflow-x:auto;white-space:pre-wrap;word-break:break-word;">' +
+          texto.replace(/</g, "&lt;") + '</pre>' +
+          '<button onclick="window.location.reload()" style="margin-top:16px;padding:10px 18px;' +
+          'border-radius:8px;border:none;background:#1C2E4A;color:#FAF7F0;font-size:14px;font-weight:600;">' +
+          'Recarregar</button></div>';
+        document.body.appendChild(div);
+      }
+      window.addEventListener("error", function (e) {
+        mostrarErroGlobal("Algo quebrou ao carregar", (e.error && e.error.stack) || e.message);
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        var motivo = e.reason;
+        var texto = (motivo && motivo.stack) ? motivo.stack : String(motivo);
+        mostrarErroGlobal("Falha ao carregar os dados", texto);
+      });
+    </script>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>

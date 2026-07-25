@@ -4,7 +4,7 @@
 // é a porta; a fechadura fica no servidor. Mesmo que alguém contorne esta tela, o banco
 // recusa qualquer leitura sem um usuário autorizado.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail,
   setPersistence, browserLocalPersistence, browserSessionPersistence,
@@ -38,8 +38,8 @@ function traduzirErro(codigo) {
 }
 
 // ---------- Migração dos dados que já estavam neste navegador ----------
-const CHAVES_PREFIXO = ["etp:", "just:", "decl:", "sec:"];
-const CHAVES_SOLTAS = ["pca:planilha", "timbre:padrao", "diretorio:responsaveis"];
+const CHAVES_PREFIXO = ["etp:", "just:", "decl:", "sec:", "pca:"];
+const CHAVES_SOLTAS = ["timbre:padrao", "diretorio:responsaveis"];
 const MARCA_MIGRACAO = "etpgen:migrado-para-nuvem";
 
 async function haDadosLocais() {
@@ -96,110 +96,11 @@ export default function PortaDeEntrada({ children }) {
   const [migrando, setMigrando] = useState(false);
   const [progresso, setProgresso] = useState({ feitos: 0, total: 0 });
 
-  const [mostrarAvisoSessao, setMostrarAvisoSessao] = useState(false);
-  const [segundosRestantes, setSegundosRestantes] = useState(120);
-
-  const timerSessao = useRef(null);
-  const timerContagem = useRef(null);
-  const avisoSessaoAberto = useRef(false);
-  
-  const HORA = 60 * 60 * 1000;
-  const TEMPO_AVISO = 4 * HORA;
-  const TEMPO_CONTAGEM = 120;
-
-function abrirAvisoSessao() {
-    avisoSessaoAberto.current = true;
-  
-    clearInterval(timerContagem.current);
-
-    setMostrarAvisoSessao(true);
-    setSegundosRestantes(TEMPO_CONTAGEM);
-
-    timerContagem.current = setInterval(() => {
-
-        setSegundosRestantes(valor => {
-
-            if (valor <= 1) {
-                sairAgora();
-                return 0;
-            }
-
-            return valor - 1;
-        });
-
-    }, 1000);
-}
-
-function renovarSessao() {
-    if (avisoSessaoAberto.current) return;
-  
-    clearTimeout(timerSessao.current);
-    clearInterval(timerContagem.current);
-
-    timerSessao.current = setTimeout(
-        abrirAvisoSessao,
-        TEMPO_AVISO
-    );
-}
-
-function resetarSessao() {
-    avisoSessaoAberto.current = false;
-
-    clearTimeout(timerSessao.current);
-    clearInterval(timerContagem.current);
-
-    setMostrarAvisoSessao(false);
-    setSegundosRestantes(TEMPO_CONTAGEM);
-}
-  
-function continuarSessao() {
-    resetarSessao();
-    renovarSessao();
-}
-
-async function sairAgora() {
-    resetarSessao();
-    await signOut(auth);
-}
-  
   useEffect(() => onAuthStateChanged(auth, u => setUsuario(u)), []);
 
   useEffect(() => {
-    if (!usuario) return;
-
-    resetarSessao();
-
-    haDadosLocais().then(setPendentes).catch(() => {});
-}, [usuario]);
-
-  useEffect(() => {
-    if (!usuario) return;
-
-    const eventos = [
-        "mousemove",
-        "mousedown",
-        "click",
-        "keydown",
-        "keypress",
-        "scroll",
-        "touchstart"
-    ];
-
-    eventos.forEach(e =>
-        window.addEventListener(e, renovarSessao)
-    );
-
-    renovarSessao();
-
-return () => {
-    resetarSessao();
-
-    eventos.forEach(e =>
-        window.removeEventListener(e, renovarSessao)
-    );
-};
-    
-}, [usuario]);
+    if (usuario) haDadosLocais().then(setPendentes).catch(() => {});
+  }, [usuario]);
 
   // "Lembrar-me" define se a sessão sobrevive ao fechar o navegador
   async function aplicarPersistencia() {
@@ -508,7 +409,7 @@ return () => {
             </div>
           ) : (
             <div className="flex items-center gap-2 mt-5">
-              <button onClick={sairAgora}>
+              <button onClick={() => signOut(auth)}
                 className="px-3.5 py-2.5 rounded-lg text-sm font-medium"
                 style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
                 Sair
@@ -532,113 +433,19 @@ return () => {
 
   // ----- Tudo certo: mostra o app, com uma faixa de identificação no topo -----
   return (
-    <>
-      {mostrarAvisoSessao && (
-<div
-    style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 999999
-    }}
->
-
-<div
-    style={{
-        width: 420,
-        background: "white",
-        borderRadius: 12,
-        padding: 28,
-        boxShadow: "0 20px 60px rgba(0,0,0,.25)"
-    }}
->
-
-<h2
-    style={{
-        fontSize: 22,
-        fontWeight: 700,
-        marginBottom: 12
-    }}
->
-Sessão expirando
-</h2>
-
-<p style={{marginBottom:20}}>
-
-Sua sessão será encerrada por segurança devido à inatividade.
-
-</p>
-
-<div
-    style={{
-        fontSize: 42,
-        fontWeight: "bold",
-        textAlign: "center",
-        marginBottom: 20
-    }}
->
-{Math.floor(segundosRestantes / 60)}
-:
-{String(segundosRestantes % 60).padStart(2,"0")}
-</div>
-
-<div
-    style={{
-        display:"flex",
-        gap:12
-    }}
->
-
-<button
-onClick={sairAgora}
-style={{
-    flex:1,
-    padding:12,
-    borderRadius:8
-}}
->
-Sair
-</button>
-
-<button
-onClick={continuarSessao}
-style={{
-    flex:1,
-    padding:12,
-    borderRadius:8,
-    background:"#1C2E4A",
-    color:"white"
-}}
->
-Continuar trabalhando
-</button>
-
-</div>
-
-</div>
-
-</div>
-)}
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div className="flex items-center gap-3 px-4 py-1.5 text-xs shrink-0"
         style={{ background: C.navyDark, color: "#B7C0CC", fontFamily: "Inter, system-ui, sans-serif" }}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.green }} />
         <span className="truncate">{usuario.email}</span>
-    <button
-        onClick={sairAgora}
-        className="ml-auto font-medium shrink-0"
-        style={{ color: C.brassLight }}
->
-        Sair
-      </button>
+        <button onClick={() => signOut(auth)} className="ml-auto font-medium shrink-0"
+          style={{ color: C.brassLight }}>
+          Sair
+        </button>
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         {typeof children === "function" ? children(usuario) : children}
       </div>
     </div>
-  </>
   );
 }
