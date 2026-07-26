@@ -29,7 +29,7 @@ service cloud.firestore {
         let antes = resource.data;
         let depois = request.resource.data;
         let apenasEstesCamposMudaram = depois.diff(antes).affectedKeys().hasOnly([
-          'status', 'dataAceite', 'prazoLimite', 'prazoLimiteISO', 'dataEntregaInformada',
+          'status', 'dataAceite', 'prazoLimite', 'prazoLimiteISO',
           'reciboImutavel', 'motivoDivergencia', 'dataDivergencia', 'updatedAt'
         ]);
         let estadoAnteriorPermite = antes.status == 'Aguardando Aceite';

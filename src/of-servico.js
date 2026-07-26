@@ -139,11 +139,12 @@ export async function buscarOfPorToken(token) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-// dataEntregaInformada: data (ISO, aaaa-mm-dd) em que o FORNECEDOR diz que
-// o produto chegou de fato — pode ser diferente do dia em que ele clica em
-// confirmar aqui. É essa data, não a do clique, que serve para avaliar se
-// o prazo foi cumprido.
-export async function confirmarRecebimento(token, ofAtual, dataEntregaInformada) {
+// A confirmação registra apenas O MOMENTO EM QUE O FORNECEDOR CLICOU no
+// link — não pede nem depende de nenhuma data informada por ele. O prazo
+// (prazoLimite/prazoLimiteISO) é calculado pelo próprio sistema, a partir
+// desse clique. A data real de chegada do produto é confirmada depois,
+// pela própria equipe, numa tela à parte (ainda não construída).
+export async function confirmarRecebimento(token, ofAtual) {
   const agora = new Date();
   const dataAceiteStr = agora.toLocaleString("pt-BR");
   const prazoDias = parseInt(ofAtual.prazoDias || 10, 10);
@@ -158,7 +159,7 @@ export async function confirmarRecebimento(token, ofAtual, dataEntregaInformada)
   // segurança já protege com a transição validada.
   await updateDoc(doc(db, COL_OF, token), {
     status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr, prazoLimiteISO,
-    dataEntregaInformada: dataEntregaInformada || "", reciboImutavel, updatedAt: Date.now(),
+    reciboImutavel, updatedAt: Date.now(),
   });
 
   // Só depois cria o índice chave -> token. A regra de segurança confere,
@@ -168,7 +169,7 @@ export async function confirmarRecebimento(token, ofAtual, dataEntregaInformada)
 
   return {
     ...ofAtual, status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr,
-    prazoLimiteISO, dataEntregaInformada: dataEntregaInformada || "", reciboImutavel,
+    prazoLimiteISO, reciboImutavel,
   };
 }
 
