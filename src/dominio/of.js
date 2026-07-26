@@ -161,6 +161,55 @@ export function montarConfirmacaoEntrega(dataEntregaReal, prazoLimiteISO, confir
   };
 }
 
+// ---------- Agrupamento por aba, para a tela de gestão ----------
+// "Entregue no prazo" e "fora do prazo" ficam juntos numa aba só
+// ("Entregues"), diferenciados pela cor do selo na tabela — separar em duas
+// abas deixaria a barra grande demais no celular.
+export const GRUPOS_SITUACAO_OF = [
+  { id: "todas", rotulo: "Todas" },
+  { id: "rascunho", rotulo: "Rascunhos" },
+  { id: "aguardando-fornecedor", rotulo: "Aguardando fornecedor" },
+  { id: "aguardando-entrega", rotulo: "Aguardando entrega" },
+  { id: "entregues", rotulo: "Entregues" },
+  { id: "nao-entregues", rotulo: "Não entregues" },
+  { id: "divergencias", rotulo: "Divergências" },
+];
+
+// ---------- Validação do lote de importação (várias OFs de uma vez) ----------
+
+// Verifica um item do lote: mensagem de erro (se houver) ou null se estiver
+// pronto para disparar. Confere o número tanto contra as OFs já existentes
+// quanto contra os OUTROS arquivos do mesmo lote — dois PDFs do lote podem
+// colidir entre si mesmo sem nenhum já existir no banco.
+export function validarItemLote(item, todosOsItensDoLote, ofsExistentes) {
+  const outrosDoLote = (todosOsItensDoLote || [])
+    .filter(i => i.idLocal !== item.idLocal)
+    .map(i => ({ id: i.idLocal, numeroOf: i.numeroOf }));
+  if (numeroOfDuplicado(item.numeroOf, [...(ofsExistentes || []), ...outrosDoLote], item.idLocal)) {
+    return "Número de OF repetido";
+  }
+  if (!item.emailFornecedor?.trim()) return "Falta e-mail";
+  return null;
+}
+
+// Reaplica a validação em todos os itens do lote — chamado sempre que algum
+// item muda (edição manual, remoção, novo arquivo lido).
+export function recalcularErrosLote(itens, ofsExistentes) {
+  return itens.map(item => ({ ...item, erro: validarItemLote(item, itens, ofsExistentes) }));
+}
+
+export function grupoDaSituacao(chaveSituacao) {
+  switch (chaveSituacao) {
+    case "rascunho": return "rascunho";
+    case "aguardando": case "sem-resposta": return "aguardando-fornecedor";
+    case "aguardando-entrega": case "aguardando-confirmacao": case "vencido": return "aguardando-entrega";
+    case "em-dia": case "atrasado": return "entregues";
+    case "nao-entregue": return "nao-entregues";
+    case "divergencia": return "divergencias";
+    default: return "todas";
+  }
+}
+
 // Calcula a data-limite (string pt-BR, para exibir) a partir de agora + prazoDias.
 // Mantida por compatibilidade com quem ainda não passa o calendário — não
 // considera feriado nenhum, só soma dias corridos puros.

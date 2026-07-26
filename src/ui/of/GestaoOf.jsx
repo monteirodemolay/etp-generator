@@ -11,10 +11,11 @@ import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Inf
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
-  calcularSituacao, emptyOf } from "../../dominio/of.js";
+  calcularSituacao, emptyOf, GRUPOS_SITUACAO_OF, grupoDaSituacao } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
 import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega } from "../../of-servico.js";
+import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { todayISO, fmtDateISO } from "../../dominio/datas.js";
 
 const COR_SITUACAO = {
@@ -30,6 +31,8 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
   const [aExcluir, setAExcluir] = useState(null);
   const [aDisparar, setADisparar] = useState(null); // OF aguardando confirmação de envio
   const [confirmandoEntregaDe, setConfirmandoEntregaDe] = useState(null); // OF cuja entrega está sendo confirmada
+  const [filtroAba, setFiltroAba] = useState("todas");
+  const [loteAberto, setLoteAberto] = useState(false);
   const [dataEntregaForm, setDataEntregaForm] = useState(todayISO());
   const [naoEntregueForm, setNaoEntregueForm] = useState(false);
   const [salvandoEntrega, setSalvandoEntrega] = useState(false);
@@ -188,7 +191,14 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
     janela.print();
   }
 
-  const linhas = ofs.map(item => ({ item, situacao: calcularSituacao(item) }));
+  const todasAsLinhas = ofs.map(item => ({ item, situacao: calcularSituacao(item) }));
+  const contagemPorGrupo = GRUPOS_SITUACAO_OF.reduce((acc, g) => {
+    acc[g.id] = g.id === "todas" ? todasAsLinhas.length
+      : todasAsLinhas.filter(l => grupoDaSituacao(l.situacao.chave) === g.id).length;
+    return acc;
+  }, {});
+  const linhas = filtroAba === "todas" ? todasAsLinhas
+    : todasAsLinhas.filter(l => grupoDaSituacao(l.situacao.chave) === filtroAba);
 
   // Sem uma entidade específica selecionada (ex.: "Todas as Entidades"), não
   // existe dono claro para a nova OF. Já aconteceu de isso cair em silêncio
@@ -206,6 +216,12 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
           <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Ordens de Fornecimento</h1>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setLoteAberto(true)} disabled={semEntidadeEspecifica}
+            title={semEntidadeEspecifica ? "Selecione uma entidade específica primeiro" : "Importa vários PDFs de OF de uma vez"}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: C.brassLight, color: C.navyDark }}>
+            <Upload size={15} /> Importar várias OFs
+          </button>
           <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold"
             style={{
               background: C.paperDark, color: semEntidadeEspecifica ? C.inkMuted : C.navy,
@@ -244,10 +260,34 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
         </div>
       )}
 
+      {ofs.length > 0 && (
+        <div className="flex items-center gap-1 mb-4 overflow-x-auto etp-scroll border-b" style={{ borderColor: C.border }}>
+          {GRUPOS_SITUACAO_OF.map(g => {
+            const ativo = filtroAba === g.id;
+            const n = contagemPorGrupo[g.id] || 0;
+            return (
+              <button key={g.id} onClick={() => setFiltroAba(g.id)}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap -mb-px border-b-2"
+                style={{ borderColor: ativo ? C.brass : "transparent", color: ativo ? C.navy : C.inkMuted }}>
+                {g.rotulo}
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full"
+                  style={{ background: ativo ? "rgba(166,131,46,0.15)" : C.paperDark, color: ativo ? C.brass : C.inkMuted }}>
+                  {n}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {ofs.length === 0 ? (
         <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <Mail size={30} className="mx-auto mb-3" style={{ color: C.border }} />
           <p className="text-sm" style={{ color: C.inkMuted }}>Nenhuma Ordem de Fornecimento cadastrada nesta entidade.</p>
+        </div>
+      ) : linhas.length === 0 ? (
+        <div className="text-center py-10 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhuma OF neste status.</p>
         </div>
       ) : (
         <div className="rounded-xl border overflow-x-auto etp-scroll" style={{ borderColor: C.border, background: "white" }}>
@@ -465,6 +505,15 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
             </div>
           </div>
         </div>
+      )}
+
+      {loteAberto && (
+        <ImportarLoteModal
+          ofsExistentes={ofs} fornecedores={fornecedores} secretariaId={secretariaId} municipioId={municipioId}
+          onSalvarFornecedor={onSalvarFornecedor}
+          onFechar={() => setLoteAberto(false)}
+          onConcluido={onRecarregar}
+        />
       )}
     </>
   );
