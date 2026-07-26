@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, Fragment } from "react";
 import {
   ClipboardList, FileText, Plus, ListChecks, FileEdit, Building2, Users,
   Download, Trash2, Search, Copy, Info, Check, AlertCircle, TrendingUp, X, Scale,
-  AlertTriangle, Bell, ChevronRight, Mail,
+  AlertTriangle, Bell, ChevronRight, Mail, ShieldCheck,
 } from "lucide-react";
 import { C, COR_SITUACAO } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
@@ -23,12 +23,10 @@ import { listaResponsaveis } from "../../dominio/etp.js";
 import { verificarConformidade } from "../../dominio/conformidade.js";
 import { contarPrevistosNoPca } from "../../dominio/pca.js";
 import { DIAS_NA_LIXEIRA } from "../../dominio/lixeira.js";
-import { UsuariosView } from "../admin/usuarios.jsx";
-import { SecretariasView } from "../admin/entidades.jsx";
 import { LixeiraView } from "./lixeira.jsx";
 import { NormativosView } from "./normativos.jsx";
+import { AdminView } from "../admin/AdminView.jsx";
 import { GestaoOf } from "../of/GestaoOf.jsx";
-import { TelaBackup } from "./backup.jsx";
 import { GuiaRapido, JanelaNovoDocumento } from "./janelas.jsx";
 
 
@@ -113,12 +111,12 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
-    { id: "secretarias", rotulo: "Entidades", icone: Building2, contador: secretarias.length, somenteAdmin: true },
-    { id: "usuarios", rotulo: "Usuários", icone: Users, contador: usuarios.length, somenteAdmin: true },
     { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento", icone: Mail, contador: ofs.length },
     { id: "normativos", rotulo: "Materiais Normativos", icone: Scale, contador: normativos.length },
     { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
-    { id: "backup", rotulo: "Backup", icone: Download },
+    // Entidades, Usuários, Dias Úteis e Backup viviam soltos na lateral — agora
+    // moram juntos aqui dentro, como sub-abas de uma única tela administrativa.
+    { id: "admin", rotulo: "Admin", icone: ShieldCheck, somenteAdmin: true },
   ].filter(m => (m.somenteAdmin ? permissoes.gerenciarEntidades : permissoes.paginas?.[m.id] !== false));
 
   return (
@@ -697,16 +695,16 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             </>
           )}
 
-          {aba === "usuarios" && (
-            <UsuariosView usuarios={usuarios} secretarias={secretarias} emailAtual={emailUsuario}
-              onSalvar={onSalvarUsuario} onNovo={onSalvarUsuario} onExcluir={onExcluirUsuario} />
-          )}
-
-          {aba === "secretarias" && (
-            <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
+          {aba === "admin" && (
+            <AdminView
+              secretarias={secretarias} onSalvarSecretaria={onSalvarSecretaria}
+              onNovaSecretaria={onNovaSecretaria} onExcluirSecretaria={onExcluirSecretaria}
+              municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio}
+              usuarios={usuarios} emailUsuario={emailUsuario}
+              onSalvarUsuario={onSalvarUsuario} onExcluirUsuario={onExcluirUsuario}
               etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
-              onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria}
-              municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio} />
+              onRecarregar={onRecarregar}
+            />
           )}
 
           {aba === "ordens_fornecimento" && (
@@ -724,7 +722,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               onEsvaziar={onEsvaziar} podeEsvaziar={permissoes.esvaziarLixeira} />
           )}
 
-          {aba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}
+          {/* Backup agora é uma sub-aba de Admin, não mais uma aba solta */}
 
           {aba === "justificativas" && (
             <>

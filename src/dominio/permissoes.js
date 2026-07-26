@@ -25,6 +25,9 @@ export const PAPEIS = {
   },
 };
 
+// "Backup" saiu daqui — não é mais uma página que dá para liberar
+// individualmente para um usuário padrão. Ela agora vive dentro de "Admin",
+// que já é restrito a quem administra.
 export const PAGINAS_CONFIGURAVEIS = [
   { id: "etps", rotulo: "Meus ETPs" },
   { id: "declaracoes", rotulo: "Declarações de PCA" },
@@ -32,7 +35,6 @@ export const PAGINAS_CONFIGURAVEIS = [
   { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento" },
   { id: "normativos", rotulo: "Materiais Normativos" },
   { id: "lixeira", rotulo: "Lixeira" },
-  { id: "backup", rotulo: "Backup" },
 ];
 export const PAGINAS_PADRAO = Object.fromEntries(PAGINAS_CONFIGURAVEIS.map(p => [p.id, true]));
 
