@@ -7,26 +7,32 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2 } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   calcularSituacao, emptyOf } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega } from "../../of-servico.js";
+import { todayISO, fmtDateISO } from "../../dominio/datas.js";
 
 const COR_SITUACAO = {
   "rascunho": C.inkMuted, "aguardando": C.brass, "sem-resposta": "#fd7e14",
   "divergencia": "#b45309", "vencido": C.red, "em-dia": C.green, "atrasado": C.red,
+  "aguardando-entrega": C.brass, "aguardando-confirmacao": "#fd7e14", "nao-entregue": C.red,
 };
 
-export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalvarFornecedor }) {
+export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
   const [lendoPdf, setLendoPdf] = useState(false);
   const [aExcluir, setAExcluir] = useState(null);
   const [aDisparar, setADisparar] = useState(null); // OF aguardando confirmação de envio
+  const [confirmandoEntregaDe, setConfirmandoEntregaDe] = useState(null); // OF cuja entrega está sendo confirmada
+  const [dataEntregaForm, setDataEntregaForm] = useState(todayISO());
+  const [naoEntregueForm, setNaoEntregueForm] = useState(false);
+  const [salvandoEntrega, setSalvandoEntrega] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
   const [aviso, setAviso] = useState("");
@@ -116,6 +122,30 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
       setErro("Não foi possível enviar: " + (e2.message || e2));
     }
     setEnviando(false);
+  }
+
+  function abrirConfirmacaoEntrega(item) {
+    const jaTem = item.confirmacaoEntrega;
+    setDataEntregaForm(jaTem?.dataEntregaReal || todayISO());
+    setNaoEntregueForm(jaTem?.situacao === "nao-entregue");
+    setConfirmandoEntregaDe(item);
+    setErro("");
+  }
+
+  async function handleConfirmarEntrega() {
+    setSalvandoEntrega(true);
+    try {
+      await confirmarEntrega(
+        confirmandoEntregaDe.token,
+        naoEntregueForm ? null : dataEntregaForm,
+        emailUsuario
+      );
+      setConfirmandoEntregaDe(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível registrar a entrega: " + (e2.message || e2));
+    }
+    setSalvandoEntrega(false);
   }
 
   async function handleExcluir(item) {
@@ -232,6 +262,14 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
                         <button onClick={() => imprimirRecibo(item)} title="Imprimir recibo"
                           className="p-1.5 rounded" style={{ color: C.inkMuted }}><Printer size={14} /></button>
                       )}
+                      {item.status === "Em Dia" && (
+                        <button onClick={() => abrirConfirmacaoEntrega(item)}
+                          title={item.confirmacaoEntrega ? "Alterar confirmação de entrega" : "Confirmar entrega do produto"}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold"
+                          style={{ background: item.confirmacaoEntrega ? C.paperDark : C.green, color: item.confirmacaoEntrega ? C.navy : "white" }}>
+                          <PackageCheck size={13} /> {item.confirmacaoEntrega ? "Entrega confirmada" : "Confirmar entrega"}
+                        </button>
+                      )}
                       <button onClick={() => setADisparar(item)} title={item.status === "Rascunho" ? "Disparar" : "Reenviar"}
                         className="px-2.5 py-1.5 rounded-md text-xs font-semibold"
                         style={{ background: situacao.precisaReenviar ? "#fd7e14" : C.navy, color: "white" }}>
@@ -338,6 +376,52 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
           onConfirmar={confirmarDisparo}
           onCancelar={() => setADisparar(null)}
         />
+      )}
+
+      {confirmandoEntregaDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Confirmar entrega — OF nº {confirmandoEntregaDe.numeroOf}
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              O fornecedor já confirmou o recebimento da OF em {confirmandoEntregaDe.dataAceite}.
+              Isto aqui é diferente: é a confirmação de que o produto chegou de verdade.
+            </p>
+
+            <label className="flex items-center gap-2 mb-4 cursor-pointer">
+              <input type="checkbox" checked={naoEntregueForm}
+                onChange={e => setNaoEntregueForm(e.target.checked)} />
+              <span className="text-sm" style={{ color: C.ink }}>O produto não foi entregue</span>
+            </label>
+
+            {!naoEntregueForm && (
+              <label className="block mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                  Data em que o produto chegou
+                </span>
+                <input type="date" value={dataEntregaForm} max={todayISO()}
+                  onChange={e => setDataEntregaForm(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+                <span className="block mt-1 text-[11px]" style={{ color: C.inkMuted }}>
+                  Prazo combinado: até {confirmandoEntregaDe.prazoLimite}. O sistema calcula sozinho se
+                  está dentro ou fora do prazo — não precisa avaliar isso.
+                </span>
+              </label>
+            )}
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button type="button" onClick={() => setConfirmandoEntregaDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleConfirmarEntrega} disabled={salvandoEntrega}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.navy, color: C.paper }}>
+                {salvandoEntrega ? "Salvando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

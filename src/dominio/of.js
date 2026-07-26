@@ -96,28 +96,68 @@ export function calcularSituacao(item) {
 
   if (item.status === "Divergência") return { chave: "divergencia", texto: "Divergência relatada pelo fornecedor" };
 
-  // A partir daqui, a OF já foi confirmada ("Em Dia"). A conformidade se
-  // julga pela DATA REAL DA ENTREGA que o fornecedor informou, não por
-  // "hoje" — senão uma entrega feita certinho, no prazo, passaria a
-  // aparecer como "vencida" meses depois, só porque o calendário virou.
-  if (item.dataEntregaInformada && item.prazoLimiteISO) {
-    const noPrazo = entregaDentroDoPrazo(item.dataEntregaInformada, item.prazoLimiteISO);
-    return noPrazo
-      ? { chave: "em-dia", texto: `Entregue no prazo (${fmtDateISO(item.dataEntregaInformada)})` }
-      : { chave: "atrasado", texto: `Entregue com atraso (${fmtDateISO(item.dataEntregaInformada)})`, atrasado: true };
+  // A partir daqui, o fornecedor já confirmou o recebimento da OF (status
+  // "Em Dia"). Isso NÃO é o mesmo que o produto ter chegado — é só o
+  // fornecedor confirmando que recebeu a ordem e o prazo começou a contar.
+  //
+  // Se a equipe já fechou a avaliação da entrega em si, essa é a palavra
+  // final — nunca mais depende de "hoje", porque uma entrega registrada
+  // como no prazo não pode virar "vencida" só porque o tempo passou.
+  if (item.confirmacaoEntrega) {
+    const { situacao, dataEntregaReal } = item.confirmacaoEntrega;
+    if (situacao === SITUACAO_ENTREGA.NAO_ENTREGUE) {
+      return { chave: "nao-entregue", texto: "Não entregue", naoEntregue: true };
+    }
+    if (situacao === SITUACAO_ENTREGA.NO_PRAZO) {
+      return { chave: "em-dia", texto: `Entregue no prazo (${fmtDateISO(dataEntregaReal)})` };
+    }
+    if (situacao === SITUACAO_ENTREGA.FORA_DO_PRAZO) {
+      return { chave: "atrasado", texto: `Entregue fora do prazo (${fmtDateISO(dataEntregaReal)})`, atrasado: true };
+    }
   }
 
-  // Confirmações antigas, de antes desta data ter sido registrada — mantém
-  // o comportamento anterior como último recurso, para não quebrar nada.
+  // Ainda sem a confirmação da equipe — mostra um alerta provisório
+  // (o prazo já venceu e ninguém fechou a entrega ainda), mas isso não é o
+  // veredito final, é só um lembrete de que falta confirmar.
   if (item.prazoLimite) {
     const [d, m, a] = item.prazoLimite.split("/");
     const dataLimite = new Date(a, m - 1, d);
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
-    if (hoje > dataLimite) return { chave: "vencido", texto: "Prazo de entrega vencido (sem data informada)", vencido: true };
+    if (hoje > dataLimite) {
+      return { chave: "aguardando-confirmacao", texto: "Prazo vencido — aguardando confirmação da entrega", precisaConfirmarEntrega: true };
+    }
   }
 
-  return { chave: "em-dia", texto: "Confirmado, dentro do prazo" };
+  return { chave: "aguardando-entrega", texto: "Aguardando confirmação da entrega", precisaConfirmarEntrega: true };
+}
+
+// ---------- Confirmação da entrega, feita pela equipe ----------
+
+export const SITUACAO_ENTREGA = {
+  NO_PRAZO: "no-prazo",
+  FORA_DO_PRAZO: "fora-do-prazo",
+  NAO_ENTREGUE: "nao-entregue",
+};
+
+// A equipe informa só a data real de entrega (ou marca que não chegou) — o
+// sistema decide sozinho se ficou dentro ou fora do prazo, comparando com
+// o prazoLimiteISO já calculado desde a confirmação do fornecedor.
+export function classificarEntrega(dataEntregaReal, prazoLimiteISO) {
+  if (!dataEntregaReal) return SITUACAO_ENTREGA.NAO_ENTREGUE;
+  if (!prazoLimiteISO) return null; // não deveria acontecer, mas não afirma nada sem prazo pra comparar
+  return entregaDentroDoPrazo(dataEntregaReal, prazoLimiteISO)
+    ? SITUACAO_ENTREGA.NO_PRAZO
+    : SITUACAO_ENTREGA.FORA_DO_PRAZO;
+}
+
+export function montarConfirmacaoEntrega(dataEntregaReal, prazoLimiteISO, confirmadoPor) {
+  return {
+    situacao: classificarEntrega(dataEntregaReal, prazoLimiteISO),
+    dataEntregaReal: dataEntregaReal || null,
+    confirmadoEm: Date.now(),
+    confirmadoPor: confirmadoPor || "",
+  };
 }
 
 // Calcula a data-limite (string pt-BR, para exibir) a partir de agora + prazoDias.

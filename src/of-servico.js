@@ -28,7 +28,7 @@ import {
 import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
-import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO } from "./dominio/of.js";
+import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO, montarConfirmacaoEntrega } from "./dominio/of.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -171,6 +171,17 @@ export async function confirmarRecebimento(token, ofAtual) {
     ...ofAtual, status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr,
     prazoLimiteISO, reciboImutavel,
   };
+}
+
+// Confirmação da entrega, feita pela EQUIPE (autenticada), não pelo
+// fornecedor. Informa a data real (ou marca que não chegou) e o sistema
+// calcula sozinho se ficou dentro ou fora do prazo combinado.
+export async function confirmarEntrega(token, dataEntregaReal, confirmadoPor) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const confirmacaoEntrega = montarConfirmacaoEntrega(dataEntregaReal, of.prazoLimiteISO, confirmadoPor);
+  await updateDoc(doc(db, COL_OF, token), { confirmacaoEntrega, updatedAt: Date.now() });
+  return { ...of, confirmacaoEntrega };
 }
 
 export async function reportarDivergencia(token, texto) {

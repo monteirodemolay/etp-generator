@@ -710,7 +710,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           {aba === "ordens_fornecimento" && (
             <GestaoOf ofs={ofs} fornecedores={fornecedores}
               secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : (secretarias[0]?.id || null)}
-              onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} />
+              onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
           )}
 
           {aba === "normativos" && (
