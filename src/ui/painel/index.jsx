@@ -44,6 +44,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   municipios, onNovoMunicipio, onExcluirMunicipio,
+  feriados, onSalvarFeriado, onExcluirFeriado,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
   ofs, fornecedores, onSalvarFornecedor, onRecarregarOfs,
@@ -700,6 +701,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               secretarias={secretarias} onSalvarSecretaria={onSalvarSecretaria}
               onNovaSecretaria={onNovaSecretaria} onExcluirSecretaria={onExcluirSecretaria}
               municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio}
+              feriados={feriados} onSalvarFeriado={onSalvarFeriado} onExcluirFeriado={onExcluirFeriado}
               usuarios={usuarios} emailUsuario={emailUsuario}
               onSalvarUsuario={onSalvarUsuario} onExcluirUsuario={onExcluirUsuario}
               etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}

@@ -23,6 +23,7 @@ const SUBABAS = [
 export function AdminView({
   secretarias, onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria,
   municipios, onNovoMunicipio, onExcluirMunicipio,
+  feriados, onSalvarFeriado, onExcluirFeriado,
   usuarios, emailUsuario, onSalvarUsuario, onExcluirUsuario,
   etps, justificativas, declaracoes, ofs, onRecarregar,
 }) {
@@ -60,7 +61,8 @@ export function AdminView({
       )}
 
       {subaba === "dias-uteis" && (
-        <DiasUteisView municipios={municipios} />
+        <DiasUteisView municipios={municipios} feriados={feriados}
+          onSalvar={onSalvarFeriado} onExcluir={onExcluirFeriado} />
       )}
 
       {subaba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}

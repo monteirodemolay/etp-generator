@@ -31,6 +31,7 @@ import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-
 import { aplicar as migrarIncisosIVeV } from "./migracoes/001-corrige-incisos-iv-v.js";
 import { aplicar as migrarMunicipios } from "./migracoes/003-separa-entidades-por-municipio.js";
 import { contarEntidadesDoMunicipio } from "./dominio/municipios.js";
+import { gerarFeriadosNacionais, emptyFeriado } from "./dominio/dias-uteis.js";
 import { listaResponsaveis } from "./dominio/etp.js";
 import { TIPOS_OBJETO } from "./dominio/opcoes.js";
 
@@ -44,6 +45,7 @@ export default function App({ emailUsuario = null }) {
   const [normativos, setNormativos] = useState([]);
   const [fornecedores, setFornecedores] = useState([]);
   const [municipios, setMunicipios] = useState([]);
+  const [feriados, setFeriados] = useState([]);
   const [ofs, setOfs] = useState([]);
   const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
@@ -79,7 +81,7 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaLixo] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaFeriados, listaLixo] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
@@ -88,6 +90,7 @@ export default function App({ emailUsuario = null }) {
       carregarColecao("norma:"),
       carregarColecao("fornecedor:"),
       carregarColecao("municipio:"),
+      carregarColecao("feriado:"),
       carregarColecao(PREFIXO_LIXO),
     ]);
     // As Ordens de Fornecimento vivem numa coleção própria do Firestore (não
@@ -123,6 +126,29 @@ export default function App({ emailUsuario = null }) {
       }
     } catch (e) { console.error("Migração 003 (entidades por município)", e); }
 
+    // Garante que os feriados nacionais do ano corrente já existam, gerados
+    // e editáveis, PARA CADA MUNICÍPIO — cada um recebe sua própria cópia,
+    // de propósito: se um dia um município decidir que não observa o
+    // Carnaval, por exemplo, essa escolha não pode afetar os demais.
+    let feriadosFinais = listaFeriados;
+    try {
+      const anoAtual = new Date().getFullYear();
+      const faltantes = [];
+      for (const mun of municipiosFinais) {
+        const jaTem = feriadosFinais.some(f =>
+          f.tipo === "nacional" && f.municipioId === mun.id && f.data.startsWith(String(anoAtual)));
+        if (!jaTem) {
+          const novos = gerarFeriadosNacionais(anoAtual).map(f =>
+            emptyFeriado({ ...f, tipo: "nacional", municipioId: mun.id }));
+          faltantes.push(...novos);
+        }
+      }
+      if (faltantes.length > 0) {
+        await Promise.all(faltantes.map(f => storage.set("feriado:" + f.id, JSON.stringify(f), false)));
+        feriadosFinais = [...feriadosFinais, ...faltantes];
+      }
+    } catch (e) { console.error("Erro ao gerar feriados nacionais", e); }
+
     // Migra o PCA compartilhado (esquema antigo) para a primeira entidade,
     // uma única vez — a própria migração marca o que já rodou.
     await migrarPcaPorEntidade(storage, secretariasFinais).catch(e =>
@@ -141,6 +167,7 @@ export default function App({ emailUsuario = null }) {
     setNormativos(listaNormas.sort((a, b) => b.enviadoEm - a.enviadoEm));
     setFornecedores(listaFornecedores);
     setMunicipios(municipiosFinais);
+    setFeriados(feriadosFinais.sort((a, b) => a.data.localeCompare(b.data)));
     setOfs(listaOfs);
     // O que passou de 30 dias sai da lixeira sozinho
     const lixoValido = await limparLixeiraVencida(storage, listaLixo);
@@ -294,6 +321,24 @@ export default function App({ emailUsuario = null }) {
       return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
     });
     storage.set("municipio:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+
+  // ----- Dias Úteis -----
+  function salvarFeriado(f) {
+    const atualizado = { ...f, updatedAt: Date.now() };
+    setFeriados(prev => {
+      const existe = prev.some(x => x.id === atualizado.id);
+      const lista = existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
+      return lista.sort((a, b) => a.data.localeCompare(b.data));
+    });
+    storage.set("feriado:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+
+  async function excluirFeriado(id) {
+    try {
+      await storage.delete("feriado:" + id, false);
+      setFeriados(prev => prev.filter(f => f.id !== id));
+    } catch (err) { console.error(err); }
   }
 
   async function excluirMunicipio(id) {
@@ -605,6 +650,7 @@ export default function App({ emailUsuario = null }) {
           onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
           onExcluirSecretaria={excluirSecretaria}
           municipios={municipios} onNovoMunicipio={salvarMunicipio} onExcluirMunicipio={excluirMunicipio}
+          feriados={feriados} onSalvarFeriado={salvarFeriado} onExcluirFeriado={excluirFeriado}
           onRecarregar={loadList}
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           podeVerTodasEntidades={podeTodas}
