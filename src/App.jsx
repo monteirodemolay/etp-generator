@@ -314,13 +314,27 @@ export default function App({ emailUsuario = null }) {
   }
 
   // ----- Municípios -----
-  function salvarMunicipio(m) {
+  async function salvarMunicipio(m) {
+    const ehNovo = !municipios.some(x => x.id === m.id);
     const atualizado = { ...m, updatedAt: Date.now() };
     setMunicipios(prev => {
       const existe = prev.some(x => x.id === atualizado.id);
       return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
     });
     storage.set("municipio:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+
+    // Um município recém-criado ainda não tem feriado nenhum — sem isto,
+    // ele só ganharia os feriados nacionais na próxima vez que a página
+    // fosse recarregada do zero, não na hora em que é criado.
+    if (ehNovo) {
+      try {
+        const anoAtual = new Date().getFullYear();
+        const novos = gerarFeriadosNacionais(anoAtual).map(f =>
+          emptyFeriado({ ...f, tipo: "nacional", municipioId: atualizado.id }));
+        await Promise.all(novos.map(f => storage.set("feriado:" + f.id, JSON.stringify(f), false)));
+        setFeriados(prev => [...prev, ...novos].sort((a, b) => a.data.localeCompare(b.data)));
+      } catch (e) { console.error("Erro ao gerar feriados nacionais para o novo município", e); }
+    }
   }
 
   // ----- Dias Úteis -----

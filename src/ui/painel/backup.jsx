@@ -1,9 +1,9 @@
 /**
- * Tela de backup: exportar e importar todo o acervo.
+ * Tela de backup: exportar e importar, total ou de uma entidade específica.
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { Download, Upload, Check, AlertCircle, Info, Loader2 } from "lucide-react";
+import { Download, Upload, Check, AlertCircle, Info, Loader2, Building2 } from "lucide-react";
 import { C } from "../tokens.js";
 import { montarBackup, baixarBackup, lerBackup, resumirBackup, restaurarBackup } from "../../dominio/backup.js";
 import { fmtDate } from "../../dominio/datas.js";
@@ -11,7 +11,9 @@ import storage from "../../storage.js";
 
 
 // ---------- Backup ----------
-export function TelaBackup({ onRestaurado }) {
+export function TelaBackup({ secretarias = [], onRestaurado }) {
+  const [escopo, setEscopo] = useState("total"); // "total" | "entidade"
+  const [entidadeEscolhida, setEntidadeEscolhida] = useState(secretarias[0]?.id || "");
   const [exportando, setExportando] = useState(false);
   const [resumoAtual, setResumoAtual] = useState(null);
   const [arquivo, setArquivo] = useState(null);   // { pacote, resumo }
@@ -21,16 +23,24 @@ export function TelaBackup({ onRestaurado }) {
   const [feito, setFeito] = useState("");
   const inputRef = useRef(null);
 
+  const secretariaIdParaBackup = escopo === "entidade" ? entidadeEscolhida : undefined;
+
   useEffect(() => {
-    montarBackup().then(p => setResumoAtual(resumirBackup(p))).catch(() => {});
-  }, []);
+    setResumoAtual(null);
+    montarBackup(storage, { secretariaId: secretariaIdParaBackup })
+      .then(p => setResumoAtual(resumirBackup(p)))
+      .catch(() => {});
+  }, [secretariaIdParaBackup]);
 
   async function exportar() {
     setExportando(true);
     setErro("");
     try {
-      const pacote = await montarBackup();
-      baixarBackup(pacote);
+      const pacote = await montarBackup(storage, { secretariaId: secretariaIdParaBackup });
+      const nomeEntidade = escopo === "entidade"
+        ? secretarias.find(s => s.id === entidadeEscolhida)?.sigla
+        : null;
+      baixarBackup(pacote, nomeEntidade);
       setFeito("Backup baixado. Guarde o arquivo num lugar seguro — de preferência numa pasta sincronizada.");
       setTimeout(() => setFeito(""), 6000);
     } catch (e) {
@@ -59,7 +69,7 @@ export function TelaBackup({ onRestaurado }) {
     setRestaurando(true);
     setErro("");
     try {
-      await restaurarBackup(arquivo.pacote, modo);
+      await restaurarBackup(storage, arquivo.pacote, modo);
       setArquivo(null);
       setFeito("Backup restaurado.");
       onRestaurado?.();
@@ -68,6 +78,11 @@ export function TelaBackup({ onRestaurado }) {
       setErro("Falha ao restaurar. Nada foi perdido — tente novamente.");
     }
     setRestaurando(false);
+  }
+
+  function nomeDaEntidade(id) {
+    const s = secretarias.find(x => x.id === id);
+    return s?.sigla || s?.nome || "entidade removida";
   }
 
   const linhaResumo = (r) => (
@@ -110,21 +125,51 @@ export function TelaBackup({ onRestaurado }) {
             <Download size={15} />
             <span className="text-xs font-semibold tracking-widest uppercase">Salvar cópia</span>
           </div>
-          <h3 className="serif text-lg font-semibold mb-3" style={{ color: C.navy }}>Exportar tudo</h3>
+          <h3 className="serif text-lg font-semibold mb-3" style={{ color: C.navy }}>Exportar</h3>
+
+          <div className="space-y-2 mb-4">
+            {[
+              ["total", "Sistema inteiro", "Todas as entidades, de uma vez."],
+              ["entidade", "Só uma entidade", "Escolha qual — útil para compartilhar o arquivo com quem cuida só daquele setor."],
+            ].map(([v, titulo, desc]) => (
+              <label key={v} className="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer"
+                style={{ borderColor: escopo === v ? C.brass : C.border, background: escopo === v ? "rgba(166,131,46,0.06)" : "white" }}>
+                <input type="radio" name="escopo-backup" checked={escopo === v} onChange={() => setEscopo(v)}
+                  className="mt-0.5" style={{ accentColor: C.brass }} />
+                <span>
+                  <span className="block text-xs font-semibold" style={{ color: C.navy }}>{titulo}</span>
+                  <span className="block text-[11px] leading-snug mt-0.5" style={{ color: C.inkMuted }}>{desc}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          {escopo === "entidade" && (
+            <label className="block mb-4">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Entidade</span>
+              <select value={entidadeEscolhida} onChange={e => setEntidadeEscolhida(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                {secretarias.map(s => <option key={s.id} value={s.id}>{s.sigla || s.nome}</option>)}
+              </select>
+            </label>
+          )}
 
           {resumoAtual ? (
             <>
               {linhaResumo(resumoAtual)}
               <p className="text-[11px] mt-3" style={{ color: C.inkMuted }}>
-                Inclui também {resumoAtual.pcasPorEntidade > 0 ? `${resumoAtual.pcasPorEntidade} planilha(s) de PCA importada(s), ` : ""}
-                {resumoAtual.temTimbre ? "o timbre geral " : ""}e o diretório de responsáveis.
+                {escopo === "total"
+                  ? <>Inclui também {resumoAtual.pcasPorEntidade > 0 ? `${resumoAtual.pcasPorEntidade} planilha(s) de PCA, ` : ""}
+                      {resumoAtual.temTimbre ? "o timbre geral " : ""}e o diretório de responsáveis.</>
+                  : <>Inclui o cadastro e o PCA desta entidade. O timbre geral e o diretório de responsáveis
+                      são do sistema inteiro, por isso não entram num backup de uma entidade só.</>}
               </p>
             </>
           ) : (
             <p className="text-xs" style={{ color: C.inkMuted }}>Levantando o que há para salvar...</p>
           )}
 
-          <button onClick={exportar} disabled={exportando}
+          <button onClick={exportar} disabled={exportando || (escopo === "entidade" && !entidadeEscolhida)}
             className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60"
             style={{ background: C.navy, color: C.paper }}>
             {exportando ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
@@ -168,12 +213,27 @@ export function TelaBackup({ onRestaurado }) {
                 <b style={{ color: C.navy }}>{arquivo.nome}</b>
                 {arquivo.resumo.geradoEm && ` · gerado em ${fmtDate(new Date(arquivo.resumo.geradoEm).getTime())}`}
               </p>
+
+              {arquivo.resumo.escopo?.tipo === "entidade" ? (
+                <div className="flex items-center gap-1.5 mb-2 text-[11px] px-2.5 py-1.5 rounded-lg"
+                  style={{ background: "rgba(166,131,46,0.1)", color: C.navy }}>
+                  <Building2 size={12} /> Este arquivo é de uma entidade só: <b>{nomeDaEntidade(arquivo.resumo.escopo.secretariaId)}</b>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 mb-2 text-[11px] px-2.5 py-1.5 rounded-lg"
+                  style={{ background: C.paperDark, color: C.inkMuted }}>
+                  Este arquivo é do sistema inteiro.
+                </div>
+              )}
+
               {linhaResumo(arquivo.resumo)}
 
               <div className="mt-4 space-y-2">
                 {[
                   ["mesclar", "Mesclar com o que já existe", "Mantém seus documentos atuais. Documentos de mesmo identificador são substituídos pela versão do arquivo."],
-                  ["substituir", "Substituir tudo", "Apaga os documentos atuais e deixa apenas os do arquivo."],
+                  ["substituir", "Substituir tudo", arquivo.resumo.escopo?.tipo === "entidade"
+                    ? `Apaga os documentos ATUAIS DESTA ENTIDADE (${nomeDaEntidade(arquivo.resumo.escopo.secretariaId)}) e deixa só os do arquivo. As demais entidades não são afetadas.`
+                    : "Apaga os documentos atuais de todo o sistema e deixa apenas os do arquivo."],
                 ].map(([v, titulo, desc]) => (
                   <label key={v} className="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer"
                     style={{
@@ -195,9 +255,12 @@ export function TelaBackup({ onRestaurado }) {
                   style={{ background: "rgba(166,64,61,0.08)", color: C.ink }}>
                   <AlertCircle size={13} className="shrink-0 mt-0.5" style={{ color: C.red }} />
                   <span>
-                    Seus {resumoAtual?.etps || 0} ETP(s), {resumoAtual?.justificativas || 0} justificativa(s) e{" "}
-                    {resumoAtual?.declaracoes || 0} declaração(ões) atuais serão apagados. Se ainda não baixou um
-                    backup do estado de hoje, faça isso antes.
+                    {arquivo.resumo.escopo?.tipo === "entidade"
+                      ? <>Os ETPs, justificativas e declarações atuais <b>desta entidade</b> serão apagados.
+                          As demais entidades continuam intactas.</>
+                      : <>Seus {resumoAtual?.etps || 0} ETP(s), {resumoAtual?.justificativas || 0} justificativa(s) e{" "}
+                          {resumoAtual?.declaracoes || 0} declaração(ões) atuais serão apagados.</>}
+                    {" "}Se ainda não baixou um backup do estado de hoje, faça isso antes.
                   </span>
                 </div>
               )}
@@ -212,7 +275,7 @@ export function TelaBackup({ onRestaurado }) {
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-60"
                   style={{ background: modo === "substituir" ? C.red : C.navy, color: "white" }}>
                   {restaurando ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                  {restaurando ? "Restaurando..." : modo === "substituir" ? "Substituir tudo" : "Mesclar"}
+                  {restaurando ? "Restaurando..." : modo === "substituir" ? "Substituir" : "Mesclar"}
                 </button>
               </div>
             </>

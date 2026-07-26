@@ -65,7 +65,7 @@ export function AdminView({
           onSalvar={onSalvarFeriado} onExcluir={onExcluirFeriado} />
       )}
 
-      {subaba === "backup" && <TelaBackup onRestaurado={onRecarregar} />}
+      {subaba === "backup" && <TelaBackup secretarias={secretarias} onRestaurado={onRecarregar} />}
     </div>
   );
 }
