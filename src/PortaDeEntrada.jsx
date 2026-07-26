@@ -362,6 +362,11 @@ export default function PortaDeEntrada({ children }) {
                 Sou fornecedor e quero ver minhas Ordens de Fornecimento
               </a>
             </p>
+            <p className="text-[11px] text-center mt-1.5">
+              <a href="?termos=" style={{ color: C.inkMuted, textDecoration: "underline" }}>
+                Termos de Uso e Política de Privacidade
+              </a>
+            </p>
           </div>
 
           {/* Rodapé */}
