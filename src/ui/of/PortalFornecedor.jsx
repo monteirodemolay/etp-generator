@@ -8,6 +8,7 @@
 
 import React, { useState, useEffect } from "react";
 import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
+import { todayISO, fmtDateISO } from "../../dominio/datas.js";
 
 const C = {
   navy: "#1C2E4A", paper: "#FAF7F0", brass: "#A6832E",
@@ -22,6 +23,10 @@ export function PortalFornecedor({ token }) {
   const [divergencia, setDivergencia] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  // Pré-preenchida com hoje — na grande maioria das vezes é o dia certo, e
+  // quem está confirmando só precisa clicar. Só mexe se a entrega foi em
+  // outro dia (ex.: chegou sexta, só confirmou na segunda).
+  const [dataEntrega, setDataEntrega] = useState(todayISO());
 
   useEffect(() => {
     buscarOfPorToken(token)
@@ -33,7 +38,7 @@ export function PortalFornecedor({ token }) {
   async function handleConfirmar() {
     setConfirmando(true);
     try {
-      const atualizado = await confirmarRecebimento(token, of);
+      const atualizado = await confirmarRecebimento(token, of, dataEntrega);
       setOf(atualizado);
     } catch (e) {
       setErro("Não foi possível confirmar agora: " + (e.message || e));
@@ -80,6 +85,9 @@ export function PortalFornecedor({ token }) {
                 <div style={{ background: "#d1e7dd", border: "1px solid #badbcc", color: C.green, padding: 20, borderRadius: 8 }}>
                   <h3 style={{ margin: "0 0 8px 0" }}>✅ Recebimento confirmado</h3>
                   <p style={{ margin: "4px 0" }}><strong>Confirmado em:</strong> {of.reciboImutavel.dataConfirmacao}</p>
+                  {of.dataEntregaInformada && (
+                    <p style={{ margin: "4px 0" }}><strong>Data da entrega informada:</strong> {fmtDateISO(of.dataEntregaInformada)}</p>
+                  )}
                   <p style={{ margin: "4px 0" }}><strong>Prazo de entrega:</strong> {of.prazoDias} dia(s), até {of.prazoLimite}</p>
                   <div style={{ marginTop: 12, padding: 8, background: "#fff", borderRadius: 4, border: "1px dashed " + C.green, fontSize: 12, wordBreak: "break-all" }}>
                     <strong>Chave de autenticidade do recibo:</strong><br /><code>{of.reciboImutavel.chave}</code>
@@ -117,6 +125,17 @@ export function PortalFornecedor({ token }) {
 
             {!of.reciboImutavel && of.status !== "Divergência" && (
               <div>
+                <div style={{ background: "#f9fafb", padding: 16, borderRadius: 8, marginBottom: 16 }}>
+                  <label style={{ display: "block", fontWeight: "bold", marginBottom: 6, fontSize: 14 }}>
+                    Em que data o produto chegou?
+                  </label>
+                  <input type="date" value={dataEntrega} max={todayISO()}
+                    onChange={e => setDataEntrega(e.target.value)}
+                    style={{ padding: 10, borderRadius: 6, border: "1px solid #ccc", fontSize: 15 }} />
+                  <p style={{ margin: "8px 0 0 0", fontSize: 12, color: "#6B7280" }}>
+                    Já vem preenchido com hoje. Só troque se o produto chegou em outro dia.
+                  </p>
+                </div>
                 <button onClick={handleConfirmar} disabled={confirmando}
                   style={{ width: "100%", background: "#056535", color: "#fff", border: "none", padding: 14, borderRadius: 6, fontSize: 16, fontWeight: "bold", cursor: "pointer", marginBottom: 16 }}>
                   {confirmando ? "Confirmando..." : "✅ Confirmar recebimento"}

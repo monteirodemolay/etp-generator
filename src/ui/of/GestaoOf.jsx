@@ -18,7 +18,7 @@ import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor } f
 
 const COR_SITUACAO = {
   "rascunho": C.inkMuted, "aguardando": C.brass, "sem-resposta": "#fd7e14",
-  "divergencia": "#b45309", "vencido": C.red, "em-dia": C.green,
+  "divergencia": "#b45309", "vencido": C.red, "em-dia": C.green, "atrasado": C.red,
 };
 
 export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalvarFornecedor }) {

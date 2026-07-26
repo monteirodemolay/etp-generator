@@ -11,6 +11,8 @@
 // É best-effort: o PDF de uma OF não tem estrutura garantida entre órgãos
 // diferentes. O servidor sempre confere e ajusta antes de disparar — os
 // campos abrem editáveis, nunca são usados direto sem revisão.
+import { fmtDateISO } from "./datas.js";
+
 export function extrairDadosDoPdf(textoCompleto) {
   const matchOf =
     textoCompleto.match(/ORDEM\s+FORNECIMENTO\/SERVIÇOS\s+(\d+)/i) ||
@@ -94,22 +96,52 @@ export function calcularSituacao(item) {
 
   if (item.status === "Divergência") return { chave: "divergencia", texto: "Divergência relatada pelo fornecedor" };
 
+  // A partir daqui, a OF já foi confirmada ("Em Dia"). A conformidade se
+  // julga pela DATA REAL DA ENTREGA que o fornecedor informou, não por
+  // "hoje" — senão uma entrega feita certinho, no prazo, passaria a
+  // aparecer como "vencida" meses depois, só porque o calendário virou.
+  if (item.dataEntregaInformada && item.prazoLimiteISO) {
+    const noPrazo = entregaDentroDoPrazo(item.dataEntregaInformada, item.prazoLimiteISO);
+    return noPrazo
+      ? { chave: "em-dia", texto: `Entregue no prazo (${fmtDateISO(item.dataEntregaInformada)})` }
+      : { chave: "atrasado", texto: `Entregue com atraso (${fmtDateISO(item.dataEntregaInformada)})`, atrasado: true };
+  }
+
+  // Confirmações antigas, de antes desta data ter sido registrada — mantém
+  // o comportamento anterior como último recurso, para não quebrar nada.
   if (item.prazoLimite) {
     const [d, m, a] = item.prazoLimite.split("/");
     const dataLimite = new Date(a, m - 1, d);
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
-    if (hoje > dataLimite) return { chave: "vencido", texto: "Prazo de entrega vencido", vencido: true };
+    if (hoje > dataLimite) return { chave: "vencido", texto: "Prazo de entrega vencido (sem data informada)", vencido: true };
   }
 
   return { chave: "em-dia", texto: "Confirmado, dentro do prazo" };
 }
 
-// Calcula a data-limite (string pt-BR) a partir de agora + prazoDias.
+// Calcula a data-limite (string pt-BR, para exibir) a partir de agora + prazoDias.
 export function calcularPrazoLimite(prazoDias, agora = new Date()) {
   const dataLimite = new Date(agora);
   dataLimite.setDate(dataLimite.getDate() + parseInt(prazoDias || 10, 10));
   return dataLimite.toLocaleDateString("pt-BR");
+}
+
+// A mesma data-limite, em formato ISO (aaaa-mm-dd) — string em dd/mm/aaaa não
+// dá para comparar diretamente ("15/01/2026" > "03/12/2025" seria falso,
+// textualmente). O ISO compara certo só com "maior/menor que" de string.
+export function calcularPrazoLimiteISO(prazoDias, agora = new Date()) {
+  const dataLimite = new Date(agora);
+  dataLimite.setDate(dataLimite.getDate() + parseInt(prazoDias || 10, 10));
+  const pad = n => String(n).padStart(2, "0");
+  return `${dataLimite.getFullYear()}-${pad(dataLimite.getMonth() + 1)}-${pad(dataLimite.getDate())}`;
+}
+
+// Compara a data em que o fornecedor diz que entregou com o prazo combinado.
+// Ambas em ISO, para comparar como texto sem precisar de objetos Date.
+export function entregaDentroDoPrazo(dataEntregaISO, prazoLimiteISO) {
+  if (!dataEntregaISO || !prazoLimiteISO) return null; // ainda não há como avaliar
+  return dataEntregaISO <= prazoLimiteISO;
 }
 
 export function emptyOf(dadosIniciais = {}) {

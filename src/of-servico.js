@@ -28,7 +28,7 @@ import {
 import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
-import { extrairDadosDoPdf } from "./dominio/of.js";
+import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO } from "./dominio/of.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -139,12 +139,16 @@ export async function buscarOfPorToken(token) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function confirmarRecebimento(token, ofAtual) {
+// dataEntregaInformada: data (ISO, aaaa-mm-dd) em que o FORNECEDOR diz que
+// o produto chegou de fato — pode ser diferente do dia em que ele clica em
+// confirmar aqui. É essa data, não a do clique, que serve para avaliar se
+// o prazo foi cumprido.
+export async function confirmarRecebimento(token, ofAtual, dataEntregaInformada) {
   const agora = new Date();
   const dataAceiteStr = agora.toLocaleString("pt-BR");
-  const dataLimiteObj = new Date(agora);
-  dataLimiteObj.setDate(dataLimiteObj.getDate() + parseInt(ofAtual.prazoDias || 10, 10));
-  const prazoLimiteStr = dataLimiteObj.toLocaleDateString("pt-BR");
+  const prazoDias = parseInt(ofAtual.prazoDias || 10, 10);
+  const prazoLimiteStr = calcularPrazoLimite(prazoDias, agora);
+  const prazoLimiteISO = calcularPrazoLimiteISO(prazoDias, agora);
   const chave = `REC-${ofAtual.numeroOf}-${agora.getTime()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
   const reciboImutavel = { chave, dataConfirmacao: dataAceiteStr, status: "CONFIRMADO" };
@@ -153,8 +157,8 @@ export async function confirmarRecebimento(token, ofAtual) {
   // chave passa a existir de verdade, dentro do documento que a regra de
   // segurança já protege com a transição validada.
   await updateDoc(doc(db, COL_OF, token), {
-    status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr, reciboImutavel,
-    updatedAt: Date.now(),
+    status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr, prazoLimiteISO,
+    dataEntregaInformada: dataEntregaInformada || "", reciboImutavel, updatedAt: Date.now(),
   });
 
   // Só depois cria o índice chave -> token. A regra de segurança confere,
@@ -162,7 +166,10 @@ export async function confirmarRecebimento(token, ofAtual) {
   // gravada no registro real — por isso a ordem das duas escritas importa.
   await setDoc(doc(db, COL_INDICE_CHAVE, chave), { token });
 
-  return { ...ofAtual, status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr, reciboImutavel };
+  return {
+    ...ofAtual, status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr,
+    prazoLimiteISO, dataEntregaInformada: dataEntregaInformada || "", reciboImutavel,
+  };
 }
 
 export async function reportarDivergencia(token, texto) {
