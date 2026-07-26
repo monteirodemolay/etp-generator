@@ -12,6 +12,6 @@ export const FONTES_COTACAO = ["Banco de Preços", "Internet", "Outro"];
 // Cada uma pode ter timbre próprio; sem timbre, cai no timbre geral do app.
 // Tipos de entidade que podem contratar — nem toda unidade é uma secretaria
 export const TIPOS_ENTIDADE = [
-  "Secretaria", "Fundo", "Autarquia", "Fundação",
-  "Empresa Pública", "Consórcio Público", "Outro",
+  "Prefeitura", "Secretaria", "Fundo", "Autarquia", "Fundação",
+  "Empresa Pública", "Consórcio Público", "Câmara Municipal", "Outro",
 ];

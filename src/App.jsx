@@ -29,6 +29,8 @@ import { moverParaLixeira, restaurarDaLixeira, excluirDefinitivo,
          limparLixeiraVencida, PREFIXO_LIXO } from "./dominio/lixeira.js";
 import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-entidade.js";
 import { aplicar as migrarIncisosIVeV } from "./migracoes/001-corrige-incisos-iv-v.js";
+import { aplicar as migrarMunicipios } from "./migracoes/003-separa-entidades-por-municipio.js";
+import { contarEntidadesDoMunicipio } from "./dominio/municipios.js";
 import { listaResponsaveis } from "./dominio/etp.js";
 import { TIPOS_OBJETO } from "./dominio/opcoes.js";
 
@@ -41,6 +43,7 @@ export default function App({ emailUsuario = null }) {
   const [usuarios, setUsuarios] = useState([]);
   const [normativos, setNormativos] = useState([]);
   const [fornecedores, setFornecedores] = useState([]);
+  const [municipios, setMunicipios] = useState([]);
   const [ofs, setOfs] = useState([]);
   const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
@@ -76,7 +79,7 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaLixo] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaLixo] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
@@ -84,6 +87,7 @@ export default function App({ emailUsuario = null }) {
       carregarColecao("usr:"),
       carregarColecao("norma:"),
       carregarColecao("fornecedor:"),
+      carregarColecao("municipio:"),
       carregarColecao(PREFIXO_LIXO),
     ]);
     // As Ordens de Fornecimento vivem numa coleção própria do Firestore (não
@@ -102,6 +106,23 @@ export default function App({ emailUsuario = null }) {
       } catch (e) { console.error("Erro ao criar secretaria padrão", e); }
     }
 
+    // Cria o primeiro Município (assim que existir mais de uma Prefeitura
+    // usando o sistema, cada entidade passa a apontar para o seu) e liga a
+    // ele as entidades que ainda não têm município definido.
+    let municipiosFinais = listaMunicipios.sort((a, b) => a.createdAt - b.createdAt);
+    try {
+      const resultado = await migrarMunicipios(secretariasFinais, municipiosFinais,
+        (chave, valor) => storage.set(chave, valor, false));
+      if (resultado.criouMunicipio) {
+        const criado = await storage.get("municipio:" + resultado.municipioPadraoId, false).catch(() => null);
+        if (criado?.value) municipiosFinais = [JSON.parse(criado.value)];
+      }
+      if (resultado.entidadesAtualizadas > 0) {
+        secretariasFinais = secretariasFinais.map(s =>
+          s.municipioId ? s : { ...s, municipioId: resultado.municipioPadraoId });
+      }
+    } catch (e) { console.error("Migração 003 (entidades por município)", e); }
+
     // Migra o PCA compartilhado (esquema antigo) para a primeira entidade,
     // uma única vez — a própria migração marca o que já rodou.
     await migrarPcaPorEntidade(storage, secretariasFinais).catch(e =>
@@ -119,6 +140,7 @@ export default function App({ emailUsuario = null }) {
     setUsuarios(listaUsr.sort((a, b) => (a.nomeCompleto || a.email).localeCompare(b.nomeCompleto || b.email)));
     setNormativos(listaNormas.sort((a, b) => b.enviadoEm - a.enviadoEm));
     setFornecedores(listaFornecedores);
+    setMunicipios(municipiosFinais);
     setOfs(listaOfs);
     // O que passou de 30 dias sai da lixeira sozinho
     const lixoValido = await limparLixeiraVencida(storage, listaLixo);
@@ -257,7 +279,31 @@ export default function App({ emailUsuario = null }) {
   }
 
   function novaSecretaria() {
-    salvarSecretaria(emptySecretaria("", ""));
+    // A nova entidade nasce no mesmo município que já está sendo visualizado
+    // (quando há um selecionado); senão, no primeiro município cadastrado.
+    const secAtivaAtual = secretarias.find(s => s.id === secretariaAtiva);
+    const municipioContexto = secAtivaAtual?.municipioId || municipios[0]?.id || null;
+    salvarSecretaria({ ...emptySecretaria("", ""), municipioId: municipioContexto });
+  }
+
+  // ----- Municípios -----
+  function salvarMunicipio(m) {
+    const atualizado = { ...m, updatedAt: Date.now() };
+    setMunicipios(prev => {
+      const existe = prev.some(x => x.id === atualizado.id);
+      return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
+    });
+    storage.set("municipio:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+
+  async function excluirMunicipio(id) {
+    // Não deixa excluir o município se ainda houver entidade apontando pra ele —
+    // mesma cautela já usada para não deixar entidade "órfã" em silêncio.
+    if (contarEntidadesDoMunicipio(id, secretarias) > 0 || municipios.length <= 1) return;
+    try {
+      await storage.delete("municipio:" + id, false);
+      setMunicipios(prev => prev.filter(m => m.id !== id));
+    } catch (err) { console.error(err); }
   }
 
   async function excluirSecretaria(id) {
@@ -558,6 +604,7 @@ export default function App({ emailUsuario = null }) {
           onExcluirJustificativa={excluirJustificativa} onDuplicarJustificativa={duplicarJustificativa}
           onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
           onExcluirSecretaria={excluirSecretaria}
+          municipios={municipios} onNovoMunicipio={salvarMunicipio} onExcluirMunicipio={excluirMunicipio}
           onRecarregar={loadList}
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           podeVerTodasEntidades={podeTodas}

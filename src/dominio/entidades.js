@@ -8,12 +8,13 @@
  */
 
 
-export function emptySecretaria(nome, sigla, tipo) {
+export function emptySecretaria(nome, sigla, tipo, municipioId) {
   return {
     id: "sec_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
     nome: nome || "",
     sigla: sigla || "",
     tipoEntidade: tipo || "Secretaria",
+    municipioId: municipioId || null, // a quem esta entidade pertence
     tipoTimbre: "imagem", // "imagem" | "texto" | "nenhum"
     timbre: null,         // imagem, quando tipoTimbre = "imagem"
     timbreHtml: "",       // texto formatado, quando tipoTimbre = "texto"

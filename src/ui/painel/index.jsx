@@ -45,6 +45,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirDeclaracao, onNovaDeclaracao, onExcluirDeclaracao, onDuplicarDeclaracao,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
+  municipios, onNovoMunicipio, onExcluirMunicipio,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
   ofs, fornecedores, onSalvarFornecedor, onRecarregarOfs,
@@ -704,7 +705,8 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           {aba === "secretarias" && (
             <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
               etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
-              onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
+              onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria}
+              municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio} />
           )}
 
           {aba === "ordens_fornecimento" && (

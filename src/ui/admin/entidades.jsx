@@ -4,21 +4,39 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle } from "lucide-react";
+import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle, MapPin, ChevronDown } from "lucide-react";
 import { C } from "../tokens.js";
 import { RichTextEditor, ConfirmarExclusao } from "../comuns/index.jsx";
 import { TIPOS_ENTIDADE } from "../../dominio/opcoes.js";
 import { redimensionarImagem } from "../../docx/timbre.js";
 import { escapeHtml } from "../../dominio/texto.js";
 import { contarDocumentosDaEntidade } from "../../dominio/entidades.js";
+import { emptyMunicipio, contarEntidadesDoMunicipio } from "../../dominio/municipios.js";
 
 
 // ---------- Cadastro de Secretarias ----------
 export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack,
+  municipios = [], onNovoMunicipio, onExcluirMunicipio,
   etps = [], justificativas = [], declaracoes = [], ofs = [] }) {
   const [aExcluir, setAExcluir] = useState(null); // entidade aguardando confirmação
+  const [novoMunicipioAberto, setNovoMunicipioAberto] = useState(false);
+  const [novoMunicipioNome, setNovoMunicipioNome] = useState("");
+  const [novoMunicipioUf, setNovoMunicipioUf] = useState("");
   // Quando usada como aba do painel não recebe onBack — o menu lateral já faz a navegação
   const fileRefs = useRef({});
+
+  function criarMunicipio() {
+    if (!novoMunicipioNome.trim()) return;
+    onNovoMunicipio(emptyMunicipio(novoMunicipioNome.trim(), novoMunicipioUf.trim().toUpperCase()));
+    setNovoMunicipioNome(""); setNovoMunicipioUf(""); setNovoMunicipioAberto(false);
+  }
+
+  // Só agrupa por município quando existe mais de um — enquanto for só "Rio
+  // Verde", a tela continua exatamente como sempre foi, sem essa camada extra.
+  const multiplosMunicipios = municipios.length > 1;
+  const gruposPorMunicipio = multiplosMunicipios
+    ? municipios.map(m => ({ municipio: m, entidades: secretarias.filter(s => (s.municipioId || municipios[0]?.id) === m.id) }))
+    : [{ municipio: null, entidades: secretarias }];
 
   async function trocarTimbre(sec, e) {
     const file = e.target.files?.[0];
@@ -65,8 +83,66 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
         "Órgão" dos documentos novos, e o timbre de cada uma é usado nos arquivos gerados.
       </p>
 
-      <div className="space-y-3">
-        {secretarias.map(sec => (
+      {/* Municípios — só aparece com destaque quando há mais de um cadastrado.
+          Com um só (o caso de hoje), fica reduzido a um link discreto para
+          quando for realmente necessário abrir um segundo. */}
+      <div className="mb-6 p-3 rounded-lg" style={{ background: C.paperDark }}>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-1.5" style={{ color: C.navy }}>
+            <MapPin size={13} />
+            <span className="text-xs font-semibold">
+              {multiplosMunicipios
+                ? `${municipios.length} municípios cadastrados`
+                : `Município: ${municipios[0]?.nome || "Rio Verde"}`}
+            </span>
+          </div>
+          <button onClick={() => setNovoMunicipioAberto(v => !v)}
+            className="text-xs font-medium underline" style={{ color: C.brass }}>
+            + Novo município
+          </button>
+        </div>
+
+        {multiplosMunicipios && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {municipios.map(m => (
+              <span key={m.id} className="text-[11px] px-2 py-1 rounded-full" style={{ background: "white", color: C.navy }}>
+                {m.nome}{m.uf ? ` — ${m.uf}` : ""} · {contarEntidadesDoMunicipio(m.id, secretarias)} entidade(s)
+              </span>
+            ))}
+          </div>
+        )}
+
+        {novoMunicipioAberto && (
+          <div className="flex flex-wrap items-end gap-2 mt-3 pt-3 border-t" style={{ borderColor: C.border }}>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>Nome do município</span>
+              <input value={novoMunicipioNome} onChange={e => setNovoMunicipioNome(e.target.value)}
+                placeholder="Ex.: Acreúna" className="mt-1 px-2.5 py-1.5 rounded-lg border text-sm bg-white"
+                style={{ borderColor: C.border, minWidth: "200px" }} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>UF</span>
+              <input value={novoMunicipioUf} onChange={e => setNovoMunicipioUf(e.target.value)}
+                placeholder="GO" maxLength={2} className="mt-1 px-2.5 py-1.5 rounded-lg border text-sm bg-white"
+                style={{ borderColor: C.border, width: "56px" }} />
+            </label>
+            <button onClick={criarMunicipio}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: C.navy, color: C.paper }}>
+              Criar
+            </button>
+          </div>
+        )}
+      </div>
+
+      {gruposPorMunicipio.map(({ municipio, entidades }) => (
+      <div key={municipio?.id || "unico"} className="mb-6">
+        {municipio && (
+          <h2 className="serif text-base font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.navy }}>
+            <MapPin size={14} style={{ color: C.brass }} /> Município de {municipio.nome}
+          </h2>
+        )}
+        <div className="space-y-3">
+        {entidades.map(sec => (
           <div key={sec.id} className="p-4 rounded-xl border" style={{ borderColor: C.border, background: "white" }}>
             <div className="grid sm:grid-cols-[1fr,120px] gap-3 mb-3">
               <label className="block">
@@ -83,17 +159,33 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
               </label>
             </div>
 
-            <label className="block mb-3">
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
-                Natureza da entidade
-              </span>
-              <select value={sec.tipoEntidade || "Secretaria"}
-                onChange={e => onSalvar({ ...sec, tipoEntidade: e.target.value })}
-                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white"
-                style={{ borderColor: C.border, maxWidth: "260px" }}>
-                {TIPOS_ENTIDADE.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </label>
+            <div className="grid sm:grid-cols-2 gap-3 mb-3">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                  Natureza da entidade
+                </span>
+                <select value={sec.tipoEntidade || "Secretaria"}
+                  onChange={e => onSalvar({ ...sec, tipoEntidade: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white"
+                  style={{ borderColor: C.border }}>
+                  {TIPOS_ENTIDADE.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </label>
+
+              {multiplosMunicipios && (
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                    Município
+                  </span>
+                  <select value={sec.municipioId || municipios[0]?.id || ""}
+                    onChange={e => onSalvar({ ...sec, municipioId: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white"
+                    style={{ borderColor: C.border }}>
+                    {municipios.map(m => <option key={m.id} value={m.id}>{m.nome}{m.uf ? ` — ${m.uf}` : ""}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
 
             <div className="pt-3 border-t" style={{ borderColor: C.border }}>
               <span className="text-xs font-semibold uppercase tracking-wide block mb-2" style={{ color: C.inkMuted }}>
@@ -180,7 +272,9 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
             </div>
           </div>
         ))}
+        </div>
       </div>
+      ))}
 
       {aExcluir && (() => {
         const qtd = contarDocumentosDaEntidade(aExcluir.id, { etps, justificativas, declaracoes, ofs });
