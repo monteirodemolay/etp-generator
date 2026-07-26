@@ -57,6 +57,28 @@ export function extrairDadosDoPdf(textoCompleto) {
   return { numeroOf, cnpj, empresa };
 }
 
+// ---------- WhatsApp ----------
+// Só o link wa.me — quem dispara ainda aperta "enviar" manualmente, no
+// próprio WhatsApp. Não é um envio automático (isso exigiria uma conta
+// comercial paga na Meta), é o link que já vem com a mensagem pronta.
+export function normalizarTelefoneWhatsApp(telefone) {
+  const digitos = String(telefone || "").replace(/\D/g, "");
+  if (!digitos) return null;
+  // Sem DDI, assume Brasil (55). Números já com 55 na frente ficam como estão.
+  return digitos.startsWith("55") ? digitos : `55${digitos}`;
+}
+
+export function gerarLinkWhatsApp(telefone, mensagem) {
+  const numero = normalizarTelefoneWhatsApp(telefone);
+  const texto = encodeURIComponent(mensagem || "");
+  return numero ? `https://wa.me/${numero}?text=${texto}` : `https://wa.me/?text=${texto}`;
+}
+
+export function montarMensagemWhatsApp(of, linkAceite) {
+  return `Olá! Segue a Ordem de Fornecimento nº ${of.numeroOf}, da Prefeitura.\n` +
+    `Confirme o recebimento pelo link: ${linkAceite}`;
+}
+
 // ---------- Identificadores ----------
 export function gerarNumeroOfSugerido() {
   return `OF-${Math.floor(1000 + Math.random() * 9000)}`;

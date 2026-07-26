@@ -7,11 +7,12 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
-  calcularSituacao, emptyOf, GRUPOS_SITUACAO_OF, grupoDaSituacao } from "../../dominio/of.js";
+  calcularSituacao, emptyOf, GRUPOS_SITUACAO_OF, grupoDaSituacao,
+  gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
 import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega } from "../../of-servico.js";
@@ -33,6 +34,26 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
   const [confirmandoEntregaDe, setConfirmandoEntregaDe] = useState(null); // OF cuja entrega está sendo confirmada
   const [filtroAba, setFiltroAba] = useState("todas");
   const [loteAberto, setLoteAberto] = useState(false);
+  const [linkCopiadoDe, setLinkCopiadoDe] = useState(null); // token da OF cujo link acabou de ser copiado
+
+  function linkDaOf(item) {
+    return `${window.location.origin}${window.location.pathname}?of=${item.token}`;
+  }
+
+  async function copiarLink(item) {
+    try {
+      await navigator.clipboard.writeText(linkDaOf(item));
+      setLinkCopiadoDe(item.token);
+      setTimeout(() => setLinkCopiadoDe(null), 2000);
+    } catch (e) {
+      setErro("Não foi possível copiar o link automaticamente. Copie manualmente: " + linkDaOf(item));
+    }
+  }
+
+  function abrirWhatsApp(item) {
+    const link = gerarLinkWhatsApp(item.telefoneFornecedor, montarMensagemWhatsApp(item, linkDaOf(item)));
+    window.open(link, "_blank");
+  }
   const [dataEntregaForm, setDataEntregaForm] = useState(todayISO());
   const [naoEntregueForm, setNaoEntregueForm] = useState(false);
   const [salvandoEntrega, setSalvandoEntrega] = useState(false);
@@ -334,6 +355,16 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
                           <PackageCheck size={13} /> {item.confirmacaoEntrega ? "Entrega confirmada" : "Confirmar entrega"}
                         </button>
                       )}
+                      <button onClick={() => copiarLink(item)} title="Copiar link de confirmação"
+                        className="p-1.5 rounded flex items-center gap-1 text-xs" style={{ color: linkCopiadoDe === item.token ? C.green : C.inkMuted }}>
+                        {linkCopiadoDe === item.token ? <Check size={14} /> : <Link2 size={14} />}
+                      </button>
+                      <button onClick={() => abrirWhatsApp(item)} title="Enviar link pelo WhatsApp"
+                        className="p-1.5 rounded" style={{ color: "#25D366" }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.85 9.85 0 0 0 12.04 2zm0 18.1a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.13.82.84-3.05-.2-.31a8.22 8.22 0 0 1-1.27-4.4c0-4.54 3.7-8.24 8.26-8.24 2.21 0 4.28.86 5.84 2.42a8.18 8.18 0 0 1 2.42 5.83c0 4.55-3.7 8.26-8.27 8.26zm4.53-6.19c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.04-.38-1.98-1.22-.73-.65-1.23-1.46-1.37-1.71-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.15.16-.25.25-.42.08-.16.04-.31-.02-.43-.06-.13-.56-1.35-.77-1.85-.2-.48-.4-.42-.56-.42-.14-.01-.31-.01-.48-.01a.93.93 0 0 0-.67.31c-.23.25-.87.85-.87 2.08s.9 2.41 1.02 2.58c.13.16 1.77 2.7 4.28 3.79.6.26 1.07.41 1.43.53.6.19 1.15.16 1.58.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.14-1.18-.06-.1-.23-.16-.48-.28z"/>
+                        </svg>
+                      </button>
                       <button onClick={() => setADisparar(item)} title={item.status === "Rascunho" ? "Disparar" : "Reenviar"}
                         className="px-2.5 py-1.5 rounded-md text-xs font-semibold"
                         style={{ background: situacao.precisaReenviar ? "#fd7e14" : C.navy, color: "white" }}>
