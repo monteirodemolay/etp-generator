@@ -3,6 +3,8 @@
  * gerenciamento do timbre geral do aplicativo.
  */
 
+import storage from "../../storage.js";
+
 import { statsFor } from "../../dominio/valores.js";
 
 import React, { useState, useRef, useEffect } from "react";
@@ -33,12 +35,12 @@ export function PreviewView({ etp, secretarias, onBack }) {
   const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   useEffect(() => {
-    window.storage.get("timbre:padrao", false)
+    storage.get("timbre:padrao", false)
       .then(r => setTimbre(r?.value || TIMBRE_PADRAO))
       .catch(() => {
         // Nenhum timbre salvo ainda — usa o padrão extraído do modelo enviado e já o grava para as próximas vezes
         setTimbre(TIMBRE_PADRAO);
-        window.storage.set("timbre:padrao", TIMBRE_PADRAO, false).catch(() => {});
+        storage.set("timbre:padrao", TIMBRE_PADRAO, false).catch(() => {});
       })
       .finally(() => setTimbreLoading(false));
   }, []);
@@ -56,7 +58,7 @@ export function PreviewView({ etp, secretarias, onBack }) {
         reader.readAsDataURL(file);
       });
       const resized = await redimensionarImagem(dataUrl, 900);
-      await window.storage.set("timbre:padrao", resized, false);
+      await storage.set("timbre:padrao", resized, false);
       setTimbre(resized);
     } catch (err) {
       console.error(err);
@@ -68,7 +70,7 @@ export function PreviewView({ etp, secretarias, onBack }) {
 
   async function handleTimbreRemove() {
     try {
-      await window.storage.delete("timbre:padrao", false);
+      await storage.delete("timbre:padrao", false);
     } catch (err) { /* já não existe */ }
     setTimbre(null);
   }

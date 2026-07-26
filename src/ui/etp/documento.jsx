@@ -4,6 +4,8 @@
  * foco.
  */
 
+import storage from "../../storage.js";
+
 import React, { useState, useEffect } from "react";
 import { FileText, X, Copy } from "lucide-react";
 import { C } from "../tokens.js";
@@ -31,7 +33,7 @@ export function DocumentoIncisos({ etp, onSection, onSolucoesMercado, onExcluido
   const [timbreGlobal, setTimbreGlobal] = useState(TIMBRE_PADRAO);
 
   useEffect(() => {
-    window.storage.get("timbre:padrao", false)
+    storage.get("timbre:padrao", false)
       .then(r => setTimbreGlobal(r?.value || TIMBRE_PADRAO))
       .catch(() => {});
   }, []);

@@ -4,6 +4,8 @@
  * fica em documento.jsx.
  */
 
+import storage from "../../storage.js";
+
 import { todayISO } from "../../dominio/datas.js";
 import { objetoCompleto } from "../../dominio/etp.js";
 
@@ -1318,7 +1320,7 @@ export function ResponsaveisManager({ responsaveis, onChange }) {
   const [novoCargo, setNovoCargo] = useState("");
 
   useEffect(() => {
-    window.storage.get("diretorio:responsaveis", false)
+    storage.get("diretorio:responsaveis", false)
       .then(r => setDiretorio(r?.value ? JSON.parse(r.value) : []))
       .catch(() => setDiretorio([]));
   }, []);
@@ -1327,7 +1329,7 @@ export function ResponsaveisManager({ responsaveis, onChange }) {
     setDiretorio(prev => {
       const semDuplicata = prev.filter(p => p.nome.toLowerCase() !== nome.toLowerCase());
       const atualizado = [...semDuplicata, { nome, cargo }];
-      window.storage.set("diretorio:responsaveis", JSON.stringify(atualizado), false).catch(() => {});
+      storage.set("diretorio:responsaveis", JSON.stringify(atualizado), false).catch(() => {});
       return atualizado;
     });
   }
