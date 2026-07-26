@@ -39,6 +39,7 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
   const inputRef = useRef(null);
 
   function abrirNova() {
+    if (!secretariaId) { setErro("Selecione uma entidade específica antes de criar uma OF."); return; }
     setEditando(emptyOf({ numeroOf: gerarNumeroOfSugerido(), secretariaId, municipioId }));
     setErro("");
     setModalAberto(true);
@@ -47,6 +48,7 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
   async function handleImportarPdf(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!secretariaId) { setErro("Selecione uma entidade específica antes de importar uma OF."); e.target.value = ""; return; }
     setLendoPdf(true);
     setErro("");
     try {
@@ -188,6 +190,11 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
 
   const linhas = ofs.map(item => ({ item, situacao: calcularSituacao(item) }));
 
+  // Sem uma entidade específica selecionada (ex.: "Todas as Entidades"), não
+  // existe dono claro para a nova OF. Já aconteceu de isso cair em silêncio
+  // na entidade mais antiga cadastrada — agora bloqueia de verdade.
+  const semEntidadeEspecifica = !secretariaId;
+
   return (
     <>
       <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
@@ -199,20 +206,37 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecar
           <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Ordens de Fornecimento</h1>
         </div>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold cursor-pointer"
-            style={{ background: C.paperDark, color: C.navy }}>
+          <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold"
+            style={{
+              background: C.paperDark, color: semEntidadeEspecifica ? C.inkMuted : C.navy,
+              cursor: semEntidadeEspecifica ? "not-allowed" : "pointer", opacity: semEntidadeEspecifica ? 0.6 : 1,
+            }}
+            title={semEntidadeEspecifica ? "Selecione uma entidade específica primeiro" : undefined}>
             {lendoPdf ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
             {lendoPdf ? "Lendo PDF..." : "Importar OF (PDF)"}
             <input ref={inputRef} type="file" accept="application/pdf" className="hidden"
-              onChange={handleImportarPdf} disabled={lendoPdf} />
+              onChange={handleImportarPdf} disabled={lendoPdf || semEntidadeEspecifica} />
           </label>
-          <button onClick={abrirNova}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold"
+          <button onClick={abrirNova} disabled={semEntidadeEspecifica}
+            title={semEntidadeEspecifica ? "Selecione uma entidade específica primeiro" : undefined}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: C.navy, color: C.paper }}>
             <Plus size={15} /> Nova OF manual
           </button>
         </div>
       </div>
+
+      {semEntidadeEspecifica && (
+        <div className="mb-4 p-3 rounded-lg text-xs flex items-start gap-2"
+          style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+          <AlertCircle size={13} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+          <span>
+            Selecione uma entidade específica no seletor do topo da tela para criar ou importar uma
+            Ordem de Fornecimento. Não é possível cadastrar em "Todas as Entidades" — toda OF precisa
+            pertencer a uma entidade só. Você ainda pode consultar as OFs de todas as entidades aqui.
+          </span>
+        </div>
+      )}
 
       {erro && (
         <div className="mb-4 p-3 rounded-lg text-xs" style={{ background: "rgba(166,64,61,0.1)", color: C.ink }}>
