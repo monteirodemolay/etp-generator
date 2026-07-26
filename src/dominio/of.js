@@ -79,6 +79,41 @@ export function montarMensagemWhatsApp(of, linkAceite) {
     `Confirme o recebimento pelo link: ${linkAceite}`;
 }
 
+// ---------- Central do fornecedor (CNPJ + e-mail) ----------
+// Chave estável e determinística, usada como ID de documento no índice
+// público que liga um fornecedor às suas OFs — nunca como filtro de busca
+// livre, para não permitir listar tudo. Normaliza os dois lados (CNPJ só
+// dígitos, e-mail em minúsculo) para que "12.345/0001-99" e "12345000199"
+// cheguem na mesma chave.
+export function chaveIndiceFornecedor(cnpj, email) {
+  const cnpjLimpo = String(cnpj || "").replace(/\D/g, "");
+  const emailLimpo = String(email || "").trim().toLowerCase();
+  if (!cnpjLimpo || !emailLimpo) return null;
+  return `${cnpjLimpo}_${emailLimpo.replace(/[^a-z0-9@.\-]/g, "")}`;
+}
+
+// Agrupa as OFs de um fornecedor por ano -> mês -> status, para a central
+// dele exibir organizado, como combinado.
+export function agruparOfsPorAnoMes(ofs) {
+  const grupos = {};
+  for (const of_ of ofs || []) {
+    const ts = of_.createdAt || Date.now();
+    const data = new Date(ts);
+    const ano = data.getFullYear();
+    const mes = data.getMonth(); // 0-11
+    grupos[ano] = grupos[ano] || {};
+    grupos[ano][mes] = grupos[ano][mes] || [];
+    grupos[ano][mes].push(of_);
+  }
+  return Object.keys(grupos).sort((a, b) => b - a).map(ano => ({
+    ano: Number(ano),
+    meses: Object.keys(grupos[ano]).sort((a, b) => b - a).map(mes => ({
+      mes: Number(mes),
+      itens: grupos[ano][mes].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    })),
+  }));
+}
+
 // ---------- Identificadores ----------
 export function gerarNumeroOfSugerido() {
   return `OF-${Math.floor(1000 + Math.random() * 9000)}`;

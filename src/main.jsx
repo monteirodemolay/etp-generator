@@ -5,17 +5,21 @@ import PortaDeEntrada from "./PortaDeEntrada.jsx";
 import LimiteDeErro from "./LimiteDeErro.jsx";
 import { PortalFornecedor } from "./ui/of/PortalFornecedor.jsx";
 import { ConferenciaChave } from "./ui/of/ConferenciaChave.jsx";
+import { CentralFornecedor } from "./ui/of/CentralFornecedor.jsx";
 
-// As duas páginas da Ordem de Fornecimento abertas por link (o fornecedor
-// confirmando o recebimento, e a conferência pública de um recibo) ficam
-// FORA do login de propósito — quem recebe o link não tem conta no sistema
-// e não deveria precisar de uma só para confirmar ou conferir.
+// As páginas da Ordem de Fornecimento abertas por link (o fornecedor
+// confirmando o recebimento, a conferência pública de um recibo, e a
+// central com todas as OFs de um fornecedor) ficam FORA do login de
+// propósito — quem recebe o link não tem conta no sistema e não deveria
+// precisar de uma só para confirmar, conferir ou consultar.
 const params = new URLSearchParams(window.location.search);
 const tokenOf = params.get("of");
 const chaveRecibo = params.get("recibo");
+const central = params.get("central");
 
 function Raiz() {
   if (tokenOf) return <PortalFornecedor token={tokenOf} />;
+  if (central !== null) return <CentralFornecedor />;
   if (chaveRecibo !== null) return <ConferenciaChave chaveInicial={chaveRecibo} />;
 
   return (

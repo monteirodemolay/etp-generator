@@ -357,6 +357,11 @@ export default function PortaDeEntrada({ children }) {
                 Conferir a autenticidade de um recibo de Ordem de Fornecimento
               </a>
             </p>
+            <p className="text-[11px] text-center mt-1.5">
+              <a href="?central=" style={{ color: C.brass, textDecoration: "underline" }}>
+                Sou fornecedor e quero ver minhas Ordens de Fornecimento
+              </a>
+            </p>
           </div>
 
           {/* Rodapé */}

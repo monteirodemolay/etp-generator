@@ -150,6 +150,14 @@ export function PortalFornecedor({ token }) {
             )}
           </>
         )}
+
+        {of && (
+          <div style={{ marginTop: 20, textAlign: "center" }}>
+            <a href={`${window.location.origin}${window.location.pathname}?central=`} style={{ color: "#2563eb", fontSize: 12, textDecoration: "underline" }}>
+              Ver todas as minhas Ordens de Fornecimento
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

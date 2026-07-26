@@ -29,7 +29,7 @@ import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
 import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO,
-  calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega } from "./dominio/of.js";
+  calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega, chaveIndiceFornecedor } from "./dominio/of.js";
 import { diasFechadosNoPeriodo } from "./dominio/dias-uteis.js";
 import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
@@ -92,7 +92,40 @@ export async function salvarOf(of) {
   const token = of.token || crypto.randomUUID();
   const payload = { ...of, token, updatedAt: Date.now() };
   await setDoc(doc(db, COL_OF, token), payload, { merge: true });
+  await manterIndiceFornecedor(payload);
   return payload;
+}
+
+const COL_INDICE_FORNECEDOR = "of_fornecedor_indice";
+
+// Mantém o índice que liga um fornecedor (CNPJ + e-mail) às OFs dele — é o
+// que permite a central pública funcionar sem nenhuma busca livre no banco
+// (ver firestore.rules). Roda sempre que uma OF é salva; se o CNPJ ou
+// e-mail ainda não permitem montar uma chave, não faz nada — a OF continua
+// existindo normalmente, só não aparece na central até esses dados existirem.
+async function manterIndiceFornecedor(of) {
+  const chave = chaveIndiceFornecedor(of.cnpj, of.emailFornecedor);
+  if (!chave) return;
+  try {
+    const atual = await getDoc(doc(db, COL_INDICE_FORNECEDOR, chave));
+    const tokens = atual.exists() ? (atual.data().tokens || []) : [];
+    if (!tokens.includes(of.token)) {
+      await setDoc(doc(db, COL_INDICE_FORNECEDOR, chave), { tokens: [...tokens, of.token] });
+    }
+  } catch (e) { console.error("Não foi possível atualizar o índice do fornecedor", e); }
+}
+
+// ---------- Central do fornecedor (público, sem login) ----------
+// Duas leituras, ambas por "get" direto: primeiro o índice (CNPJ + e-mail
+// batendo exatamente), depois cada OF encontrada.
+export async function buscarOfsDoFornecedor(cnpj, email) {
+  const chave = chaveIndiceFornecedor(cnpj, email);
+  if (!chave) return [];
+  const indice = await getDoc(doc(db, COL_INDICE_FORNECEDOR, chave));
+  if (!indice.exists()) return [];
+  const tokens = indice.data().tokens || [];
+  const ofs = await Promise.all(tokens.map(t => buscarOfPorToken(t)));
+  return ofs.filter(Boolean);
 }
 
 export async function excluirOf(token) {

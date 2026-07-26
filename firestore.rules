@@ -54,6 +54,18 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Indice CNPJ+email -> lista de tokens, para a central do fornecedor.
+    // So a equipe (autenticada) escreve aqui -- e' mantido automaticamente
+    // sempre que uma OF e salva, nunca pelo fornecedor. Publico so pode
+    // "get" (ler um exatamente sabendo a chave), nunca "list" (listar
+    // fornecedores), o que impede enumerar quem ja recebeu OF.
+    match /of_fornecedor_indice/{chave} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if daEquipe();
+      allow delete: if false;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }
