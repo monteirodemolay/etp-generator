@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, Fragment } from "react";
 import {
   ClipboardList, FileText, Plus, ListChecks, FileEdit, Building2, Users,
   Download, Trash2, Search, Copy, Info, Check, AlertCircle, TrendingUp, X, Scale,
-  AlertTriangle, Bell, ChevronRight,
+  AlertTriangle, Bell, ChevronRight, Mail,
 } from "lucide-react";
 import { C, COR_SITUACAO } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
@@ -27,6 +27,7 @@ import { UsuariosView } from "../admin/usuarios.jsx";
 import { SecretariasView } from "../admin/entidades.jsx";
 import { LixeiraView } from "./lixeira.jsx";
 import { NormativosView } from "./normativos.jsx";
+import { GestaoOf } from "../of/GestaoOf.jsx";
 import { TelaBackup } from "./backup.jsx";
 import { GuiaRapido, JanelaNovoDocumento } from "./janelas.jsx";
 
@@ -46,6 +47,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
+  ofs, fornecedores, onSalvarFornecedor, onRecarregarOfs,
   lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
   documentoAberto = null, viewAtual, onFecharDocumento, podeVerTodasEntidades }) {
 
@@ -112,6 +114,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "secretarias", rotulo: "Entidades", icone: Building2, contador: secretarias.length, somenteAdmin: true },
     { id: "usuarios", rotulo: "Usuários", icone: Users, contador: usuarios.length, somenteAdmin: true },
+    { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento", icone: Mail, contador: ofs.length },
     { id: "normativos", rotulo: "Materiais Normativos", icone: Scale, contador: normativos.length },
     { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
     { id: "backup", rotulo: "Backup", icone: Download },
@@ -700,8 +703,14 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "secretarias" && (
             <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
-              etps={base} justificativas={justificativas} declaracoes={declaracoes}
+              etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
               onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria} />
+          )}
+
+          {aba === "ordens_fornecimento" && (
+            <GestaoOf ofs={ofs} fornecedores={fornecedores}
+              secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : (secretarias[0]?.id || null)}
+              onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} />
           )}
 
           {aba === "normativos" && (

@@ -29,6 +29,7 @@ export const PAGINAS_CONFIGURAVEIS = [
   { id: "etps", rotulo: "Meus ETPs" },
   { id: "declaracoes", rotulo: "Declarações de PCA" },
   { id: "justificativas", rotulo: "Justificativas" },
+  { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento" },
   { id: "normativos", rotulo: "Materiais Normativos" },
   { id: "lixeira", rotulo: "Lixeira" },
   { id: "backup", rotulo: "Backup" },

@@ -41,7 +41,7 @@ export function secretariaDoDoc(doc, secretarias) {
 // passa a aparecer sob a entidade mais antiga (a primeira da lista) só na tela —
 // nada é reescrito no armazenamento. Sem aviso, isso pode gerar dúvida depois
 // sobre a quem um ETP realmente pertence.
-export function contarDocumentosDaEntidade(entidadeId, { etps = [], justificativas = [], declaracoes = [] }) {
+export function contarDocumentosDaEntidade(entidadeId, { etps = [], justificativas = [], declaracoes = [], ofs = [] }) {
   const conta = lista => lista.filter(d => d.secretariaId === entidadeId).length;
-  return conta(etps) + conta(justificativas) + conta(declaracoes);
+  return conta(etps) + conta(justificativas) + conta(declaracoes) + conta(ofs);
 }

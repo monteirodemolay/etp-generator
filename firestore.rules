@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Regra já existente: base principal do sistema ----------
+    // Só estes e-mails podem ler e gravar. Para incluir alguém da equipe,
+    // acrescente o e-mail na lista e publique as regras de novo.
+    function daEquipe() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'monteirodemolay@gmail.com',
+          'laurides@rioverde.go.gov.br',
+          'barbara.dias@rioverde.go.gov.br', // corrigido: faltava o ponto antes de "br"
+          'leonardomarconi@gmail.com'
+        ];
+    }
+
+    match /dados/{doc} {
+      allow read, write: if daEquipe();
+    }
+
+    // ---------- Novo: Ordem de Fornecimento ----------
+    //
+    // Esta coleção precisa ser lida (e parcialmente escrita) por quem NÃO
+    // tem login — o fornecedor, que só possui um link com um token. A regra
+    // abaixo diferencia duas permissões que o Firestore trata separado:
+    //
+    //   "get"  = ler UM documento específico, sabendo o nome dele (o token)
+    //   "list" = buscar/filtrar a coleção inteira
+    //
+    // A equipe (autenticada) pode "list" — é assim que a tabela de gestão
+    // mostra todas as OFs. Quem não está logado só pode "get" — só enxerga
+    // a OF cujo token souber, nunca a lista inteira.
+    match /of_registros/{token} {
+      allow list: if daEquipe();
+      allow get: if true;
+      allow create: if daEquipe();
+      allow delete: if daEquipe();
+
+      // Uma escrita é aceita se: (a) é a equipe fazendo qualquer alteração,
+      // ou (b) é o fornecedor (sem login) confirmando o recebimento ou
+      // relatando divergência — e MESMO SEM LOGIN, só pode alterar
+      // exatamente os campos abaixo, nada além disso, e só partindo do
+      // estado "Aguardando Aceite". Ele não consegue, por exemplo, trocar
+      // o e-mail cadastrado na OF ou reabrir uma já confirmada.
+      allow update: if daEquipe() || transicaoDoFornecedorEhValida();
+
+      function transicaoDoFornecedorEhValida() {
+        let antes = resource.data;
+        let depois = request.resource.data;
+        let apenasEstesCamposMudaram = depois.diff(antes).affectedKeys().hasOnly([
+          'status', 'dataAceite', 'prazoLimite', 'reciboImutavel',
+          'motivoDivergencia', 'dataDivergencia', 'updatedAt'
+        ]);
+        let estadoAnteriorPermite = antes.status == 'Aguardando Aceite';
+        let novoEstadoEhPermitido = depois.status == 'Em Dia' || depois.status == 'Divergência';
+        return apenasEstesCamposMudaram && estadoAnteriorPermite && novoEstadoEhPermitido;
+      }
+    }
+
+    // Índice mínimo chave -> token, para a conferência pública por chave
+    // digitada. Só aceita a criação se a chave enviada já for exatamente a
+    // que está gravada no registro real daquela OF — não dá para forjar
+    // uma entrada apontando para uma confirmação que nunca aconteceu.
+    // Depois de criado, ninguém altera mais — nem a equipe.
+    match /of_indice_chave/{chave} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.resource.data.keys().hasOnly(['token'])
+        && get(/databases/$(database)/documents/of_registros/$(request.resource.data.token))
+             .data.reciboImutavel.chave == chave;
+      allow update, delete: if false;
+    }
+
+    // Qualquer outro caminho fica bloqueado
+    match /{document=**} { allow read, write: if false; }
+  }
+}

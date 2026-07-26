@@ -24,6 +24,7 @@ import { emptySecretaria, secretariaDoDoc } from "./dominio/entidades.js";
 import { usuarioPorEmail, permissoesDe, entidadesVisiveis, emptyUsuario,
          podeVerTodasEntidades, entidadeInicial, entidadeEhSomenteLeitura } from "./dominio/permissoes.js";
 import { criarRegistroNormativo } from "./dominio/normativos.js";
+import { listarOfs } from "./of-servico.js";
 import { moverParaLixeira, restaurarDaLixeira, excluirDefinitivo,
          limparLixeiraVencida, PREFIXO_LIXO } from "./dominio/lixeira.js";
 import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-entidade.js";
@@ -39,6 +40,8 @@ export default function App({ emailUsuario = null }) {
   const [secretarias, setSecretarias] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [normativos, setNormativos] = useState([]);
+  const [fornecedores, setFornecedores] = useState([]);
+  const [ofs, setOfs] = useState([]);
   const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
@@ -73,15 +76,20 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaLixo] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaLixo] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
       carregarColecao("sec:"),
       carregarColecao("usr:"),
       carregarColecao("norma:"),
+      carregarColecao("fornecedor:"),
       carregarColecao(PREFIXO_LIXO),
     ]);
+    // As Ordens de Fornecimento vivem numa coleção própria do Firestore (não
+    // na nossa base "dados"), porque o fornecedor precisa lê-las e alterá-las
+    // sem estar logado — ver src/of-servico.js e firestore.rules.
+    const listaOfs = await listarOfs().catch(e => { console.error("Erro ao listar OFs", e); return []; });
 
     // Primeiro acesso: cria a secretaria padrão para que todo documento tenha onde se apoiar.
     // Documentos antigos, sem secretariaId, passam a pertencer a ela automaticamente.
@@ -110,6 +118,8 @@ export default function App({ emailUsuario = null }) {
     setSecretarias(secretariasFinais);
     setUsuarios(listaUsr.sort((a, b) => (a.nomeCompleto || a.email).localeCompare(b.nomeCompleto || b.email)));
     setNormativos(listaNormas.sort((a, b) => b.enviadoEm - a.enviadoEm));
+    setFornecedores(listaFornecedores);
+    setOfs(listaOfs);
     // O que passou de 30 dias sai da lixeira sozinho
     const lixoValido = await limparLixeiraVencida(storage, listaLixo);
     setLixeira(lixoValido.sort((a, b) => b.excluidoEm - a.excluidoEm));
@@ -182,6 +192,16 @@ export default function App({ emailUsuario = null }) {
     const copia = duplicarDocumento(etp, "etp");
     setEtps(prev => [copia, ...prev]);
     storage.set("etp:" + copia.id, JSON.stringify(copia), false).catch(() => {});
+  }
+
+  // ----- Fornecedores -----
+  function salvarFornecedor(f) {
+    const atualizado = { ...f, updatedAt: Date.now() };
+    setFornecedores(prev => {
+      const existe = prev.some(x => x.id === atualizado.id);
+      return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
+    });
+    storage.set("fornecedor:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
   }
 
   // ----- Usuários -----
@@ -470,6 +490,7 @@ export default function App({ emailUsuario = null }) {
   const etpsDaSecretaria = etps.filter(pertenceASecretariaAtiva);
   const justificativasDaSecretaria = justificativas.filter(pertenceASecretariaAtiva);
   const declaracoesDaSecretaria = declaracoes.filter(pertenceASecretariaAtiva);
+  const ofsDaSecretaria = ofs.filter(pertenceASecretariaAtiva);
 
   const filteredEtps = etpsDaSecretaria.filter(e => {
     const nomesResponsaveis = listaResponsaveis(e).map(r => r.nome).join(" ");
@@ -526,6 +547,8 @@ export default function App({ emailUsuario = null }) {
         <ListView
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
+          ofs={ofsDaSecretaria} fornecedores={fornecedores} onSalvarFornecedor={salvarFornecedor}
+          onRecarregarOfs={loadList}
           secretarias={secretariasVisiveis} secretariaAtiva={secretariaAtiva} setSecretariaAtiva={setSecretariaAtiva}
           loading={loading} search={search} setSearch={setSearch}
           onOpen={openEtp} onNew={newEtp} onDelete={deleteEtp} onDuplicar={duplicarEtp}

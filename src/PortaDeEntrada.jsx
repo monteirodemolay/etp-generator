@@ -351,6 +351,12 @@ export default function PortaDeEntrada({ children }) {
               O acesso é criado pelo administrador. Se você ainda não tem conta,
               procure o responsável pelo sistema no seu setor.
             </p>
+
+            <p className="text-[11px] text-center mt-3">
+              <a href="?recibo=" style={{ color: C.brass, textDecoration: "underline" }}>
+                Conferir a autenticidade de um recibo de Ordem de Fornecimento
+              </a>
+            </p>
           </div>
 
           {/* Rodapé */}

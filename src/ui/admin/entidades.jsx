@@ -15,7 +15,7 @@ import { contarDocumentosDaEntidade } from "../../dominio/entidades.js";
 
 // ---------- Cadastro de Secretarias ----------
 export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack,
-  etps = [], justificativas = [], declaracoes = [] }) {
+  etps = [], justificativas = [], declaracoes = [], ofs = [] }) {
   const [aExcluir, setAExcluir] = useState(null); // entidade aguardando confirmação
   // Quando usada como aba do painel não recebe onBack — o menu lateral já faz a navegação
   const fileRefs = useRef({});
@@ -183,14 +183,14 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
       </div>
 
       {aExcluir && (() => {
-        const qtd = contarDocumentosDaEntidade(aExcluir.id, { etps, justificativas, declaracoes });
+        const qtd = contarDocumentosDaEntidade(aExcluir.id, { etps, justificativas, declaracoes, ofs });
         const destino = secretarias.find(s => s.id !== aExcluir.id); // a próxima na lista, sempre a mais antiga
         return (
           <ConfirmarExclusao
             titulo="Excluir esta entidade?"
             descricao={
               qtd > 0
-                ? `"${aExcluir.sigla || aExcluir.nome}" tem ${qtd} documento(s) vinculado(s) (ETPs, Justificativas ou Declarações). ` +
+                ? `"${aExcluir.sigla || aExcluir.nome}" tem ${qtd} documento(s) vinculado(s) (ETPs, Justificativas, Declarações ou Ordens de Fornecimento). ` +
                   `Eles NÃO serão apagados — mas passarão a aparecer sob "${destino?.sigla || destino?.nome || "outra entidade"}", ` +
                   `pois deixarão de ter uma entidade própria à qual pertencer. Se isso não for o que você quer, cancele e reatribua ` +
                   `esses documentos a outra entidade antes de excluir.`
