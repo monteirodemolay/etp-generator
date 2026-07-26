@@ -8,6 +8,7 @@
 
 import React, { useState, useEffect } from "react";
 import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
+import { fmtDateISO } from "../../dominio/datas.js";
 
 const C = {
   navy: "#1C2E4A", paper: "#FAF7F0", brass: "#A6832E",
@@ -91,6 +92,20 @@ export function PortalFornecedor({ token }) {
                     </p>
                   )}
                 </div>
+                {of.diasFechados?.length > 0 && (
+                  <div style={{ background: "#fff3cd", border: "1px solid #ffecb5", color: "#664d03", padding: 16, borderRadius: 8 }}>
+                    <p style={{ margin: "0 0 6px 0", fontWeight: "bold" }}>⚠️ Atenção ao prazo</p>
+                    <p style={{ margin: "0 0 6px 0", fontSize: 13 }}>
+                      Não haverá expediente {of.diasFechados.length > 1 ? "nestas datas, dentro do seu prazo" : "nesta data, dentro do seu prazo"}:
+                    </p>
+                    <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                      {of.diasFechados.map(d => (
+                        <li key={d.id}>{fmtDateISO(d.data)} — {d.nome}</li>
+                      ))}
+                    </ul>
+                    <p style={{ margin: "8px 0 0 0", fontSize: 12 }}>Evite programar a entrega para essas datas.</p>
+                  </div>
+                )}
                 {of.pdfBase64 && (
                   <a href={of.pdfBase64} download={`OF-${of.numeroOf}.pdf`}
                     style={{ display: "block", textAlign: "center", background: "#2563eb", color: "#fff", textDecoration: "none", padding: 12, borderRadius: 6, fontWeight: "bold" }}>

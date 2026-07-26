@@ -30,7 +30,8 @@ import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
 import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO,
   calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega } from "./dominio/of.js";
-import { fmtDateISO } from "./dominio/datas.js";
+import { diasFechadosNoPeriodo } from "./dominio/dias-uteis.js";
+import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -167,6 +168,12 @@ export async function confirmarRecebimento(token, ofAtual) {
   const prazoLimiteStr = fmtDateISO(prazoLimiteISO);
   const chave = `REC-${ofAtual.numeroOf}-${agora.getTime()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+  // Dias sem expediente dentro do próprio prazo — para avisar o fornecedor
+  // a não tentar entregar nessas datas. Calculado aqui (não salvo no
+  // documento), porque é informativo, não faz parte do registro em si.
+  const hojeISO = todayISO();
+  const diasFechados = diasFechadosNoPeriodo(hojeISO, prazoLimiteISO, feriados, ofAtual.municipioId);
+
   const reciboImutavel = { chave, dataConfirmacao: dataAceiteStr, status: "CONFIRMADO" };
 
   // Primeiro grava a confirmação no registro real da OF — é aqui que a
@@ -184,7 +191,7 @@ export async function confirmarRecebimento(token, ofAtual) {
 
   return {
     ...ofAtual, status: "Em Dia", dataAceite: dataAceiteStr, prazoLimite: prazoLimiteStr,
-    prazoLimiteISO, reciboImutavel,
+    prazoLimiteISO, reciboImutavel, diasFechados,
   };
 }
 

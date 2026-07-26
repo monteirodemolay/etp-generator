@@ -155,3 +155,15 @@ export function motivoNaoUtil(dataISO, feriados, municipioId) {
     (f.municipioId === null || f.municipioId === municipioId)
   ) || null;
 }
+
+// Todos os dias sem expediente dentro de um período (inclusive as pontas) —
+// usado para avisar o fornecedor, na confirmação, de que não deve tentar
+// entregar em determinada data dentro do prazo combinado.
+export function diasFechadosNoPeriodo(dataInicioISO, dataFimISO, feriados, municipioId) {
+  return (feriados || [])
+    .filter(f =>
+      f.ativo && f.semExpediente &&
+      (f.municipioId === null || f.municipioId === municipioId) &&
+      f.data >= dataInicioISO && f.data <= dataFimISO)
+    .sort((a, b) => a.data.localeCompare(b.data));
+}
