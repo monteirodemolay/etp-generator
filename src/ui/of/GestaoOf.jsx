@@ -23,7 +23,7 @@ const COR_SITUACAO = {
   "aguardando-entrega": C.brass, "aguardando-confirmacao": "#fd7e14", "nao-entregue": C.red,
 };
 
-export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
+export function GestaoOf({ ofs, fornecedores, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
   const [lendoPdf, setLendoPdf] = useState(false);
@@ -39,7 +39,7 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
   const inputRef = useRef(null);
 
   function abrirNova() {
-    setEditando(emptyOf({ numeroOf: gerarNumeroOfSugerido(), secretariaId }));
+    setEditando(emptyOf({ numeroOf: gerarNumeroOfSugerido(), secretariaId, municipioId }));
     setErro("");
     setModalAberto(true);
   }
@@ -60,7 +60,7 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
         emailFornecedor: fornecedor?.email || "",
         telefoneFornecedor: fornecedor?.telefone || "",
         pdfBase64,
-        secretariaId,
+        secretariaId, municipioId,
       }));
       setModalAberto(true);
     } catch (e2) {
@@ -335,6 +335,25 @@ export function GestaoOf({ ofs, fornecedores, secretariaId, onRecarregar, onSalv
                 onChange={e => setEditando({ ...editando, prazoDias: e.target.value })}
                 className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
             </label>
+
+            <div className="mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide block mb-1.5" style={{ color: C.inkMuted }}>
+                Como contar o prazo?
+              </span>
+              {[
+                { v: "corridos", r: "Dias corridos", d: "Conta normalmente; só ajusta a DATA FINAL se cair num dia sem expediente." },
+                { v: "uteis", r: "Dias úteis", d: "Pula os dias sem expediente durante toda a contagem, não só no final." },
+              ].map(op => (
+                <label key={op.v} className="flex items-start gap-2 mb-1.5 cursor-pointer">
+                  <input type="radio" name="tipoContagemPrazo" className="mt-0.5" checked={(editando.tipoContagemPrazo || "corridos") === op.v}
+                    onChange={() => setEditando({ ...editando, tipoContagemPrazo: op.v })} />
+                  <span className="text-sm">
+                    <span className="font-medium" style={{ color: C.ink }}>{op.r}</span>
+                    <span className="block text-[11px]" style={{ color: C.inkMuted }}>{op.d}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
 
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setModalAberto(false)}

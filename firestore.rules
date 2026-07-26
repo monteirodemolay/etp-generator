@@ -14,7 +14,13 @@ service cloud.firestore {
     }
 
     match /dados/{doc} {
-      allow read, write: if daEquipe();
+      // Só os feriados ("feriado:...") são liberados para leitura pública,
+      // sem login — é o único dado de calendário que o fornecedor precisa
+      // consultar (sem login) para o cálculo do prazo considerar dias sem
+      // expediente. Nada sensível (nada de ETP, fornecedor, usuário) muda
+      // de regra: continua exigindo login, como sempre.
+      allow read: if daEquipe() || doc.matches('^feriado:.*');
+      allow write: if daEquipe();
     }
 
     // Ordem de Fornecimento

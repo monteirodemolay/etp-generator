@@ -28,7 +28,10 @@ import {
 import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
-import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO, montarConfirmacaoEntrega } from "./dominio/of.js";
+import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO,
+  calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega } from "./dominio/of.js";
+import { fmtDateISO } from "./dominio/datas.js";
+import storage from "./storage.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -148,8 +151,20 @@ export async function confirmarRecebimento(token, ofAtual) {
   const agora = new Date();
   const dataAceiteStr = agora.toLocaleString("pt-BR");
   const prazoDias = parseInt(ofAtual.prazoDias || 10, 10);
-  const prazoLimiteStr = calcularPrazoLimite(prazoDias, agora);
-  const prazoLimiteISO = calcularPrazoLimiteISO(prazoDias, agora);
+
+  // Busca só os feriados — é a única leitura pública além da própria OF (ver
+  // firestore.rules: só o prefixo "feriado:" é liberado sem login, porque é
+  // dado de calendário, sem nada sensível).
+  let feriados = [];
+  try {
+    const { keys } = await storage.list("feriado:", false);
+    const valores = await Promise.all(keys.map(k => storage.get(k, false).catch(() => null)));
+    feriados = valores.filter(Boolean).map(v => JSON.parse(v.value));
+  } catch (e) { console.error("Não foi possível carregar o calendário de feriados", e); }
+
+  const prazoLimiteISO = calcularPrazoLimiteComCalendario(
+    prazoDias, ofAtual.tipoContagemPrazo || "corridos", feriados, ofAtual.municipioId, agora);
+  const prazoLimiteStr = fmtDateISO(prazoLimiteISO);
   const chave = `REC-${ofAtual.numeroOf}-${agora.getTime()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
   const reciboImutavel = { chave, dataConfirmacao: dataAceiteStr, status: "CONFIRMADO" };

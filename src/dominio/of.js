@@ -12,6 +12,7 @@
 // diferentes. O servidor sempre confere e ajusta antes de disparar — os
 // campos abrem editáveis, nunca são usados direto sem revisão.
 import { fmtDateISO } from "./datas.js";
+import { ehDiaUtil, proximoDiaUtil } from "./dias-uteis.js";
 
 export function extrairDadosDoPdf(textoCompleto) {
   const matchOf =
@@ -161,6 +162,8 @@ export function montarConfirmacaoEntrega(dataEntregaReal, prazoLimiteISO, confir
 }
 
 // Calcula a data-limite (string pt-BR, para exibir) a partir de agora + prazoDias.
+// Mantida por compatibilidade com quem ainda não passa o calendário — não
+// considera feriado nenhum, só soma dias corridos puros.
 export function calcularPrazoLimite(prazoDias, agora = new Date()) {
   const dataLimite = new Date(agora);
   dataLimite.setDate(dataLimite.getDate() + parseInt(prazoDias || 10, 10));
@@ -173,8 +176,43 @@ export function calcularPrazoLimite(prazoDias, agora = new Date()) {
 export function calcularPrazoLimiteISO(prazoDias, agora = new Date()) {
   const dataLimite = new Date(agora);
   dataLimite.setDate(dataLimite.getDate() + parseInt(prazoDias || 10, 10));
+  return paraISOSimples(dataLimite);
+}
+
+function paraISOSimples(data) {
   const pad = n => String(n).padStart(2, "0");
-  return `${dataLimite.getFullYear()}-${pad(dataLimite.getMonth() + 1)}-${pad(dataLimite.getDate())}`;
+  return `${data.getFullYear()}-${pad(data.getMonth() + 1)}-${pad(data.getDate())}`;
+}
+
+// A data-limite considerando o calendário de dias úteis (feriados e fins de
+// semana) do município da entidade dona da OF, segundo a regra escolhida:
+//
+//   "corridos" — conta os dias normalmente; só ajusta o RESULTADO se ele
+//                cair num dia sem expediente, empurrando para o próximo
+//                dia útil.
+//   "uteis"    — pula os dias sem expediente durante TODA a contagem, não
+//                só no final; o prazo "anda" só nos dias que funcionam.
+//
+// Devolve a data em ISO (aaaa-mm-dd) — para exibir, formate com fmtDateISO.
+export function calcularPrazoLimiteComCalendario(prazoDias, tipoContagem, feriados, municipioId, agora = new Date()) {
+  const dias = parseInt(prazoDias || 10, 10);
+
+  if (tipoContagem === "uteis") {
+    let data = new Date(agora);
+    let contados = 0;
+    let tentativas = 0; // trava de segurança, nunca deveria chegar perto disso
+    while (contados < dias && tentativas < 730) {
+      data.setDate(data.getDate() + 1);
+      if (ehDiaUtil(paraISOSimples(data), feriados, municipioId)) contados++;
+      tentativas++;
+    }
+    return paraISOSimples(data);
+  }
+
+  // "corridos" (padrão): soma normal, ajusta só o final
+  const dataBruta = new Date(agora);
+  dataBruta.setDate(dataBruta.getDate() + dias);
+  return proximoDiaUtil(paraISOSimples(dataBruta), feriados, municipioId);
 }
 
 // Compara a data em que o fornecedor diz que entregou com o prazo combinado.
@@ -197,6 +235,8 @@ export function emptyOf(dadosIniciais = {}) {
     pdfBase64: dadosIniciais.pdfBase64 || "",
     processoOrigem: dadosIniciais.processoOrigem || "", // referência opcional a um ETP/processo
     secretariaId: dadosIniciais.secretariaId || null,
+    municipioId: dadosIniciais.municipioId || null, // gravado já na criação, para o fornecedor não precisar consultar a entidade
+    tipoContagemPrazo: dadosIniciais.tipoContagemPrazo || "corridos", // "corridos" | "uteis"
     envios: [], // log de cada disparo/reenvio: { data, timestamp }
     createdAt: Date.now(),
     updatedAt: Date.now(),
