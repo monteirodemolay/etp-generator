@@ -47,10 +47,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 // sistema, usando a cota da conta.
 const EMAILJS_SERVICE_ID = "service_wqi3a7r";
 const EMAILJS_TEMPLATE_ID = "template_mqlzkdh";
-// PENDENTE: crie este template no EmailJS e troque o valor abaixo pelo ID real.
-// Variáveis que este template deve exibir: to_email, empresa, numero_of,
-// numero_notificacao, prazo, texto_notificacao.
-const EMAILJS_TEMPLATE_ID_NOTIFICACAO = "TROCAR_PELO_ID_DO_TEMPLATE_DE_NOTIFICACAO";
+// Template do e-mail de notificação de atraso/não entrega — exibe um botão
+// que abre a íntegra numa tela pública, não o texto inteiro no corpo.
+const EMAILJS_TEMPLATE_ID_NOTIFICACAO = "template_iadthre";
 const EMAILJS_PUBLIC_KEY = "wadwyjtFqSDvSuRhi";
 
 const COL_OF = "of_registros";
