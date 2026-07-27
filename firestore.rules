@@ -39,9 +39,14 @@ service cloud.firestore {
           'status', 'dataAceite', 'prazoLimite', 'prazoLimiteISO',
           'reciboImutavel', 'motivoDivergencia', 'dataDivergencia', 'updatedAt'
         ]);
-        let estadoAnteriorPermite = antes.status == 'Aguardando Aceite';
-        let novoEstadoEhPermitido = depois.status == 'Em Dia' || depois.status == 'Divergência';
-        return apenasEstesCamposMudaram && estadoAnteriorPermite && novoEstadoEhPermitido;
+        // Primeira confirmação: de "Aguardando Aceite" para "Em Dia" ou "Divergência".
+        let primeiraConfirmacao = antes.status == 'Aguardando Aceite'
+          && (depois.status == 'Em Dia' || depois.status == 'Divergência');
+        // Divergência relatada DEPOIS de já ter confirmado o recebimento -- só
+        // pode ir pra frente (nunca desfazer a própria confirmação; isso
+        // continua sendo só a equipe, ver desfazerConfirmacaoEntrega).
+        let divergenciaAposConfirmar = antes.status == 'Em Dia' && depois.status == 'Divergência';
+        return apenasEstesCamposMudaram && (primeiraConfirmacao || divergenciaAposConfirmar);
       }
     }
 

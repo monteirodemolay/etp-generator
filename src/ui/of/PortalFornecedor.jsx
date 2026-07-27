@@ -167,21 +167,27 @@ export function PortalFornecedor({ token }) {
             )}
 
             {!of.reciboImutavel && of.status !== "Divergência" && (
-              <div>
-                <button onClick={handleConfirmar} disabled={confirmando}
-                  style={{ width: "100%", background: "#056535", color: "#fff", border: "none", padding: 14, borderRadius: 6, fontSize: 16, fontWeight: "bold", cursor: "pointer", marginBottom: 16 }}>
-                  {confirmando ? "Confirmando..." : "✅ Confirmar recebimento"}
+              <button onClick={handleConfirmar} disabled={confirmando}
+                style={{ width: "100%", background: "#056535", color: "#fff", border: "none", padding: 14, borderRadius: 6, fontSize: 16, fontWeight: "bold", cursor: "pointer", marginBottom: 16 }}>
+                {confirmando ? "Confirmando..." : "✅ Confirmar recebimento"}
+              </button>
+            )}
+
+            {of.status !== "Divergência" && (
+              <div style={{ marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                <h4 style={{ margin: "0 0 8px 0", color: C.red }}>Encontrou alguma divergência?</h4>
+                {of.reciboImutavel && (
+                  <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 8px 0" }}>
+                    Mesmo já tendo confirmado o recebimento, você ainda pode relatar um problema percebido depois.
+                  </p>
+                )}
+                <textarea rows="3" value={divergencia} onChange={e => setDivergencia(e.target.value)}
+                  placeholder="Descreva o que não confere — itens, prazos, valores..."
+                  style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", marginBottom: 8 }} />
+                <button onClick={handleDivergencia} disabled={enviando}
+                  style={{ background: C.red, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
+                  {enviando ? "Enviando..." : "Reportar divergência"}
                 </button>
-                <div style={{ marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-                  <h4 style={{ margin: "0 0 8px 0", color: C.red }}>Encontrou alguma divergência?</h4>
-                  <textarea rows="3" value={divergencia} onChange={e => setDivergencia(e.target.value)}
-                    placeholder="Descreva o que não confere — itens, prazos, valores..."
-                    style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", marginBottom: 8 }} />
-                  <button onClick={handleDivergencia} disabled={enviando}
-                    style={{ background: C.red, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
-                    {enviando ? "Enviando..." : "Reportar divergência"}
-                  </button>
-                </div>
               </div>
             )}
           </>

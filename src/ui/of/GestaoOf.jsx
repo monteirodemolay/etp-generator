@@ -349,9 +349,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
       <p style="font-size:11px;color:#6B675E;text-align:center;margin-top:20px">
         Documento gerado eletronicamente. Link de conferência: ${linkConferencia}
       </p>
+      <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
+        <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+          🖨️ Imprimir / Salvar como PDF
+        </button>
+      </div>
+      <style>@media print { .botao-imprimir { display: none; } }</style>
       </body></html>`);
     janela.document.close();
-    janela.print();
   }
 
   const todasAsLinhas = ofs.map(item => ({ item, situacao: calcularSituacao(item) }));

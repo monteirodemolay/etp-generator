@@ -143,9 +143,14 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores }) {
       <p class="filtros"><b>Filtros:</b> ${filtrosAplicados}</p>
       ${modo === "sintetico" ? corpoSintetico : corpoAnalitico}
       <p class="rodape">Documento gerado eletronicamente pelo Gerador de ETP.</p>
+      <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
+        <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+          🖨️ Imprimir / Salvar como PDF
+        </button>
+      </div>
+      <style>@media print { .botao-imprimir { display: none; } }</style>
       </body></html>`);
     janela.document.close();
-    janela.print();
     setImprimindo(false);
   }
 
