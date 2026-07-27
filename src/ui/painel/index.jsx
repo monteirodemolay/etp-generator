@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, Fragment } from "react";
 import {
   ClipboardList, FileText, Plus, ListChecks, FileEdit, Building2, Users,
   Download, Trash2, Search, Copy, Info, Check, AlertCircle, TrendingUp, X, Scale,
-  AlertTriangle, Bell, ChevronRight, Mail, ShieldCheck,
+  AlertTriangle, Bell, ChevronRight, Mail, ShieldCheck, Users2,
 } from "lucide-react";
 import { C, COR_SITUACAO } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
@@ -26,6 +26,7 @@ import { DIAS_NA_LIXEIRA } from "../../dominio/lixeira.js";
 import { LixeiraView } from "./lixeira.jsx";
 import { NormativosView } from "./normativos.jsx";
 import { AdminView } from "../admin/AdminView.jsx";
+import { FornecedoresView } from "../of/FornecedoresView.jsx";
 import { GestaoOf } from "../of/GestaoOf.jsx";
 import { GuiaRapido, JanelaNovoDocumento } from "./janelas.jsx";
 
@@ -47,7 +48,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   feriados, onSalvarFeriado, onExcluirFeriado,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
-  ofs, fornecedores, onSalvarFornecedor, onRecarregarOfs,
+  ofs, fornecedores, onSalvarFornecedor, onExcluirFornecedor, todasAsOfs, onRecarregarOfs,
   lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
   documentoAberto = null, viewAtual, onFecharDocumento, podeVerTodasEntidades }) {
 
@@ -113,6 +114,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento", icone: Mail, contador: ofs.length },
+    { id: "fornecedores", rotulo: "Fornecedores", icone: Users2, contador: fornecedores.length },
     { id: "normativos", rotulo: "Materiais Normativos", icone: Scale, contador: normativos.length },
     { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
     // Entidades, Usuários, Dias Úteis e Backup viviam soltos na lateral — agora
@@ -714,6 +716,11 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
               municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}
               onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
+          )}
+
+          {aba === "fornecedores" && (
+            <FornecedoresView fornecedores={fornecedores} ofs={todasAsOfs}
+              onSalvar={onSalvarFornecedor} onExcluir={onExcluirFornecedor} />
           )}
 
           {aba === "normativos" && (

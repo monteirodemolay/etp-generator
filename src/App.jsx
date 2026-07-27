@@ -253,6 +253,13 @@ export default function App({ emailUsuario = null }) {
     storage.set("fornecedor:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
   }
 
+  async function excluirFornecedor(id) {
+    try {
+      await storage.delete("fornecedor:" + id, false);
+      setFornecedores(prev => prev.filter(f => f.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
   // ----- Usuários -----
   function salvarUsuario(u) {
     const atualizado = { ...u, updatedAt: Date.now() };
@@ -653,6 +660,7 @@ export default function App({ emailUsuario = null }) {
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
           ofs={ofsDaSecretaria} fornecedores={fornecedores} onSalvarFornecedor={salvarFornecedor}
+          onExcluirFornecedor={excluirFornecedor} todasAsOfs={ofs}
           onRecarregarOfs={loadList}
           secretarias={secretariasVisiveis} secretariaAtiva={secretariaAtiva} setSecretariaAtiva={setSecretariaAtiva}
           loading={loading} search={search} setSearch={setSearch}
