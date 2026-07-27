@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from "react";
 import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
 import { fmtDateISO } from "../../dominio/datas.js";
+import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
 
 const C = {
   navy: "#1C2E4A", paper: "#FAF7F0", brass: "#A6832E",
@@ -23,6 +24,7 @@ export function PortalFornecedor({ token }) {
   const [divergencia, setDivergencia] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  const [qrCode, setQrCode] = useState(null);
 
   useEffect(() => {
     buscarOfPorToken(token)
@@ -30,6 +32,14 @@ export function PortalFornecedor({ token }) {
       .catch(() => setErro("Não foi possível carregar esta Ordem de Fornecimento agora. Tente novamente em instantes."))
       .finally(() => setCarregando(false));
   }, [token]);
+
+  // Gera o QR Code do link de conferência assim que o recibo existir —
+  // útil pra quem quiser guardar ou imprimir o comprovante direto daqui.
+  useEffect(() => {
+    if (!of?.reciboImutavel?.chave) { setQrCode(null); return; }
+    const link = `${window.location.origin}${window.location.pathname}?recibo=${of.reciboImutavel.chave}`;
+    gerarQrCodeDataUrl(link).then(setQrCode).catch(() => setQrCode(null));
+  }, [of?.reciboImutavel?.chave]);
 
   async function handleConfirmar() {
     setConfirmando(true);
@@ -85,6 +95,12 @@ export function PortalFornecedor({ token }) {
                   <div style={{ marginTop: 12, padding: 8, background: "#fff", borderRadius: 4, border: "1px dashed " + C.green, fontSize: 12, wordBreak: "break-all" }}>
                     <strong>Chave de autenticidade do recibo:</strong><br /><code>{of.reciboImutavel.chave}</code>
                   </div>
+                  {qrCode && (
+                    <div style={{ textAlign: "center", marginTop: 12 }}>
+                      <img src={qrCode} alt="QR Code de conferência" style={{ width: 130, height: 130 }} />
+                      <p style={{ fontSize: 11, color: C.inkMuted, marginTop: 4 }}>Aponte a câmera para conferir</p>
+                    </div>
+                  )}
                   {linkConferencia && (
                     <p style={{ marginTop: 8, fontSize: 12 }}>
                       <strong>Link para conferência pública:</strong><br />
