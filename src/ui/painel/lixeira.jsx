@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from "react";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X, Search } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { DIAS_NA_LIXEIRA, TIPOS_DOC, diasRestantes, tituloNaLixeira } from "../../dominio/lixeira.js";
@@ -14,6 +14,12 @@ import { fmtDateRelativa } from "../../dominio/datas.js";
 export function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEsvaziar }) {
   const [confirmando, setConfirmando] = useState(null);   // registro a apagar de vez
   const [confirmandoTudo, setConfirmandoTudo] = useState(false);
+  const [busca, setBusca] = useState("");
+
+  const buscaLimpa = busca.trim().toLowerCase();
+  const lixeiraFiltrada = !buscaLimpa ? lixeira
+    : lixeira.filter(r => tituloNaLixeira(r).toLowerCase().includes(buscaLimpa)
+        || (TIPOS_DOC[r.prefixoOriginal]?.rotulo || "").toLowerCase().includes(buscaLimpa));
 
   return (
     <>
@@ -39,15 +45,28 @@ export function LixeiraView({ lixeira, onRestaurar, onApagar, onEsvaziar, podeEs
         Até lá, dá para restaurar a qualquer momento.
       </p>
 
+      {lixeira.length > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por título ou tipo..."
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border, background: "white" }} />
+        </div>
+      )}
+
       {lixeira.length === 0 ? (
         <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <Trash2 size={30} className="mx-auto mb-3" style={{ color: C.border }} />
           <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Lixeira vazia</p>
           <p className="text-sm" style={{ color: C.inkMuted }}>Nada foi excluído nos últimos {DIAS_NA_LIXEIRA} dias.</p>
         </div>
+      ) : lixeiraFiltrada.length === 0 ? (
+        <div className="text-center py-10 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
+        </div>
       ) : (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-          {lixeira.map((r, idx) => {
+          {lixeiraFiltrada.map((r, idx) => {
             const dias = diasRestantes(r.excluidoEm);
             const tipo = TIPOS_DOC[r.prefixoOriginal]?.rotulo || "Documento";
             const urgente = dias <= 5;

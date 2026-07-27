@@ -7,7 +7,7 @@
 import { ACOES_PADRAO, PAGINAS_PADRAO } from "../../dominio/permissoes.js";
 
 import React, { useState } from "react";
-import { Building2, Plus, Trash2, ChevronRight, Info, Lock } from "lucide-react";
+import { Building2, Plus, Trash2, ChevronRight, Info, Lock, Search } from "lucide-react";
 import { C } from "../tokens.js";
 import { PAPEIS, PAGINAS_CONFIGURAVEIS, ACOES_CONFIGURAVEIS,
          emptyUsuario, resumoEntidades } from "../../dominio/permissoes.js";
@@ -18,6 +18,12 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
   const [confirmId, setConfirmId] = useState(null);
   const [novoEmail, setNovoEmail] = useState("");
   const [erro, setErro] = useState("");
+  const [busca, setBusca] = useState("");
+
+  const buscaLimpa = busca.trim().toLowerCase();
+  const usuariosFiltrados = !buscaLimpa ? usuarios
+    : usuarios.filter(u => u.email?.toLowerCase().includes(buscaLimpa)
+        || (u.nomeCompleto || "").toLowerCase().includes(buscaLimpa));
 
   function criar(e) {
     e.preventDefault();
@@ -99,6 +105,15 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
         {erro && <p className="text-xs mt-2" style={{ color: C.red }}>{erro}</p>}
       </form>
 
+      {usuarios.length > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por nome ou e-mail..."
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border, background: "white" }} />
+        </div>
+      )}
+
       {usuarios.length === 0 ? (
         <div className="text-center py-12 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Nenhum usuário cadastrado</p>
@@ -107,9 +122,13 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
             o acesso já foi filtrado pelas Regras do Firebase.
           </p>
         </div>
+      ) : usuariosFiltrados.length === 0 ? (
+        <div className="text-center py-10 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
+        </div>
       ) : (
         <div className="space-y-3">
-          {usuarios.map(u => {
+          {usuariosFiltrados.map(u => {
             const aberto = editando === u.id;
             const souEu = u.email === String(emailAtual || "").toLowerCase();
             const p = PAPEIS[u.papel] || PAPEIS.padrao;

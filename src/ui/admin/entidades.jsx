@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle, MapPin, ChevronDown } from "lucide-react";
+import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle, MapPin, ChevronDown, Search } from "lucide-react";
 import { C } from "../tokens.js";
 import { RichTextEditor, ConfirmarExclusao } from "../comuns/index.jsx";
 import { TIPOS_ENTIDADE } from "../../dominio/opcoes.js";
@@ -31,12 +31,18 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
     setNovoMunicipioNome(""); setNovoMunicipioUf(""); setNovoMunicipioAberto(false);
   }
 
+  const [busca, setBusca] = useState("");
+  const buscaLimpa = busca.trim().toLowerCase();
+  const secretariasFiltradas = !buscaLimpa ? secretarias
+    : secretarias.filter(s => (s.nome || "").toLowerCase().includes(buscaLimpa)
+        || (s.sigla || "").toLowerCase().includes(buscaLimpa));
+
   // Só agrupa por município quando existe mais de um — enquanto for só "Rio
   // Verde", a tela continua exatamente como sempre foi, sem essa camada extra.
   const multiplosMunicipios = municipios.length > 1;
   const gruposPorMunicipio = multiplosMunicipios
-    ? municipios.map(m => ({ municipio: m, entidades: secretarias.filter(s => (s.municipioId || municipios[0]?.id) === m.id) }))
-    : [{ municipio: null, entidades: secretarias }];
+    ? municipios.map(m => ({ municipio: m, entidades: secretariasFiltradas.filter(s => (s.municipioId || municipios[0]?.id) === m.id) }))
+    : [{ municipio: null, entidades: secretariasFiltradas }];
 
   async function trocarTimbre(sec, e) {
     const file = e.target.files?.[0];
@@ -134,7 +140,22 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
         )}
       </div>
 
-      {gruposPorMunicipio.map(({ municipio, entidades }) => (
+      {secretarias.length > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por nome ou sigla..."
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border, background: "white" }} />
+        </div>
+      )}
+
+      {buscaLimpa && secretariasFiltradas.length === 0 && (
+        <div className="text-center py-10 rounded-xl border-2 border-dashed mb-6" style={{ borderColor: C.border }}>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
+        </div>
+      )}
+
+      {gruposPorMunicipio.filter(g => g.entidades.length > 0).map(({ municipio, entidades }) => (
       <div key={municipio?.id || "unico"} className="mb-6">
         {municipio && (
           <h2 className="serif text-base font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.navy }}>

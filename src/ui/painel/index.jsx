@@ -795,11 +795,21 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 // Mesmo comportamento das duas listas: abrir, excluir com confirmação e criar novo.
 export function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, onNovo, icone: Icone, vazio, secretarias, mostrarSecretaria }) {
   const [aExcluir, setAExcluir] = useState(null);
+  const [busca, setBusca] = useState("");
 
   function pedirExclusao(doc, e) {
     e.stopPropagation();
     setAExcluir(doc);
   }
+
+  const buscaLimpa = busca.trim().toLowerCase();
+  const docsFiltrados = !buscaLimpa ? docs : docs.filter(doc => {
+    const c = doc.campos || {};
+    const responsaveis = (c.responsaveis || []).map(r => r.nome).join(" ");
+    const alvo = [tituloDocumento(doc), c.orgao, c.processo, c.responsavel, responsaveis]
+      .filter(Boolean).join(" ").toLowerCase();
+    return alvo.includes(buscaLimpa);
+  });
 
   return (
     <div className="mb-6">
@@ -812,13 +822,26 @@ export function ListaDocumentos({ titulo, docs, onAbrir, onExcluir, onDuplicar, 
         </button>
       </div>
 
+      {docs.length > 0 && (
+        <div className="relative mb-3 max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por título, órgão, processo ou responsável..."
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border, background: "white" }} />
+        </div>
+      )}
+
       {docs.length === 0 ? (
         <div className="rounded-xl border border-dashed px-4 py-5 text-center" style={{ borderColor: C.border }}>
           <p className="text-xs" style={{ color: C.inkMuted }}>{vazio}</p>
         </div>
+      ) : docsFiltrados.length === 0 ? (
+        <div className="rounded-xl border border-dashed px-4 py-5 text-center" style={{ borderColor: C.border }}>
+          <p className="text-xs" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
+        </div>
       ) : (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-          {docs.map((doc, idx) => {
+          {docsFiltrados.map((doc, idx) => {
             return (
               <div key={doc.id} onClick={() => onAbrir(doc)}
                 className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-black/[0.02] group"

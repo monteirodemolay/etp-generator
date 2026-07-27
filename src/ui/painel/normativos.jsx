@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Download, Trash2, Scale } from "lucide-react";
+import { Upload, Download, Trash2, Scale, Search } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { formatarBytes, LIMITE_BYTES_NORMATIVO } from "../../dominio/normativos.js";
@@ -45,6 +45,11 @@ export function NormativosView({ normativos, onUpload, onExcluir }) {
   }
 
   const ordenados = [...normativos].sort((a, b) => b.enviadoEm - a.enviadoEm);
+  const [busca, setBusca] = useState("");
+  const buscaLimpa = busca.trim().toLowerCase();
+  const filtrados = !buscaLimpa ? ordenados
+    : ordenados.filter(n => (n.nome || "").toLowerCase().includes(buscaLimpa)
+        || (n.descricao || "").toLowerCase().includes(buscaLimpa));
 
   return (
     <>
@@ -70,6 +75,15 @@ export function NormativosView({ normativos, onUpload, onExcluir }) {
         </p>
       )}
 
+      {ordenados.length > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: C.inkMuted }} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por nome ou descrição..."
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border, background: "white" }} />
+        </div>
+      )}
+
       {ordenados.length === 0 ? (
         <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <Scale size={30} className="mx-auto mb-3" style={{ color: C.border }} />
@@ -83,9 +97,13 @@ export function NormativosView({ normativos, onUpload, onExcluir }) {
             Enviar o primeiro PDF
           </button>
         </div>
+      ) : filtrados.length === 0 ? (
+        <div className="text-center py-10 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+          <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
+        </div>
       ) : (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.border, background: "white" }}>
-          {ordenados.map((n, i) => (
+          {filtrados.map((n, i) => (
             <div key={n.id} className="flex items-start gap-3 px-5 py-3.5"
               style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
               <Scale size={17} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
