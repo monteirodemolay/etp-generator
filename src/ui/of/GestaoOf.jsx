@@ -21,7 +21,7 @@ import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
-import { todayISO, fmtDateISO } from "../../dominio/datas.js";
+import { todayISO, fmtDateISO, fmtDate } from "../../dominio/datas.js";
 
 const COR_SITUACAO = {
   "rascunho": C.inkMuted, "aguardando": C.brass, "sem-resposta": "#fd7e14",
