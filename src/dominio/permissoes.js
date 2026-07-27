@@ -34,6 +34,7 @@ export const PAGINAS_CONFIGURAVEIS = [
   { id: "justificativas", rotulo: "Justificativas" },
   { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento" },
   { id: "fornecedores", rotulo: "Fornecedores" },
+  { id: "relatorios_of", rotulo: "Relatórios de OF" },
   { id: "normativos", rotulo: "Materiais Normativos" },
   { id: "lixeira", rotulo: "Lixeira" },
 ];
