@@ -15,7 +15,8 @@ import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso } from "../../of-servico.js";
+import { montarTextoNotificacaoAtraso } from "../../dominio/notificacao-of.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
@@ -28,7 +29,7 @@ const COR_SITUACAO = {
   "aguardando-entrega": C.brass, "aguardando-confirmacao": "#fd7e14", "nao-entregue": C.red,
 };
 
-export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
+export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
   const [lendoPdf, setLendoPdf] = useState(false);
@@ -38,6 +39,13 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
   const [desfazendoEntregaDe, setDesfazendoEntregaDe] = useState(null); // OF cuja confirmação está sendo desfeita
   const [motivoDesfazer, setMotivoDesfazer] = useState("");
   const [desfazendo, setDesfazendo] = useState(false);
+  const [notificandoDe, setNotificandoDe] = useState(null); // OF sendo notificada
+  const [notifObs, setNotifObs] = useState("");
+  const [notifAssinanteNome, setNotifAssinanteNome] = useState("");
+  const [notifAssinanteCargo, setNotifAssinanteCargo] = useState("");
+  const [notifPrazoQtd, setNotifPrazoQtd] = useState(24);
+  const [notifPrazoUnidade, setNotifPrazoUnidade] = useState("horas");
+  const [enviandoNotificacao, setEnviandoNotificacao] = useState(false);
   const [filtroAba, setFiltroAba] = useState("todas");
   const [loteAberto, setLoteAberto] = useState(false);
   const [linkCopiadoDe, setLinkCopiadoDe] = useState(null); // token da OF cujo link acabou de ser copiado
@@ -197,6 +205,59 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
       setErro("Não foi possível desfazer: " + (e2.message || e2));
     }
     setDesfazendo(false);
+  }
+
+  function abrirNotificacao(item) {
+    setNotificandoDe(item);
+    setNotifObs("");
+    setNotifAssinanteNome("");
+    setNotifAssinanteCargo("");
+    setNotifPrazoQtd(24);
+    setNotifPrazoUnidade("horas");
+    setErro("");
+  }
+
+  function textoNotificacaoPreview() {
+    if (!notificandoDe) return "";
+    const sec = secretarias?.find(s => s.id === notificandoDe.secretariaId);
+    const mun = municipios?.find(m => m.id === (sec?.municipioId || notificandoDe.municipioId));
+    const numeroSeq = (notificandoDe.notificacoes?.length || 0) + 1;
+    return montarTextoNotificacaoAtraso({
+      of: notificandoDe, numeroSeq,
+      nomeEntidade: sec?.nome || "Entidade não identificada",
+      observacoes: notifObs,
+      assinanteNome: notifAssinanteNome || "[nome de quem assina]",
+      assinanteCargo: notifAssinanteCargo || "[cargo]",
+      prazoQuantidade: notifPrazoQtd, prazoUnidade: notifPrazoUnidade,
+      dataDeHojeExtenso: `${mun?.nome || "Rio Verde"} – ${mun?.uf || "GO"}, ${new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}.`,
+    });
+  }
+
+  async function handleEnviarNotificacao() {
+    if (!notifAssinanteNome.trim() || !notifAssinanteCargo.trim()) {
+      setErro("Informe quem está assinando (nome e cargo).");
+      return;
+    }
+    setEnviandoNotificacao(true);
+    try {
+      const sec = secretarias?.find(s => s.id === notificandoDe.secretariaId);
+      const mun = municipios?.find(m => m.id === (sec?.municipioId || notificandoDe.municipioId));
+      await dispararNotificacaoAtraso(notificandoDe.token, {
+        nomeEntidade: sec?.nome || "Entidade não identificada",
+        observacoes: notifObs,
+        assinanteNome: notifAssinanteNome.trim(),
+        assinanteCargo: notifAssinanteCargo.trim(),
+        prazoQuantidade: notifPrazoQtd,
+        prazoUnidade: notifPrazoUnidade,
+        municipioNome: mun?.nome, uf: mun?.uf,
+        usuarioEmail: emailUsuario,
+      });
+      setNotificandoDe(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível enviar a notificação: " + (e2.message || e2));
+    }
+    setEnviandoNotificacao(false);
   }
 
   async function handleExcluir(item) {
@@ -399,6 +460,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1 flex-wrap">
+                      {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega) && (
+                        <button onClick={() => abrirNotificacao(item)}
+                          title={item.notificacoes?.length ? `Enviar mais uma notificação (já foram ${item.notificacoes.length})` : "Notificar atraso/não entrega"}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold"
+                          style={{ background: "#b45309", color: "white" }}>
+                          <AlertCircle size={13} /> Notificar{item.notificacoes?.length ? ` (${item.notificacoes.length})` : ""}
+                        </button>
+                      )}
                       {item.reciboImutavel && item.pdfBase64 && (
                         <a href={item.pdfBase64} download={`OF-${item.numeroOf}.pdf`} title="Baixar PDF"
                           className="p-1.5 rounded" style={{ color: C.navy }}><Download size={14} /></a>
@@ -631,6 +700,82 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
               <button type="button" onClick={handleDesfazerEntrega} disabled={desfazendo}
                 className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.red, color: "white" }}>
                 {desfazendo ? "Desfazendo..." : "Desfazer e avisar o fornecedor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notificandoDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Notificar atraso/não entrega — OF nº {notificandoDe.numeroOf}
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              {notificandoDe.notificacoes?.length
+                ? `Esta será a ${notificandoDe.notificacoes.length + 1}ª notificação sobre esta OF.`
+                : "Esta será a 1ª notificação sobre esta OF."} O texto completo fica gravado, sem possibilidade de apagar depois.
+            </p>
+
+            <div className="grid sm:grid-cols-2 gap-3 mb-3">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Assinado por (nome)</span>
+                <input value={notifAssinanteNome} onChange={e => setNotifAssinanteNome(e.target.value)}
+                  placeholder="Ex.: Edilene Alves da Cruz"
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Cargo</span>
+                <input value={notifAssinanteCargo} onChange={e => setNotifAssinanteCargo(e.target.value)}
+                  placeholder="Ex.: Secretária de Assistência Social"
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3 mb-3">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Prazo para manifestação</span>
+                <input type="number" min="1" value={notifPrazoQtd} onChange={e => setNotifPrazoQtd(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Unidade</span>
+                <select value={notifPrazoUnidade} onChange={e => setNotifPrazoUnidade(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                  <option value="horas">Horas</option>
+                  <option value="dias-corridos">Dias corridos</option>
+                  <option value="dias-uteis">Dias úteis</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="block mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Observações específicas deste caso (opcional)
+              </span>
+              <textarea value={notifObs} onChange={e => setNotifObs(e.target.value)} rows={2}
+                placeholder="Ex.: a empresa solicitou troca de marca, ainda em análise administrativa"
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide mb-1 block" style={{ color: C.inkMuted }}>
+                Pré-visualização do documento
+              </span>
+              <textarea readOnly value={textoNotificacaoPreview()} rows={12}
+                className="w-full px-3 py-2 rounded-lg border text-xs font-mono"
+                style={{ borderColor: C.border, background: C.paperDark, color: C.ink }} />
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setNotificandoDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleEnviarNotificacao} disabled={enviandoNotificacao}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: "#b45309", color: "white" }}>
+                {enviandoNotificacao ? "Enviando..." : "Enviar notificação"}
               </button>
             </div>
           </div>

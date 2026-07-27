@@ -35,6 +35,7 @@ import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
 import { registrarEvento } from "./auditoria-servico.js";
 import { TIPOS_EVENTO } from "./dominio/auditoria.js";
+import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao } from "./dominio/notificacao-of.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -46,6 +47,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 // sistema, usando a cota da conta.
 const EMAILJS_SERVICE_ID = "service_wqi3a7r";
 const EMAILJS_TEMPLATE_ID = "template_mqlzkdh";
+// PENDENTE: crie este template no EmailJS e troque o valor abaixo pelo ID real.
+// Variáveis que este template deve exibir: to_email, empresa, numero_of,
+// numero_notificacao, prazo, texto_notificacao.
+const EMAILJS_TEMPLATE_ID_NOTIFICACAO = "TROCAR_PELO_ID_DO_TEMPLATE_DE_NOTIFICACAO";
 const EMAILJS_PUBLIC_KEY = "wadwyjtFqSDvSuRhi";
 
 const COL_OF = "of_registros";
@@ -291,6 +296,54 @@ export async function desfazerConfirmacaoEntrega(token, motivo, usuarioEmail) {
   }
 
   return { ...of, confirmacaoEntrega: null };
+}
+
+// Fase 5: notificação formal de atraso/não entrega. Pode ser enviada quantas
+// vezes forem necessárias — cada uma numerada e gravada com o inteiro teor,
+// para documentar exatamente o que foi comunicado e quando.
+export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+
+  const numeroSeq = (of.notificacoes?.length || 0) + 1;
+  const dataDeHojeExtenso = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
+
+  const textoCompleto = montarTextoNotificacaoAtraso({
+    of, numeroSeq, nomeEntidade: dadosNotificacao.nomeEntidade,
+    observacoes: dadosNotificacao.observacoes,
+    assinanteNome: dadosNotificacao.assinanteNome, assinanteCargo: dadosNotificacao.assinanteCargo,
+    prazoQuantidade: dadosNotificacao.prazoQuantidade, prazoUnidade: dadosNotificacao.prazoUnidade,
+    dataDeHojeExtenso: `${dadosNotificacao.municipioNome || "Rio Verde"} – ${dadosNotificacao.uf || "GO"}, ${dataDeHojeExtenso}.`,
+  });
+
+  const registro = emptyNotificacao({
+    numero: numeroSeq, textoCompleto,
+    assinanteNome: dadosNotificacao.assinanteNome, assinanteCargo: dadosNotificacao.assinanteCargo,
+    prazoQuantidade: dadosNotificacao.prazoQuantidade, prazoUnidade: dadosNotificacao.prazoUnidade,
+    observacoes: dadosNotificacao.observacoes, usuarioEmail: dadosNotificacao.usuarioEmail,
+  });
+
+  const notificacoes = [...(of.notificacoes || []), registro];
+  await updateDoc(doc(db, COL_OF, token), { notificacoes, updatedAt: Date.now() });
+
+  if (of.emailFornecedor) {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID_NOTIFICACAO, {
+      to_email: of.emailFornecedor,
+      empresa: of.empresa,
+      numero_of: of.numeroOf,
+      numero_notificacao: numeroSeq,
+      prazo: formatarPrazoNotificacao(dadosNotificacao.prazoQuantidade, dadosNotificacao.prazoUnidade),
+      texto_notificacao: textoCompleto,
+    }, EMAILJS_PUBLIC_KEY);
+  }
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_NOTIFICACAO_ENVIADA, usuarioEmail: dadosNotificacao.usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `${numeroSeq}ª notificação — assinada por ${dadosNotificacao.assinanteNome} (${dadosNotificacao.assinanteCargo})`,
+  });
+
+  return { ...of, notificacoes };
 }
 
 export async function reportarDivergencia(token, texto) {

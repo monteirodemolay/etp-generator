@@ -722,7 +722,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           )}
 
           {aba === "ordens_fornecimento" && (
-            <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias}
+            <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias} municipios={municipios}
               secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
               municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}
               onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
