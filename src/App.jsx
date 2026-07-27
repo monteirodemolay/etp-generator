@@ -32,6 +32,7 @@ import { aplicar as migrarIncisosIVeV } from "./migracoes/001-corrige-incisos-iv
 import { aplicar as migrarMunicipios } from "./migracoes/003-separa-entidades-por-municipio.js";
 import { contarEntidadesDoMunicipio } from "./dominio/municipios.js";
 import { gerarFeriadosNacionais, emptyFeriado } from "./dominio/dias-uteis.js";
+import { emptyTermos } from "./dominio/termos.js";
 import { listaResponsaveis } from "./dominio/etp.js";
 import { TIPOS_OBJETO } from "./dominio/opcoes.js";
 
@@ -46,6 +47,7 @@ export default function App({ emailUsuario = null }) {
   const [fornecedores, setFornecedores] = useState([]);
   const [municipios, setMunicipios] = useState([]);
   const [feriados, setFeriados] = useState([]);
+  const [termos, setTermos] = useState(null);
   const [ofs, setOfs] = useState([]);
   const [lixeira, setLixeira] = useState([]);
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
@@ -154,6 +156,19 @@ export default function App({ emailUsuario = null }) {
     await migrarPcaPorEntidade(storage, secretariasFinais).catch(e =>
       console.error("Migração 002 (PCA por entidade)", e));
 
+    // Garante que exista um conteúdo de Termos de Uso e Privacidade — na
+    // primeira vez, semeia com o texto padrão; depois disso, quem manda é
+    // o que estiver salvo (editado pelo administrador, ou não).
+    let termosFinais;
+    try {
+      const salvo = await storage.get("termos:conteudo", false);
+      termosFinais = salvo?.value ? JSON.parse(salvo.value) : emptyTermos();
+      if (!salvo?.value) await storage.set("termos:conteudo", JSON.stringify(termosFinais), false);
+    } catch (e) {
+      console.error("Erro ao carregar Termos de Uso e Privacidade", e);
+      termosFinais = emptyTermos();
+    }
+
     // Corrige a inversão histórica dos incisos IV e V, se houver ETP antigo
     // que ainda não passou por isso. Em base nova, não encontra nada a fazer.
     await migrarIncisosIVeV(listaEtps, (chave, valor) => storage.set(chave, valor, false))
@@ -168,6 +183,7 @@ export default function App({ emailUsuario = null }) {
     setFornecedores(listaFornecedores);
     setMunicipios(municipiosFinais);
     setFeriados(feriadosFinais.sort((a, b) => a.data.localeCompare(b.data)));
+    setTermos(termosFinais);
     setOfs(listaOfs);
     // O que passou de 30 dias sai da lixeira sozinho
     const lixoValido = await limparLixeiraVencida(storage, listaLixo);
@@ -258,6 +274,13 @@ export default function App({ emailUsuario = null }) {
       await storage.delete("fornecedor:" + id, false);
       setFornecedores(prev => prev.filter(f => f.id !== id));
     } catch (err) { console.error(err); }
+  }
+
+  // ----- Termos de Uso e Privacidade -----
+  function salvarTermos(novoConteudo) {
+    const atualizado = { ...novoConteudo, atualizadoEm: Date.now() };
+    setTermos(atualizado);
+    storage.set("termos:conteudo", JSON.stringify(atualizado), false).catch(() => {});
   }
 
   // ----- Usuários -----
@@ -673,6 +696,7 @@ export default function App({ emailUsuario = null }) {
           onExcluirSecretaria={excluirSecretaria}
           municipios={municipios} onNovoMunicipio={salvarMunicipio} onExcluirMunicipio={excluirMunicipio}
           feriados={feriados} onSalvarFeriado={salvarFeriado} onExcluirFeriado={excluirFeriado}
+          termos={termos} onSalvarTermos={salvarTermos}
           onRecarregar={loadList}
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           podeVerTodasEntidades={podeTodas}

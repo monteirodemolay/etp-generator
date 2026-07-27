@@ -6,24 +6,27 @@
  */
 
 import React, { useState } from "react";
-import { Building2, Users, CalendarDays, Download } from "lucide-react";
+import { Building2, Users, CalendarDays, Download, FileText } from "lucide-react";
 import { C } from "../tokens.js";
 import { SecretariasView } from "./entidades.jsx";
 import { UsuariosView } from "./usuarios.jsx";
 import { DiasUteisView } from "./dias-uteis.jsx";
 import { TelaBackup } from "../painel/backup.jsx";
+import { EditorTermos } from "./EditorTermos.jsx";
 
 const SUBABAS = [
   { id: "entidades", rotulo: "Entidades", icone: Building2 },
   { id: "usuarios", rotulo: "Usuários", icone: Users },
   { id: "dias-uteis", rotulo: "Dias Úteis", icone: CalendarDays },
   { id: "backup", rotulo: "Backup", icone: Download },
+  { id: "termos", rotulo: "Termos", icone: FileText },
 ];
 
 export function AdminView({
   secretarias, onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria,
   municipios, onNovoMunicipio, onExcluirMunicipio,
   feriados, onSalvarFeriado, onExcluirFeriado,
+  termos, onSalvarTermos,
   usuarios, emailUsuario, onSalvarUsuario, onExcluirUsuario,
   etps, justificativas, declaracoes, ofs, onRecarregar,
 }) {
@@ -66,6 +69,8 @@ export function AdminView({
       )}
 
       {subaba === "backup" && <TelaBackup secretarias={secretarias} onRestaurado={onRecarregar} />}
+
+      {subaba === "termos" && <EditorTermos termos={termos} onSalvar={onSalvarTermos} />}
     </div>
   );
 }

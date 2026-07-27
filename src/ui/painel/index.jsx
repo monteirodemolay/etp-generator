@@ -46,6 +46,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   municipios, onNovoMunicipio, onExcluirMunicipio,
   feriados, onSalvarFeriado, onExcluirFeriado,
+  termos, onSalvarTermos,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
   normativos, onUploadNormativo, onExcluirNormativo,
   ofs, fornecedores, onSalvarFornecedor, onExcluirFornecedor, todasAsOfs, onRecarregarOfs,
@@ -160,6 +161,12 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             );
           })}
         </nav>
+
+        <div className="px-3 py-3 border-t" style={{ borderColor: C.border }}>
+          <a href="?termos=" className="text-[10.5px] hover:underline" style={{ color: C.inkMuted }}>
+            Termos de Uso e Política de Privacidade
+          </a>
+        </div>
       </aside>
 
       {/* ---------- Conteúdo ---------- */}
@@ -704,6 +711,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               onNovaSecretaria={onNovaSecretaria} onExcluirSecretaria={onExcluirSecretaria}
               municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio}
               feriados={feriados} onSalvarFeriado={onSalvarFeriado} onExcluirFeriado={onExcluirFeriado}
+              termos={termos} onSalvarTermos={onSalvarTermos}
               usuarios={usuarios} emailUsuario={emailUsuario}
               onSalvarUsuario={onSalvarUsuario} onExcluirUsuario={onExcluirUsuario}
               etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
