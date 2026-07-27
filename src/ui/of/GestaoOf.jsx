@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2 } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
@@ -16,7 +16,7 @@ import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
 import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso } from "../../of-servico.js";
-import { montarTextoNotificacaoAtraso } from "../../dominio/notificacao-of.js";
+import { montarTextoNotificacaoAtraso, linkNotificacao, mensagemWhatsAppNotificacao } from "../../dominio/notificacao-of.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
@@ -46,6 +46,8 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   const [notifPrazoQtd, setNotifPrazoQtd] = useState(24);
   const [notifPrazoUnidade, setNotifPrazoUnidade] = useState("horas");
   const [enviandoNotificacao, setEnviandoNotificacao] = useState(false);
+  const [verNotificacoesDe, setVerNotificacoesDe] = useState(null); // OF cujas notificações estão sendo listadas
+  const [linkNotifCopiado, setLinkNotifCopiado] = useState(null); // "token_numero" copiado agora
   const [filtroAba, setFiltroAba] = useState("todas");
   const [loteAberto, setLoteAberto] = useState(false);
   const [linkCopiadoDe, setLinkCopiadoDe] = useState(null); // token da OF cujo link acabou de ser copiado
@@ -215,6 +217,25 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
     setNotifPrazoQtd(24);
     setNotifPrazoUnidade("horas");
     setErro("");
+  }
+
+  function linkDaNotificacao(item, numero) {
+    return linkNotificacao(`${window.location.origin}${window.location.pathname}`, item.token, numero);
+  }
+
+  async function copiarLinkNotificacao(item, numero) {
+    try {
+      await navigator.clipboard.writeText(linkDaNotificacao(item, numero));
+      setLinkNotifCopiado(`${item.token}_${numero}`);
+      setTimeout(() => setLinkNotifCopiado(null), 2000);
+    } catch (e) {
+      setErro("Não foi possível copiar. Link: " + linkDaNotificacao(item, numero));
+    }
+  }
+
+  function abrirWhatsAppNotificacao(item, numero) {
+    const link = linkDaNotificacao(item, numero);
+    window.open(gerarLinkWhatsApp(item.telefoneFornecedor, mensagemWhatsAppNotificacao(item, numero, link)), "_blank");
   }
 
   function textoNotificacaoPreview() {
@@ -462,10 +483,17 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                     <div className="flex items-center gap-1 flex-wrap">
                       {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega) && (
                         <button onClick={() => abrirNotificacao(item)}
-                          title={item.notificacoes?.length ? `Enviar mais uma notificação (já foram ${item.notificacoes.length})` : "Notificar atraso/não entrega"}
+                          title="Notificar atraso/não entrega"
                           className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold"
                           style={{ background: "#b45309", color: "white" }}>
-                          <AlertCircle size={13} /> Notificar{item.notificacoes?.length ? ` (${item.notificacoes.length})` : ""}
+                          <AlertCircle size={13} /> Notificar
+                        </button>
+                      )}
+                      {item.notificacoes?.length > 0 && (
+                        <button onClick={() => setVerNotificacoesDe(item)}
+                          title="Ver notificações já enviadas"
+                          className="px-2 py-1.5 rounded-md text-xs font-semibold" style={{ background: C.paperDark, color: C.navy }}>
+                          {item.notificacoes.length}x
                         </button>
                       )}
                       {item.reciboImutavel && item.pdfBase64 && (
@@ -668,6 +696,47 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                 className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.navy, color: C.paper }}>
                 {salvandoEntrega ? "Salvando..." : "Confirmar"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {verNotificacoesDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+          <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="serif text-lg font-semibold" style={{ color: C.navy }}>
+                Notificações enviadas — OF nº {verNotificacoesDe.numeroOf}
+              </h2>
+              <button onClick={() => setVerNotificacoesDe(null)} style={{ color: C.inkMuted }}><X size={18} /></button>
+            </div>
+            <div className="space-y-3">
+              {(verNotificacoesDe.notificacoes || []).map(n => {
+                const chaveCopia = `${verNotificacoesDe.token}_${n.numero}`;
+                return (
+                  <div key={n.numero} className="rounded-lg border p-3" style={{ borderColor: C.border }}>
+                    <p className="text-sm font-semibold mb-0.5" style={{ color: C.navy }}>Notificação nº {n.numero}</p>
+                    <p className="text-xs mb-2" style={{ color: C.inkMuted }}>
+                      {fmtDate(n.enviadaEm)} · assinada por {n.assinanteNome} ({n.assinanteCargo})
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => copiarLinkNotificacao(verNotificacoesDe, n.numero)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium"
+                        style={{ background: C.paperDark, color: linkNotifCopiado === chaveCopia ? C.green : C.navy }}>
+                        {linkNotifCopiado === chaveCopia ? <Check size={12} /> : <Link2 size={12} />}
+                        {linkNotifCopiado === chaveCopia ? "Copiado!" : "Copiar link"}
+                      </button>
+                      <button onClick={() => abrirWhatsAppNotificacao(verNotificacoesDe, n.numero)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium" style={{ background: C.paperDark, color: "#25D366" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.85 9.85 0 0 0 12.04 2zm0 18.1a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.13.82.84-3.05-.2-.31a8.22 8.22 0 0 1-1.27-4.4c0-4.54 3.7-8.24 8.26-8.24 2.21 0 4.28.86 5.84 2.42a8.18 8.18 0 0 1 2.42 5.83c0 4.55-3.7 8.26-8.27 8.26zm4.53-6.19c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.04-.38-1.98-1.22-.73-.65-1.23-1.46-1.37-1.71-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.15.16-.25.25-.42.08-.16.04-.31-.02-.43-.06-.13-.56-1.35-.77-1.85-.2-.48-.4-.42-.56-.42-.14-.01-.31-.01-.48-.01a.93.93 0 0 0-.67.31c-.23.25-.87.85-.87 2.08s.9 2.41 1.02 2.58c.13.16 1.77 2.7 4.28 3.79.6.26 1.07.41 1.43.53.6.19 1.15.16 1.58.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.14-1.18-.06-.1-.23-.16-.48-.28z"/>
+                        </svg>
+                        WhatsApp
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

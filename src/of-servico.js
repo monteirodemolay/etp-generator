@@ -35,7 +35,7 @@ import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
 import { registrarEvento } from "./auditoria-servico.js";
 import { TIPOS_EVENTO } from "./dominio/auditoria.js";
-import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao } from "./dominio/notificacao-of.js";
+import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao, linkNotificacao } from "./dominio/notificacao-of.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -326,6 +326,10 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
   const notificacoes = [...(of.notificacoes || []), registro];
   await updateDoc(doc(db, COL_OF, token), { notificacoes, updatedAt: Date.now() });
 
+  const linkIntegra = linkNotificacao(
+    `${window.location.origin}${window.location.pathname}`, token, numeroSeq
+  );
+
   if (of.emailFornecedor) {
     await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID_NOTIFICACAO, {
       to_email: of.emailFornecedor,
@@ -333,7 +337,10 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
       numero_of: of.numeroOf,
       numero_notificacao: numeroSeq,
       prazo: formatarPrazoNotificacao(dadosNotificacao.prazoQuantidade, dadosNotificacao.prazoUnidade),
-      texto_notificacao: textoCompleto,
+      // A íntegra só fica visível depois de abrir o link — não vai mais
+      // inteira dentro do corpo do e-mail (ver dominio/notificacao-of.js).
+      link_notificacao: linkIntegra,
+      texto_notificacao: textoCompleto, // mantido por compatibilidade, caso o template ainda use
     }, EMAILJS_PUBLIC_KEY);
   }
 

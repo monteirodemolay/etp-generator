@@ -80,6 +80,21 @@ export function montarTextoNotificacaoAtraso({
   return partes.join("\n");
 }
 
+// Link público pra abrir a íntegra desta notificação específica (uma OF pode
+// ter várias notificações; o "n" diz qual delas). Reaproveita a mesma leitura
+// pública já existente da OF (of_registros/{token}) — nenhuma regra nova.
+// Recebe a URL base como parâmetro (em vez de ler "window" direto) só pra
+// esta função dar pra testar isoladamente, sem precisar simular navegador.
+export function linkNotificacao(urlBase, token, numeroSeq) {
+  return `${urlBase}?notificacao=${token}&n=${numeroSeq}`;
+}
+
+export function mensagemWhatsAppNotificacao(of, numeroSeq, link) {
+  return `Prezado(a), a empresa ${of.empresa} recebeu a Notificação nº ${numeroSeq} ` +
+    `referente à Ordem de Fornecimento nº ${of.numeroOf}.\n` +
+    `Veja a íntegra pelo link: ${link}`;
+}
+
 export function emptyNotificacao({
   numero, textoCompleto, assinanteNome, assinanteCargo, prazoQuantidade, prazoUnidade, observacoes, usuarioEmail,
 }) {

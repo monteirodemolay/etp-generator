@@ -6,6 +6,7 @@ import LimiteDeErro from "./LimiteDeErro.jsx";
 import { PortalFornecedor } from "./ui/of/PortalFornecedor.jsx";
 import { ConferenciaChave } from "./ui/of/ConferenciaChave.jsx";
 import { CentralFornecedor } from "./ui/of/CentralFornecedor.jsx";
+import { NotificacaoOf } from "./ui/of/NotificacaoOf.jsx";
 import { TermosPrivacidade } from "./ui/legal/TermosPrivacidade.jsx";
 
 // As páginas da Ordem de Fornecimento abertas por link (o fornecedor
@@ -17,11 +18,14 @@ const params = new URLSearchParams(window.location.search);
 const tokenOf = params.get("of");
 const chaveRecibo = params.get("recibo");
 const central = params.get("central");
+const tokenNotificacao = params.get("notificacao");
+const numeroNotificacao = params.get("n");
 const termos = params.get("termos");
 
 function Raiz() {
   if (tokenOf) return <PortalFornecedor token={tokenOf} />;
   if (central !== null) return <CentralFornecedor />;
+  if (tokenNotificacao) return <NotificacaoOf token={tokenNotificacao} numero={numeroNotificacao} />;
   if (termos !== null) return <TermosPrivacidade />;
   if (chaveRecibo !== null) return <ConferenciaChave chaveInicial={chaveRecibo} />;
 
