@@ -10,6 +10,7 @@ import React, { useState, useEffect } from "react";
 import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
 import { fmtDateISO } from "../../dominio/datas.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
+import { ComprovanteOf } from "./ComprovanteOf.jsx";
 
 const C = {
   navy: "#1C2E4A", paper: "#FAF7F0", brass: "#A6832E",
@@ -88,25 +89,11 @@ export function PortalFornecedor({ token }) {
           <>
             {of.reciboImutavel ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
-                <div style={{ background: "#d1e7dd", border: "1px solid #badbcc", color: C.green, padding: 20, borderRadius: 8 }}>
-                  <h3 style={{ margin: "0 0 8px 0" }}>✅ Recebimento confirmado</h3>
-                  <p style={{ margin: "4px 0" }}><strong>Confirmado em:</strong> {of.reciboImutavel.dataConfirmacao}</p>
-                  <p style={{ margin: "4px 0" }}><strong>Prazo de entrega:</strong> {of.prazoDias} dia(s), até {of.prazoLimite}</p>
-                  <div style={{ marginTop: 12, padding: 8, background: "#fff", borderRadius: 4, border: "1px dashed " + C.green, fontSize: 12, wordBreak: "break-all" }}>
-                    <strong>Chave de autenticidade do recibo:</strong><br /><code>{of.reciboImutavel.chave}</code>
-                  </div>
-                  {qrCode && (
-                    <div style={{ textAlign: "center", marginTop: 12 }}>
-                      <img src={qrCode} alt="QR Code de conferência" style={{ width: 130, height: 130 }} />
-                      <p style={{ fontSize: 11, color: C.inkMuted, marginTop: 4 }}>Aponte a câmera para conferir</p>
-                    </div>
-                  )}
-                  {linkConferencia && (
-                    <p style={{ marginTop: 8, fontSize: 12 }}>
-                      <strong>Link para conferência pública:</strong><br />
-                      <a href={linkConferencia} style={{ color: C.green }}>{linkConferencia}</a>
-                    </p>
-                  )}
+                <p style={{ textAlign: "center", color: C.green, fontWeight: "bold", margin: "0 0 4px 0" }}>
+                  ✅ Recebimento confirmado
+                </p>
+                <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, padding: 24 }}>
+                  <ComprovanteOf of={of} cabecalho={of.timbreSnapshot} qrCodeDataUrl={qrCode} linkConferencia={linkConferencia} />
                 </div>
                 {of.diasFechados?.length > 0 && (
                   <div style={{ background: "#fff3cd", border: "1px solid #ffecb5", color: "#664d03", padding: 16, borderRadius: 8 }}>

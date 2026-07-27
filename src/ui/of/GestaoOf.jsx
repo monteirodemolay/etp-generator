@@ -18,6 +18,8 @@ import { normalizarCnpj, formatarCnpj, cnpjValido,
 import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso } from "../../of-servico.js";
 import { montarTextoNotificacaoAtraso, linkNotificacao, mensagemWhatsAppNotificacao } from "../../dominio/notificacao-of.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
+import { ComprovanteOf } from "./ComprovanteOf.jsx";
+import { renderToStaticMarkup } from "react-dom/server";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
@@ -135,6 +137,16 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
     onSalvarFornecedor(atualizado);
   }
 
+  // "Congela" o timbre da entidade dentro da própria OF, uma única vez —
+  // é o que permite a tela pública do fornecedor (sem acesso à lista de
+  // entidades) mostrar o mesmo timbre que o admin vê, sem precisar de
+  // nenhuma leitura nova no banco.
+  async function comTimbreSnapshot(item) {
+    if (item.timbreSnapshot) return item;
+    const cabecalho = await prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO));
+    return { ...item, timbreSnapshot: cabecalho };
+  }
+
   async function handleSalvarRascunho(e) {
     e.preventDefault();
     if (numeroOfDuplicado(editando.numeroOf, ofs, editando.id)) {
@@ -142,7 +154,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
       return;
     }
     try {
-      await salvarOf(editando);
+      await salvarOf(await comTimbreSnapshot(editando));
       await persistirFornecedor(editando);
       setModalAberto(false);
       onRecarregar();
@@ -155,7 +167,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
     setEnviando(true);
     setErro("");
     try {
-      await dispararNotificacaoFornecedor(aDisparar, emailUsuario);
+      await dispararNotificacaoFornecedor(await comTimbreSnapshot(aDisparar), emailUsuario);
       await persistirFornecedor(aDisparar);
       setADisparar(null);
       setModalAberto(false);
@@ -300,55 +312,25 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
     const janela = window.open("", "_blank");
     janela.document.write("<p style='font-family:sans-serif;padding:40px;'>Preparando o comprovante...</p>");
 
+    // Usa o timbre já congelado na OF, se existir (OFs criadas antes desta
+    // mudança ainda não têm — resolve ao vivo só nesse caso, como antes).
     const [cabecalho, qrCodeDataUrl] = await Promise.all([
-      prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)),
+      item.timbreSnapshot || prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)),
       gerarQrCodeDataUrl(linkConferencia).catch(() => null),
     ]);
 
-    const htmlCabecalho = cabecalho?.tipo === "imagem" && cabecalho.dataUrl
-      ? `<img src="${cabecalho.dataUrl}" style="max-width:100%; max-height:90px; display:block; margin:0 auto 12px;" />`
-      : cabecalho?.tipo === "texto" && cabecalho.html
-        ? `<div style="text-align:center; margin-bottom:12px;">${cabecalho.html}</div>`
-        : `<h2 style="text-align:center; margin-bottom:4px;">Prefeitura Municipal</h2>`;
+    // Mesmo componente usado na tela do fornecedor — é o que garante que os
+    // dois lados veem exatamente o mesmo comprovante, sem divergência.
+    const htmlComprovante = renderToStaticMarkup(
+      React.createElement(ComprovanteOf, { of: item, cabecalho, qrCodeDataUrl, linkConferencia })
+    );
 
     janela.document.open();
     janela.document.write(`
       <html><head><title>Comprovante - OF nº ${item.numeroOf}</title>
-      <style>
-        body{font-family:sans-serif;padding:40px;color:#111;max-width:640px;margin:0 auto}
-        .cabecalho{border-bottom:2px solid #1C2E4A;padding-bottom:16px;margin-bottom:20px}
-        h3{text-align:center;color:#6B675E;font-weight:normal;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0}
-        .box{background:#F1ECDF;border:1px solid #DAD3C2;padding:16px;border-radius:8px;margin-bottom:16px}
-        .chave{font-family:monospace;background:#fff;padding:8px;display:block;font-size:12px;word-break:break-all;border-radius:4px;border:1px dashed #A6832E}
-        .qr{text-align:center;margin:20px 0}
-        .qr img{width:150px;height:150px}
-        .qr p{font-size:11px;color:#6B675E;margin-top:6px}
-      </style>
+      <style>body{font-family:sans-serif;padding:40px;color:#111;margin:0}</style>
       </head><body>
-      <div class="cabecalho">
-        ${htmlCabecalho}
-        <h3>Comprovante de Recebimento e Aceite — Ordem de Fornecimento</h3>
-      </div>
-      <div class="box">
-        <p style="margin:4px 0"><strong>OF nº:</strong> ${item.numeroOf}</p>
-        <p style="margin:4px 0"><strong>Empresa:</strong> ${item.empresa}</p>
-        <p style="margin:4px 0"><strong>CNPJ:</strong> ${item.cnpj || "-"}</p>
-        <p style="margin:4px 0"><strong>Confirmado em:</strong> ${item.dataAceite}</p>
-        <p style="margin:4px 0"><strong>Prazo limite:</strong> ${item.prazoLimite} (${item.prazoDias} dias)</p>
-      </div>
-      <div class="box">
-        <strong style="font-size:12px;">Chave de autenticidade:</strong>
-        <span class="chave">${item.reciboImutavel?.chave || "N/A"}</span>
-      </div>
-      ${qrCodeDataUrl ? `
-        <div class="qr">
-          <img src="${qrCodeDataUrl}" alt="QR Code de conferência" />
-          <p>Aponte a câmera para conferir a autenticidade deste comprovante</p>
-        </div>
-      ` : ""}
-      <p style="font-size:11px;color:#6B675E;text-align:center;margin-top:20px">
-        Documento gerado eletronicamente. Link de conferência: ${linkConferencia}
-      </p>
+      ${htmlComprovante}
       <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
         <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
           🖨️ Imprimir / Salvar como PDF
@@ -858,7 +840,8 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
 
       {loteAberto && (
         <ImportarLoteModal
-          ofsExistentes={ofs} fornecedores={fornecedores} secretariaId={secretariaId} municipioId={municipioId}
+          ofsExistentes={ofs} fornecedores={fornecedores} secretarias={secretarias}
+          secretariaId={secretariaId} municipioId={municipioId}
           onSalvarFornecedor={onSalvarFornecedor}
           onFechar={() => setLoteAberto(false)}
           onConcluido={onRecarregar}

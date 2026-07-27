@@ -343,6 +343,10 @@ export function emptyOf(dadosIniciais = {}) {
     secretariaId: dadosIniciais.secretariaId || null,
     municipioId: dadosIniciais.municipioId || null, // gravado já na criação, para o fornecedor não precisar consultar a entidade
     tipoContagemPrazo: dadosIniciais.tipoContagemPrazo || "corridos", // "corridos" | "uteis"
+    // Timbre da entidade "congelado" no momento da criação — permite a tela
+    // pública do fornecedor mostrar o mesmo timbre que o admin vê, sem
+    // precisar de acesso à lista de entidades (que ela não tem).
+    timbreSnapshot: dadosIniciais.timbreSnapshot || null,
     envios: [], // log de cada disparo/reenvio: { data, timestamp }
     createdAt: Date.now(),
     updatedAt: Date.now(),
