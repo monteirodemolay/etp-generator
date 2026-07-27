@@ -146,6 +146,26 @@ export function PortalFornecedor({ token }) {
               <p style={{ margin: "6px 0" }}><strong>Prazo acordado:</strong> {of.prazoDias} dia(s) após a confirmação</p>
             </div>
 
+            {of.notificacoes?.length > 0 && (
+              <div style={{ background: "#f8d7da", border: "1px solid #f5c2c7", padding: 16, borderRadius: 8, marginBottom: 24 }}>
+                <h4 style={{ margin: "0 0 8px 0", color: "#842029" }}>
+                  ⚠️ {of.notificacoes.length > 1 ? `${of.notificacoes.length} notificações formais recebidas` : "Notificação formal recebida"}
+                </h4>
+                <p style={{ margin: "0 0 10px 0", fontSize: 13, color: "#842029" }}>
+                  Antes de confirmar ou reportar algo, veja o conteúdo — pode haver prazo ou providência exigida.
+                </p>
+                {of.notificacoes.map(n => (
+                  <p key={n.numero} style={{ margin: "4px 0", fontSize: 13 }}>
+                    <a href={`${window.location.origin}${window.location.pathname}?notificacao=${token}&n=${n.numero}`}
+                      target="_blank" rel="noreferrer" style={{ color: "#842029", fontWeight: "bold", textDecoration: "underline" }}>
+                      📄 Ver Notificação nº {n.numero}
+                    </a>
+                    <span style={{ color: "#6B7280" }}> — enviada em {new Date(n.enviadaEm).toLocaleDateString("pt-BR")}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+
             {!of.reciboImutavel && of.status !== "Divergência" && (
               <div>
                 <button onClick={handleConfirmar} disabled={confirmando}
