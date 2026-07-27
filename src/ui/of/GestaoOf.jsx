@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2 } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
@@ -15,7 +15,7 @@ import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega } from "../../of-servico.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
@@ -35,6 +35,9 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
   const [aExcluir, setAExcluir] = useState(null);
   const [aDisparar, setADisparar] = useState(null); // OF aguardando confirmação de envio
   const [confirmandoEntregaDe, setConfirmandoEntregaDe] = useState(null); // OF cuja entrega está sendo confirmada
+  const [desfazendoEntregaDe, setDesfazendoEntregaDe] = useState(null); // OF cuja confirmação está sendo desfeita
+  const [motivoDesfazer, setMotivoDesfazer] = useState("");
+  const [desfazendo, setDesfazendo] = useState(false);
   const [filtroAba, setFiltroAba] = useState("todas");
   const [loteAberto, setLoteAberto] = useState(false);
   const [linkCopiadoDe, setLinkCopiadoDe] = useState(null); // token da OF cujo link acabou de ser copiado
@@ -142,7 +145,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
     setEnviando(true);
     setErro("");
     try {
-      await dispararNotificacaoFornecedor(aDisparar);
+      await dispararNotificacaoFornecedor(aDisparar, emailUsuario);
       await persistirFornecedor(aDisparar);
       setADisparar(null);
       setModalAberto(false);
@@ -175,6 +178,25 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
       setErro("Não foi possível registrar a entrega: " + (e2.message || e2));
     }
     setSalvandoEntrega(false);
+  }
+
+  function abrirDesfazerEntrega(item) {
+    setDesfazendoEntregaDe(item);
+    setMotivoDesfazer("");
+    setErro("");
+  }
+
+  async function handleDesfazerEntrega() {
+    if (!motivoDesfazer.trim()) { setErro("Informe o motivo do desfazimento."); return; }
+    setDesfazendo(true);
+    try {
+      await desfazerConfirmacaoEntrega(desfazendoEntregaDe.token, motivoDesfazer.trim(), emailUsuario);
+      setDesfazendoEntregaDe(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível desfazer: " + (e2.message || e2));
+    }
+    setDesfazendo(false);
   }
 
   async function handleExcluir(item) {
@@ -393,6 +415,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
                           <PackageCheck size={13} /> {item.confirmacaoEntrega ? "Entrega confirmada" : "Confirmar entrega"}
                         </button>
                       )}
+                      {item.confirmacaoEntrega && (
+                        <button onClick={() => abrirDesfazerEntrega(item)} title="Desfazer confirmação de entrega (avisa o fornecedor)"
+                          className="p-1.5 rounded" style={{ color: C.red }}>
+                          <Undo2 size={14} />
+                        </button>
+                      )}
                       <button onClick={() => copiarLink(item)} title="Copiar link de confirmação"
                         className="p-1.5 rounded flex items-center gap-1 text-xs" style={{ color: linkCopiadoDe === item.token ? C.green : C.inkMuted }}>
                         {linkCopiadoDe === item.token ? <Check size={14} /> : <Link2 size={14} />}
@@ -570,6 +598,39 @@ export function GestaoOf({ ofs, fornecedores, secretarias, secretariaId, municip
               <button type="button" onClick={handleConfirmarEntrega} disabled={salvandoEntrega}
                 className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.navy, color: C.paper }}>
                 {salvandoEntrega ? "Salvando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {desfazendoEntregaDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-2" style={{ color: C.navy }}>
+              Desfazer confirmação de entrega — OF nº {desfazendoEntregaDe.numeroOf}
+            </h2>
+            <p className="text-xs mb-3" style={{ color: C.inkMuted }}>
+              Isso volta a OF pro estado "aguardando confirmação da entrega" e <b>avisa o fornecedor por
+              e-mail</b> de que a situação foi revisada, com o motivo abaixo. Fica registrado no log de
+              auditoria, sem possibilidade de apagar depois.
+            </p>
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Motivo (obrigatório)
+              </span>
+              <textarea value={motivoDesfazer} onChange={e => setMotivoDesfazer(e.target.value)} rows={3}
+                placeholder="Ex.: confirmado por engano, produto ainda não chegou de fato"
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setDesfazendoEntregaDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleDesfazerEntrega} disabled={desfazendo}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.red, color: "white" }}>
+                {desfazendo ? "Desfazendo..." : "Desfazer e avisar o fornecedor"}
               </button>
             </div>
           </div>

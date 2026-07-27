@@ -33,6 +33,8 @@ import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO,
 import { diasFechadosNoPeriodo } from "./dominio/dias-uteis.js";
 import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
+import { registrarEvento } from "./auditoria-servico.js";
+import { TIPOS_EVENTO } from "./dominio/auditoria.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -138,20 +140,23 @@ export async function excluirOf(token) {
 // "Enviado" aqui significa apenas que o EmailJS aceitou a requisição — não
 // há confirmação de que o fornecedor recebeu de fato (endereço errado,
 // caixa cheia etc. não aparecem neste ponto).
-export async function dispararNotificacaoFornecedor(of) {
+export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
   if (!of.emailFornecedor) throw new Error("Informe o e-mail do fornecedor antes de disparar.");
 
   const agora = new Date();
   const token = of.token || crypto.randomUUID();
   const linkAceite = `${window.location.origin}${window.location.pathname}?of=${token}`;
 
-  const envioAtual = { data: agora.toLocaleString("pt-BR"), timestamp: agora.getTime() };
+  // Guarda quem disparou dentro da própria OF (visível na tela) — o
+  // registro definitivo, à prova de edição, fica no log de auditoria.
+  const envioAtual = { data: agora.toLocaleString("pt-BR"), timestamp: agora.getTime(), disparadoPor: usuarioEmail || "desconhecido" };
   const payload = {
     ...of,
     token,
     status: "Aguardando Aceite",
     dataEnvioTimestamp: agora.getTime(),
     dataEnvioStr: agora.toLocaleString("pt-BR"),
+    disparadoPor: usuarioEmail || "desconhecido",
     envios: [...(of.envios || []), envioAtual],
   };
 
@@ -163,6 +168,12 @@ export async function dispararNotificacaoFornecedor(of) {
     numero_of: of.numeroOf,
     link_aceite: linkAceite,
   }, EMAILJS_PUBLIC_KEY);
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_DISPARADA, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `${payload.envios.length}ª vez que esta OF é disparada`,
+  });
 
   return payload;
 }
@@ -236,7 +247,50 @@ export async function confirmarEntrega(token, dataEntregaReal, confirmadoPor) {
   if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
   const confirmacaoEntrega = montarConfirmacaoEntrega(dataEntregaReal, of.prazoLimiteISO, confirmadoPor);
   await updateDoc(doc(db, COL_OF, token), { confirmacaoEntrega, updatedAt: Date.now() });
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_ENTREGA_CONFIRMADA, usuarioEmail: confirmadoPor, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: confirmacaoEntrega.situacao,
+  });
+
   return { ...of, confirmacaoEntrega };
+}
+
+// Fase 3: desfazer uma confirmação de entrega feita por engano. Só a
+// equipe faz isso (autenticada) — nunca o fornecedor. Devolve a OF pro
+// estado "aguardando confirmação da entrega", registra o motivo no log de
+// auditoria, e avisa o fornecedor por e-mail de que a situação da OF dele
+// foi revisada, incluindo o motivo informado.
+export async function desfazerConfirmacaoEntrega(token, motivo, usuarioEmail) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  if (!of.confirmacaoEntrega) throw new Error("Esta OF não tem nenhuma confirmação de entrega para desfazer.");
+
+  const confirmacaoAnterior = of.confirmacaoEntrega;
+  await updateDoc(doc(db, COL_OF, token), { confirmacaoEntrega: null, updatedAt: Date.now() });
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_ENTREGA_DESFEITA, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Situação anterior: "${confirmacaoAnterior.situacao}". Motivo do desfazimento: ${motivo}`,
+  });
+
+  if (of.emailFornecedor) {
+    try {
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+        to_email: of.emailFornecedor,
+        empresa: of.empresa,
+        numero_of: of.numeroOf,
+        link_aceite: `${window.location.origin}${window.location.pathname}?of=${token}`,
+        mensagem: `A confirmação de entrega desta Ordem de Fornecimento foi revisada pela equipe e está novamente aguardando confirmação. Motivo: ${motivo}`,
+      }, EMAILJS_PUBLIC_KEY);
+    } catch (e) {
+      console.error("A confirmação foi desfeita, mas não foi possível avisar o fornecedor por e-mail", e);
+    }
+  }
+
+  return { ...of, confirmacaoEntrega: null };
 }
 
 export async function reportarDivergencia(token, texto) {

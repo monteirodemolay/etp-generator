@@ -67,6 +67,15 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Log de auditoria: so a equipe grava (autenticada), e so por "create".
+    // Nenhum papel -- nem admin -- pode alterar ou apagar um evento ja
+    // gravado. E' isso que da credibilidade ao log numa auditoria de verdade.
+    match /log_auditoria/{eventoId} {
+      allow read: if daEquipe();
+      allow create: if daEquipe();
+      allow update, delete: if false;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

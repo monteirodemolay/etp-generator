@@ -6,13 +6,14 @@
  */
 
 import React, { useState } from "react";
-import { Building2, Users, CalendarDays, Download, FileText } from "lucide-react";
+import { Building2, Users, CalendarDays, Download, FileText, FileSearch } from "lucide-react";
 import { C } from "../tokens.js";
 import { SecretariasView } from "./entidades.jsx";
 import { UsuariosView } from "./usuarios.jsx";
 import { DiasUteisView } from "./dias-uteis.jsx";
 import { TelaBackup } from "../painel/backup.jsx";
 import { EditorTermos } from "./EditorTermos.jsx";
+import { Auditoria } from "./Auditoria.jsx";
 
 const SUBABAS = [
   { id: "entidades", rotulo: "Entidades", icone: Building2 },
@@ -20,6 +21,7 @@ const SUBABAS = [
   { id: "dias-uteis", rotulo: "Dias Úteis", icone: CalendarDays },
   { id: "backup", rotulo: "Backup", icone: Download },
   { id: "termos", rotulo: "Termos", icone: FileText },
+  { id: "auditoria", rotulo: "Auditoria", icone: FileSearch },
 ];
 
 export function AdminView({
@@ -71,6 +73,8 @@ export function AdminView({
       {subaba === "backup" && <TelaBackup secretarias={secretarias} onRestaurado={onRecarregar} />}
 
       {subaba === "termos" && <EditorTermos termos={termos} onSalvar={onSalvarTermos} />}
+
+      {subaba === "auditoria" && <Auditoria secretarias={secretarias} />}
     </div>
   );
 }
