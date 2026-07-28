@@ -347,6 +347,10 @@ export function emptyOf(dadosIniciais = {}) {
     // pública do fornecedor mostrar o mesmo timbre que o admin vê, sem
     // precisar de acesso à lista de entidades (que ela não tem).
     timbreSnapshot: dadosIniciais.timbreSnapshot || null,
+    // Credenciais do EmailJS "congeladas" no momento da criação — mesma
+    // lógica do timbre: a entidade pode não ter conta própria, e nesse caso
+    // usa o padrão do sistema (ver dominio/emailjs-config.js).
+    emailJsSnapshot: dadosIniciais.emailJsSnapshot || null,
     envios: [], // log de cada disparo/reenvio: { data, timestamp }
     createdAt: Date.now(),
     updatedAt: Date.now(),

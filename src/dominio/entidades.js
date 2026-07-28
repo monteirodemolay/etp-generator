@@ -18,6 +18,10 @@ export function emptySecretaria(nome, sigla, tipo, municipioId) {
     tipoTimbre: "imagem", // "imagem" | "texto" | "nenhum"
     timbre: null,         // imagem, quando tipoTimbre = "imagem"
     timbreHtml: "",       // texto formatado, quando tipoTimbre = "texto"
+    // Credenciais próprias do EmailJS, para quem emite Ordem de Fornecimento
+    // com uma conta EmailJS separada da padrão. A grande maioria não precisa
+    // preencher nada aqui — ver dominio/emailjs-config.js.
+    emailJs: { ativo: false, serviceId: "", templateIdOf: "", templateIdNotificacao: "", publicKey: "" },
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };

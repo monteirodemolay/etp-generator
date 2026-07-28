@@ -22,6 +22,7 @@ import { ComprovanteOf } from "./ComprovanteOf.jsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
+import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
 import { todayISO, fmtDateISO, fmtDate } from "../../dominio/datas.js";
 
@@ -142,9 +143,11 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   // entidades) mostrar o mesmo timbre que o admin vê, sem precisar de
   // nenhuma leitura nova no banco.
   async function comTimbreSnapshot(item) {
-    if (item.timbreSnapshot) return item;
-    const cabecalho = await prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO));
-    return { ...item, timbreSnapshot: cabecalho };
+    const secretariaDaOf = secretarias?.find(s => s.id === item.secretariaId);
+    const comTimbre = item.timbreSnapshot ? item
+      : { ...item, timbreSnapshot: await prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)) };
+    return comTimbre.emailJsSnapshot ? comTimbre
+      : { ...comTimbre, emailJsSnapshot: resolverCredenciaisEmailJs(secretariaDaOf) };
   }
 
   async function handleSalvarRascunho(e) {

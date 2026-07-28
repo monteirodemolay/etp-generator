@@ -18,6 +18,7 @@ import { buscarFornecedorPorCnpj, upsertFornecedor, cnpjValido } from "../../dom
 import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor } from "../../of-servico.js";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
+import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
 
 export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, secretariaId, municipioId, onFechar, onSalvarFornecedor, onConcluido }) {
   const [itens, setItens] = useState([]); // { idLocal, arquivo, numeroOf, empresa, cnpj, emailFornecedor, pdfBase64, marcado }
@@ -80,13 +81,14 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     setDisparando(true);
     // Mesmo timbre pra todas as OFs do lote -- todas são da mesma entidade.
     const timbreSnapshot = await prepararCabecalho(resolverCabecalho({ secretariaId }, secretarias, TIMBRE_PADRAO));
+    const emailJsSnapshot = resolverCredenciaisEmailJs(secretarias?.find(s => s.id === secretariaId));
     const sucesso = []; const falhas = [];
     for (const item of itens.filter(i => !i.erroLeitura && i.erro !== "Número de OF repetido")) {
       try {
         await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
           emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot,
+          timbreSnapshot, emailJsSnapshot,
         }));
         if (cnpjValido(item.cnpj)) {
           onSalvarFornecedor(upsertFornecedor(fornecedores, {
@@ -104,13 +106,14 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     setDisparando(true);
     setConfirmando(false);
     const timbreSnapshot = await prepararCabecalho(resolverCabecalho({ secretariaId }, secretarias, TIMBRE_PADRAO));
+    const emailJsSnapshot = resolverCredenciaisEmailJs(secretarias?.find(s => s.id === secretariaId));
     const sucesso = []; const falhas = [];
     for (const item of prontos) {
       try {
         const salva = await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
           emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot,
+          timbreSnapshot, emailJsSnapshot,
         }));
         await dispararNotificacaoFornecedor(salva);
         if (cnpjValido(item.cnpj)) {

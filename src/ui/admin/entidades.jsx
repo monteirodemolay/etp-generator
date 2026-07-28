@@ -11,6 +11,7 @@ import { TIPOS_ENTIDADE } from "../../dominio/opcoes.js";
 import { redimensionarImagem } from "../../docx/timbre.js";
 import { escapeHtml } from "../../dominio/texto.js";
 import { contarDocumentosDaEntidade } from "../../dominio/entidades.js";
+import { emailJsConfigCompleta } from "../../dominio/emailjs-config.js";
 import { emptyMunicipio, contarEntidadesDoMunicipio } from "../../dominio/municipios.js";
 
 
@@ -280,6 +281,56 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
                   depois, por outro sistema ou em papel timbrado impresso.
                 </p>
               )}
+
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={!!sec.emailJs?.ativo}
+                    onChange={e => onSalvar({ ...sec, emailJs: { ...(sec.emailJs || {}), ativo: e.target.checked } })} />
+                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                    Esta entidade tem conta própria no EmailJS (Ordem de Fornecimento)
+                  </span>
+                </label>
+
+                {!sec.emailJs?.ativo ? (
+                  <p className="text-xs" style={{ color: C.inkMuted }}>
+                    Sem marcar, esta entidade usa as credenciais padrão do sistema — é o caso da maioria.
+                    Só marque se esta entidade tiver sua própria conta no EmailJS.
+                  </p>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>Service ID</span>
+                      <input value={sec.emailJs?.serviceId || ""} placeholder="service_xxxxxxx"
+                        onChange={e => onSalvar({ ...sec, emailJs: { ...sec.emailJs, serviceId: e.target.value } })}
+                        className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>Public Key</span>
+                      <input value={sec.emailJs?.publicKey || ""} placeholder="chave pública"
+                        onChange={e => onSalvar({ ...sec, emailJs: { ...sec.emailJs, publicKey: e.target.value } })}
+                        className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>Template — Envio de OF</span>
+                      <input value={sec.emailJs?.templateIdOf || ""} placeholder="template_xxxxxxx"
+                        onChange={e => onSalvar({ ...sec, emailJs: { ...sec.emailJs, templateIdOf: e.target.value } })}
+                        className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase" style={{ color: C.inkMuted }}>Template — Notificação de atraso</span>
+                      <input value={sec.emailJs?.templateIdNotificacao || ""} placeholder="template_xxxxxxx"
+                        onChange={e => onSalvar({ ...sec, emailJs: { ...sec.emailJs, templateIdNotificacao: e.target.value } })}
+                        className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                    </label>
+                    {!emailJsConfigCompleta(sec.emailJs) && (
+                      <p className="sm:col-span-2 text-[11px]" style={{ color: "#b45309" }}>
+                        Falta preencher algum campo acima — enquanto isso, esta entidade continua usando
+                        as credenciais padrão, sem quebrar o disparo.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="flex justify-end mt-3">
                 {secretarias.length <= 1 ? (

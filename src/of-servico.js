@@ -36,6 +36,7 @@ import storage from "./storage.js";
 import { registrarEvento } from "./auditoria-servico.js";
 import { TIPOS_EVENTO } from "./dominio/auditoria.js";
 import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao, linkNotificacao } from "./dominio/notificacao-of.js";
+import { EMAILJS_PADRAO } from "./dominio/emailjs-config.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -45,12 +46,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 // disparar envio ("Allowed origins"). Sem isso, qualquer pessoa que ler o
 // código do site pode extrair estas três strings e mandar e-mail em nome do
 // sistema, usando a cota da conta.
-const EMAILJS_SERVICE_ID = "service_wqi3a7r";
-const EMAILJS_TEMPLATE_ID = "template_mqlzkdh";
-// Template do e-mail de notificação de atraso/não entrega — exibe um botão
-// que abre a íntegra numa tela pública, não o texto inteiro no corpo.
-const EMAILJS_TEMPLATE_ID_NOTIFICACAO = "template_iadthre";
-const EMAILJS_PUBLIC_KEY = "wadwyjtFqSDvSuRhi";
+//
+// Cada OF carrega suas próprias credenciais (of.emailJsSnapshot), congeladas
+// na criação — para entidades sem conta própria no EmailJS, isso resolve
+// sozinho para as credenciais padrão (ver dominio/emailjs-config.js).
 
 const COL_OF = "of_registros";
 // Índice mínimo chave -> token, usado só para a conferência pública por
@@ -166,12 +165,13 @@ export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
 
   await setDoc(doc(db, COL_OF, token), payload, { merge: true });
 
-  await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+  const credenciais = of.emailJsSnapshot || EMAILJS_PADRAO;
+  await emailjs.send(credenciais.serviceId, credenciais.templateIdOf, {
     to_email: of.emailFornecedor,
     empresa: of.empresa,
     numero_of: of.numeroOf,
     link_aceite: linkAceite,
-  }, EMAILJS_PUBLIC_KEY);
+  }, credenciais.publicKey);
 
   registrarEvento({
     tipo: TIPOS_EVENTO.OF_DISPARADA, usuarioEmail, secretariaId: of.secretariaId,
@@ -282,13 +282,14 @@ export async function desfazerConfirmacaoEntrega(token, motivo, usuarioEmail) {
 
   if (of.emailFornecedor) {
     try {
-      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      const credenciais = of.emailJsSnapshot || EMAILJS_PADRAO;
+      await emailjs.send(credenciais.serviceId, credenciais.templateIdOf, {
         to_email: of.emailFornecedor,
         empresa: of.empresa,
         numero_of: of.numeroOf,
         link_aceite: `${window.location.origin}${window.location.pathname}?of=${token}`,
         mensagem: `A confirmação de entrega desta Ordem de Fornecimento foi revisada pela equipe e está novamente aguardando confirmação. Motivo: ${motivo}`,
-      }, EMAILJS_PUBLIC_KEY);
+      }, credenciais.publicKey);
     } catch (e) {
       console.error("A confirmação foi desfeita, mas não foi possível avisar o fornecedor por e-mail", e);
     }
@@ -330,7 +331,8 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
   );
 
   if (of.emailFornecedor) {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID_NOTIFICACAO, {
+    const credenciais = of.emailJsSnapshot || EMAILJS_PADRAO;
+    await emailjs.send(credenciais.serviceId, credenciais.templateIdNotificacao, {
       to_email: of.emailFornecedor,
       empresa: of.empresa,
       numero_of: of.numeroOf,
@@ -340,7 +342,7 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
       // inteira dentro do corpo do e-mail (ver dominio/notificacao-of.js).
       link_notificacao: linkIntegra,
       texto_notificacao: textoCompleto, // mantido por compatibilidade, caso o template ainda use
-    }, EMAILJS_PUBLIC_KEY);
+    }, credenciais.publicKey);
   }
 
   registrarEvento({
