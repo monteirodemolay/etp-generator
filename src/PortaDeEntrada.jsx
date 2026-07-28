@@ -12,7 +12,7 @@ import {
 import { auth } from "./firebase";
 import nuvem from "./storage";
 import local from "./storage-local";
-import logoHub from "./assets/logo_hub_compraspublicas.png";
+import logoHub from "./assets/logo_hub_escuro.png";
 
 const VERSAO = "2.0";
 
