@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown, Camera } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
@@ -16,7 +16,9 @@ import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual } from "../../of-servico.js";
+import { METODOS_ENVIO_MANUAL, rotuloMetodoEnvio } from "../../dominio/envio-manual.js";
+import { comprimirImagemAnexo } from "../../dominio/imagem.js";
 import { montarTextoNotificacaoAtraso, linkNotificacao, mensagemWhatsAppNotificacao } from "../../dominio/notificacao-of.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { ComprovanteOf } from "./ComprovanteOf.jsx";
@@ -44,6 +46,13 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   const [motivoDesfazer, setMotivoDesfazer] = useState("");
   const [desfazendo, setDesfazendo] = useState(false);
   const [notificandoDe, setNotificandoDe] = useState(null); // OF sendo notificada
+  const [registrandoEnvioDe, setRegistrandoEnvioDe] = useState(null); // OF cujo envio manual está sendo registrado
+  const [envioMetodo, setEnvioMetodo] = useState("whatsapp");
+  const [envioData, setEnvioData] = useState(todayISO());
+  const [envioObs, setEnvioObs] = useState("");
+  const [envioAnexo, setEnvioAnexo] = useState(null); // data URL já comprimida
+  const [comprimindoAnexo, setComprimindoAnexo] = useState(false);
+  const [salvandoEnvioManual, setSalvandoEnvioManual] = useState(false);
   const [notifObs, setNotifObs] = useState("");
   const [notifAssinanteNome, setNotifAssinanteNome] = useState("");
   const [notifAssinanteCargo, setNotifAssinanteCargo] = useState("");
@@ -303,6 +312,51 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
       setErro("Não foi possível enviar a notificação: " + (e2.message || e2));
     }
     setEnviandoNotificacao(false);
+  }
+
+  function abrirRegistrarEnvio(item) {
+    setRegistrandoEnvioDe(item);
+    setEnvioMetodo("whatsapp");
+    setEnvioData(todayISO());
+    setEnvioObs("");
+    setEnvioAnexo(null);
+    setErro("");
+  }
+
+  async function handleAnexarImagem(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setComprimindoAnexo(true);
+    try {
+      const dataUrlOriginal = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const comprimida = await comprimirImagemAnexo(dataUrlOriginal);
+      setEnvioAnexo(comprimida);
+    } catch (e2) {
+      setErro("Não foi possível processar a imagem. Tente outra.");
+    }
+    setComprimindoAnexo(false);
+    e.target.value = "";
+  }
+
+  async function handleRegistrarEnvioManual() {
+    setSalvandoEnvioManual(true);
+    setErro("");
+    try {
+      await registrarEnvioManual(registrandoEnvioDe.token, {
+        metodo: envioMetodo, dataEnvio: envioData, observacao: envioObs,
+        anexo: envioAnexo, registradoPor: emailUsuario,
+      });
+      setRegistrandoEnvioDe(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível registrar: " + (e2.message || e2));
+    }
+    setSalvandoEnvioManual(false);
   }
 
   async function handleExcluir(item) {
@@ -756,6 +810,9 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                   cor={situacaoItem.precisaReenviar ? "#fd7e14" : C.navy} onClick={() => setADisparar(item)} />
                 <ItemAcao icone={Link2} rotulo="Copiar link de confirmação" onClick={() => copiarLink(item)} />
                 <ItemAcao icone={MessageCircle} rotulo="Enviar link pelo WhatsApp" cor="#25D366" onClick={() => abrirWhatsApp(item)} />
+                <ItemAcao icone={Camera} rotulo="Registrar envio por outro meio"
+                  sub={item.enviosManuais?.length ? `${item.enviosManuais.length} registro(s) já feito(s)` : "WhatsApp pessoal, e-mail direto, presencial..."}
+                  onClick={() => abrirRegistrarEnvio(item)} />
 
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Confirmação da entrega</p>
                 {item.status === "Em Dia" ? (
@@ -828,6 +885,83 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
               <button type="button" onClick={handleDesfazerEntrega} disabled={desfazendo}
                 className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.red, color: "white" }}>
                 {desfazendo ? "Desfazendo..." : "Desfazer e avisar o fornecedor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {registrandoEnvioDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+          <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Registrar envio por outro meio — OF nº {registrandoEnvioDe.numeroOf}
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              Só documenta que a OF foi comunicada fora do sistema. O fornecedor ainda precisa clicar no
+              link de confirmação em algum momento — use "Copiar link" ou WhatsApp pra isso.
+            </p>
+
+            {registrandoEnvioDe.enviosManuais?.length > 0 && (
+              <div className="mb-4 space-y-2">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Já registrado</p>
+                {registrandoEnvioDe.enviosManuais.map(r => (
+                  <div key={r.id} className="rounded-lg border p-2.5 text-xs flex items-start gap-2" style={{ borderColor: C.border }}>
+                    {r.anexo && <img src={r.anexo} alt="Anexo" className="w-12 h-12 object-cover rounded" />}
+                    <div>
+                      <p style={{ color: C.ink }}><b>{rotuloMetodoEnvio(r.metodo)}</b> — {fmtDateISO(r.dataEnvio)}</p>
+                      {r.observacao && <p style={{ color: C.inkMuted }}>{r.observacao}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid sm:grid-cols-2 gap-3 mb-3">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Método</span>
+                <select value={envioMetodo} onChange={e => setEnvioMetodo(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                  {METODOS_ENVIO_MANUAL.map(m => <option key={m.id} value={m.id}>{m.rotulo}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Data do envio</span>
+                <input type="date" value={envioData} max={todayISO()} onChange={e => setEnvioData(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+              </label>
+            </div>
+
+            <label className="block mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Observação (opcional)</span>
+              <textarea value={envioObs} onChange={e => setEnvioObs(e.target.value)} rows={2}
+                placeholder="Ex.: entregue na sede da empresa, enviado pelo WhatsApp do gestor..."
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Foto como prova (opcional, comprimida automaticamente)
+              </span>
+              <input type="file" accept="image/*" onChange={handleAnexarImagem} disabled={comprimindoAnexo}
+                className="mt-1 w-full text-xs" />
+              {comprimindoAnexo && <p className="text-xs mt-1" style={{ color: C.inkMuted }}>Comprimindo imagem...</p>}
+              {envioAnexo && (
+                <div className="mt-2 flex items-center gap-2">
+                  <img src={envioAnexo} alt="Pré-visualização" className="w-16 h-16 object-cover rounded-lg border" style={{ borderColor: C.border }} />
+                  <button type="button" onClick={() => setEnvioAnexo(null)} className="text-xs underline" style={{ color: C.red }}>Remover</button>
+                </div>
+              )}
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRegistrandoEnvioDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleRegistrarEnvioManual} disabled={salvandoEnvioManual || comprimindoAnexo}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.navy, color: C.paper }}>
+                {salvandoEnvioManual ? "Salvando..." : "Salvar registro"}
               </button>
             </div>
           </div>

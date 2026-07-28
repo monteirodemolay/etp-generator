@@ -37,6 +37,7 @@ import { registrarEvento } from "./auditoria-servico.js";
 import { TIPOS_EVENTO } from "./dominio/auditoria.js";
 import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao, linkNotificacao } from "./dominio/notificacao-of.js";
 import { EMAILJS_PADRAO } from "./dominio/emailjs-config.js";
+import { emptyEnvioManual, rotuloMetodoEnvio } from "./dominio/envio-manual.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -352,6 +353,38 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
   });
 
   return { ...of, notificacoes };
+}
+
+// Confirmação manual de envio — quando a OF foi comunicada ao fornecedor
+// por fora do sistema. Pode ser registrada a qualquer momento, quantas
+// vezes for preciso. Se ainda não havia nenhuma data de notificação (nem
+// disparo pelo sistema, nem outro registro manual), esta passa a ser —
+// inclusive tirando a OF do estado "Rascunho", já que na prática ela já
+// foi comunicada.
+export async function registrarEnvioManual(token, dados) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+
+  const registro = emptyEnvioManual(dados);
+  const enviosManuais = [...(of.enviosManuais || []), registro];
+  const mudancas = { enviosManuais, updatedAt: Date.now() };
+
+  if (!of.dataEnvioTimestamp) {
+    const dataObj = new Date(dados.dataEnvio + "T00:00:00");
+    mudancas.dataEnvioTimestamp = dataObj.getTime();
+    mudancas.dataEnvioStr = dataObj.toLocaleDateString("pt-BR");
+    if (of.status === "Rascunho") mudancas.status = "Aguardando Aceite";
+  }
+
+  await updateDoc(doc(db, COL_OF, token), mudancas);
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_ENVIO_MANUAL_REGISTRADO, usuarioEmail: dados.registradoPor, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Método: ${rotuloMetodoEnvio(dados.metodo)}. Data informada: ${dados.dataEnvio}.${dados.anexo ? " Com anexo." : ""}`,
+  });
+
+  return { ...of, ...mudancas };
 }
 
 export async function reportarDivergencia(token, texto) {

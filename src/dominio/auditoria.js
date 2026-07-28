@@ -27,6 +27,7 @@ export const TIPOS_EVENTO = {
   // Ordem de Fornecimento
   OF_CRIADA: "of.criada",
   OF_DISPARADA: "of.disparada",
+  OF_ENVIO_MANUAL_REGISTRADO: "of.envio_manual_registrado",
   OF_ENTREGA_CONFIRMADA: "of.entrega_confirmada",
   OF_ENTREGA_DESFEITA: "of.entrega_desfeita",
   OF_NOTIFICACAO_ENVIADA: "of.notificacao_enviada",
@@ -54,6 +55,7 @@ export const ROTULOS_EVENTO = {
   [TIPOS_EVENTO.DOCUMENTO_DUPLICADO]: "Duplicou o documento",
   [TIPOS_EVENTO.OF_CRIADA]: "Criou a Ordem de Fornecimento",
   [TIPOS_EVENTO.OF_DISPARADA]: "Disparou a Ordem de Fornecimento",
+  [TIPOS_EVENTO.OF_ENVIO_MANUAL_REGISTRADO]: "Registrou envio da OF por outro meio (fora do sistema)",
   [TIPOS_EVENTO.OF_ENTREGA_CONFIRMADA]: "Confirmou a entrega da OF",
   [TIPOS_EVENTO.OF_ENTREGA_DESFEITA]: "Desfez a confirmação de entrega da OF",
   [TIPOS_EVENTO.OF_NOTIFICACAO_ENVIADA]: "Enviou notificação de atraso/não entrega",
