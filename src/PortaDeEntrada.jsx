@@ -12,6 +12,7 @@ import {
 import { auth } from "./firebase";
 import nuvem from "./storage";
 import local from "./storage-local";
+import logoHub from "./assets/logo_hub_compraspublicas.png";
 
 const VERSAO = "2.0";
 
@@ -185,22 +186,17 @@ export default function PortaDeEntrada({ children }) {
             <rect width="100%" height="100%" fill="url(#brilho)" />
           </svg>
 
-          <div className="relative z-10">
-            {/* Marca */}
-            <div className="flex items-center gap-4 mb-9">
-              <svg width="60" height="66" viewBox="0 0 60 66" fill="none" aria-hidden="true">
-                <path d="M30 2 L56 17 L56 49 L30 64 L4 49 L4 17 Z"
-                  stroke={C.brass} strokeWidth="2.5" fill="none" />
-                <rect x="19" y="18" width="23" height="30" rx="2.5" fill={C.paper} opacity="0.95" />
-                <path d="M24 26h13M24 32h13M24 38h9" stroke={C.navy} strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <div>
-                <p style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 38, fontWeight: 700,
-                  color: C.paper, lineHeight: 1, letterSpacing: "-0.5px" }}>ETP</p>
-                <p style={{ fontSize: 13, letterSpacing: "6px", color: C.brassLight,
-                  marginTop: 4, fontWeight: 500 }}>INTELIGENTE</p>
-              </div>
-            </div>
+        <div className="mb-9">
+           <img
+              src={logoHub}
+              alt="Hub Compras Públicas"
+              style={{
+              width: "320px",
+              maxWidth: "100%",
+              height: "auto",
+            }}
+          />
+        </div>
 
             <div style={{ width: 52, height: 3, background: C.brass, marginBottom: 26, borderRadius: 2 }} />
 
@@ -243,18 +239,17 @@ export default function PortaDeEntrada({ children }) {
           <div className="w-full max-w-sm mx-auto">
 
             {/* Marca compacta, só quando o lado esquerdo está oculto */}
-            <div className="lg:hidden flex items-center gap-3 mb-8">
-              <svg width="42" height="46" viewBox="0 0 60 66" fill="none" aria-hidden="true">
-                <path d="M30 2 L56 17 L56 49 L30 64 L4 49 L4 17 Z" stroke={C.brass} strokeWidth="2.5" fill="none" />
-                <rect x="19" y="18" width="23" height="30" rx="2.5" fill={C.navy} opacity="0.9" />
-                <path d="M24 26h13M24 32h13M24 38h9" stroke={C.paper} strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <div>
-                <p style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 24,
-                  fontWeight: 700, color: C.navy, lineHeight: 1 }}>ETP</p>
-                <p style={{ fontSize: 9.5, letterSpacing: "4px", color: C.brass, marginTop: 2 }}>INTELIGENTE</p>
-              </div>
-            </div>
+        <div className="lg:hidden mb-8 flex justify-center">
+          <img
+            src={logoHub}
+            alt="Hub Compras Públicas"
+            style={{
+            width: "220px",
+            height: "auto",
+            objectFit: "contain",
+          }}
+        />
+      </div>
 
             <h2 style={{ fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 30,
               fontWeight: 600, color: C.navy, lineHeight: 1.2 }}>
@@ -378,13 +373,18 @@ export default function PortaDeEntrada({ children }) {
                 <path d="m9 12 2 2 4-4" />
               </svg>
               <p className="text-[11px] leading-relaxed" style={{ color: C.inkMuted }}>
-                Segurança, padronização e conformidade<br />para uma gestão pública mais eficiente.
+                Inteligência, transparência e governança
+                <br />
+                para uma gestão pública mais eficiente.
               </p>
             </div>
-            <p className="text-[10.5px] text-center mt-4" style={{ color: C.inkMuted }}>
-              ETP Inteligente · versão {VERSAO}
-            </p>
-          </div>
+              <p
+                className="text-[10.5px] text-center mt-4"
+                style={{ color: C.inkMuted }}
+              >
+                Hub Compras Públicas · versão {VERSAO}
+              </p>          
+        </div>
         </div>
       </div>
     );
