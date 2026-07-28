@@ -4,6 +4,7 @@
  */
 
 import { entidadeEhSomenteLeitura } from "../../dominio/permissoes.js";
+import logoHub from "../../assets/hub_logo_transparente.png";
 
 import React, { useState, useEffect, useMemo, Fragment } from "react";
 import {
@@ -130,14 +131,8 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
       {/* ---------- Barra lateral ---------- */}
       <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
-      <div className="px-5 py-5 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.brass }}>
-            <ClipboardList size={20} style={{ color: C.navyDark }} />
-          </div>
-          <div className="min-w-0">
-            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>Hub Compras Públicas</p>
-            <p className="text-[10px] leading-tight" style={{ color: "#8A93A3" }}>Estudo Técnico Preliminar</p>
-          </div>
+      <div className="px-5 py-5 flex items-center">
+          <img src={logoHub} alt="Hub Compras Públicas" className="h-11 w-auto" />
         </div>
 
         <nav className="px-3 mt-2 flex-1 overflow-y-auto etp-scroll">
