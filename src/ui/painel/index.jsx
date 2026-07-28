@@ -135,7 +135,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             <ClipboardList size={20} style={{ color: C.navyDark }} />
           </div>
           <div className="min-w-0">
-            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>ETP Inteligente</p>
+            <p className="serif text-base font-semibold leading-tight" style={{ color: C.paper }}>Hub Compras Públicas</p>
             <p className="text-[10px] leading-tight" style={{ color: "#8A93A3" }}>Estudo Técnico Preliminar</p>
           </div>
         </div>
@@ -774,7 +774,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 >
           <ClipboardList size={14} style={{ color: C.brass }} />
           <span className="text-xs" style={{ color: C.inkMuted }}>
-            ETP Inteligente — Planejamento consistente para contratações públicas
+            Hub Compras Públicas — Planejamento consistente para contratações públicas
           </span>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
             Desenvolvido por Luís Eduardo Monteiro Lima
