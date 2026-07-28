@@ -477,7 +477,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
             <tbody>
               {linhas.map(({ item, situacao }) => (
                 <tr key={item.token} className="border-t" style={{ borderColor: C.border }}>
-                  <td className="px-3 py-3 font-semibold" style={{ color: C.navy }}>{item.numeroOf}</td>
+                  <td className="px-3 py-3 font-semibold" style={{ color: C.navy }}>
+                    {item.numeroOf}
+                    <p className="text-[10.5px] font-normal" style={{ color: C.inkMuted }}>
+                      {item.dataEnvioStr ? `Notificada em ${item.dataEnvioStr}` : "Ainda não notificada"}
+                    </p>
+                  </td>
                   <td className="px-3 py-3">
                     <p style={{ color: C.ink }}>{item.empresa || "Não informada"}</p>
                     <p className="text-[11px]" style={{ color: C.inkMuted }}>{formatarCnpj(item.cnpj) || "-"}</p>
@@ -486,10 +491,17 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                     {item.prazoLimite || "-"}
                   </td>
                   <td className="px-3 py-3">
-                    <span className="text-[11px] font-semibold px-2 py-1 rounded-full"
+                    <span className="text-[11px] font-semibold px-2 py-1 rounded-full block w-fit"
                       style={{ background: `${COR_SITUACAO[situacao.chave]}1A`, color: COR_SITUACAO[situacao.chave] }}>
                       {situacao.texto}
                     </span>
+                    {item.status === "Em Dia" && (
+                      <button onClick={() => abrirConfirmacaoEntrega(item)}
+                        className="mt-1 text-[10.5px] font-semibold underline"
+                        style={{ color: C.brass }}>
+                        {item.confirmacaoEntrega ? "Alterar status" : "Confirmar entrega / não entregue"}
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-3">
                     <button onClick={() => setAcoesDe(item)}
