@@ -163,12 +163,6 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             );
           })}
         </nav>
-
-        <div className="px-3 py-3 border-t" style={{ borderColor: C.border }}>
-          <a href="?termos=" className="text-[10.5px] hover:underline" style={{ color: C.inkMuted }}>
-            Termos de Uso e Política de Privacidade
-          </a>
-        </div>
       </aside>
 
       {/* ---------- Conteúdo ---------- */}
@@ -766,7 +760,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
         </main>
 
        <footer
-  className="fixed bottom-0 left-64 right-0 h-12 px-7 border-t flex items-center gap-2 z-50"
+  className="fixed bottom-0 left-60 right-0 h-12 px-7 border-t flex items-center gap-2 z-50"
   style={{
     borderColor: C.border,
     background: "white"
@@ -776,6 +770,10 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           <span className="text-xs" style={{ color: C.inkMuted }}>
             Hub Compras Públicas — Planejamento consistente para contratações públicas
           </span>
+          <a href="?termos=" className="text-xs font-medium hover:underline ml-6 flex items-center gap-1"
+            style={{ color: C.brass }}>
+            <ShieldCheck size={13} /> Termos de Uso e Política de Privacidade
+          </a>
           <span className="ml-auto text-xs" style={{ color: C.inkMuted }}>
             Desenvolvido por Luís Eduardo Monteiro Lima
           </span>
