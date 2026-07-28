@@ -6,6 +6,7 @@
  * cotação para envio a fornecedores e lê de volta os valores preenchidos.
  */
 
+import * as XLSX from "xlsx";
 import { fmtDate, fmtDateISO } from "./datas.js";
 
 import { num } from "./valores.js";

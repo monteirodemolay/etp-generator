@@ -24,8 +24,8 @@ export function JustificativaView({ doc, secretarias, onSalvar, onBack, somenteL
   const timbre = cabecalho.tipo === "imagem" ? cabecalho.dataUrl : null;
 
   useEffect(() => {
-    obterTimbreGlobal()
-      .then(setTimbreGlobal)
+    storage.get("timbre:padrao", false)
+      .then(r => setTimbreGlobal(r?.value || TIMBRE_PADRAO))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);

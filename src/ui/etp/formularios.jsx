@@ -4,6 +4,7 @@
  * fica em documento.jsx.
  */
 
+import * as XLSX from "xlsx";
 import storage from "../../storage.js";
 
 import { todayISO } from "../../dominio/datas.js";

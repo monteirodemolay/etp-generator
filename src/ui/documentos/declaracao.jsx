@@ -11,6 +11,7 @@ import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
 import { cruzarComPca } from "../../dominio/pca.js";
+import * as XLSX from "xlsx";
 import { parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti } from "../../dominio/planilhas.js";
 import { fmtDate } from "../../dominio/datas.js";
@@ -48,7 +49,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   useEffect(() => {
     Promise.all([
       storage.get("pca:planilha", false).catch(() => null),
-      obterTimbreGlobal().catch(() => null),
+      storage.get("timbre:padrao", false).then(r => r?.value || null).catch(() => null),
     ]).then(([pcaRes, timbre]) => {
       if (pcaRes?.value) setPca(JSON.parse(pcaRes.value));
       if (timbre) setTimbreGlobal(timbre);
