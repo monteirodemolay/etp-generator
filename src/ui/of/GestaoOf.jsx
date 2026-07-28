@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2 } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
@@ -50,6 +50,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   const [notifPrazoUnidade, setNotifPrazoUnidade] = useState("horas");
   const [enviandoNotificacao, setEnviandoNotificacao] = useState(false);
   const [verNotificacoesDe, setVerNotificacoesDe] = useState(null); // OF cujas notificações estão sendo listadas
+  const [acoesDe, setAcoesDe] = useState(null); // OF cujo painel de ações está aberto
   const [linkNotifCopiado, setLinkNotifCopiado] = useState(null); // "token_numero" copiado agora
   const [filtroAba, setFiltroAba] = useState("todas");
   const [loteAberto, setLoteAberto] = useState(false);
@@ -470,64 +471,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    <div className="flex items-center gap-1 flex-wrap">
+                    <button onClick={() => setAcoesDe(item)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
+                      style={{ background: C.paperDark, color: C.navy }}>
+                      <MoreHorizontal size={14} /> Ações
                       {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega) && (
-                        <button onClick={() => abrirNotificacao(item)}
-                          title="Notificar atraso/não entrega"
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold"
-                          style={{ background: "#b45309", color: "white" }}>
-                          <AlertCircle size={13} /> Notificar
-                        </button>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#b45309" }} title="Precisa de atenção" />
                       )}
-                      {item.notificacoes?.length > 0 && (
-                        <button onClick={() => setVerNotificacoesDe(item)}
-                          title="Ver notificações já enviadas"
-                          className="px-2 py-1.5 rounded-md text-xs font-semibold" style={{ background: C.paperDark, color: C.navy }}>
-                          {item.notificacoes.length}x
-                        </button>
-                      )}
-                      {item.reciboImutavel && item.pdfBase64 && (
-                        <a href={item.pdfBase64} download={`OF-${item.numeroOf}.pdf`} title="Baixar PDF"
-                          className="p-1.5 rounded" style={{ color: C.navy }}><Download size={14} /></a>
-                      )}
-                      {item.reciboImutavel && (
-                        <button onClick={() => imprimirRecibo(item)} title="Imprimir recibo"
-                          className="p-1.5 rounded" style={{ color: C.inkMuted }}><Printer size={14} /></button>
-                      )}
-                      {item.status === "Em Dia" && (
-                        <button onClick={() => abrirConfirmacaoEntrega(item)}
-                          title={item.confirmacaoEntrega ? "Alterar confirmação de entrega" : "Confirmar entrega do produto"}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold"
-                          style={{ background: item.confirmacaoEntrega ? C.paperDark : C.green, color: item.confirmacaoEntrega ? C.navy : "white" }}>
-                          <PackageCheck size={13} /> {item.confirmacaoEntrega ? "Entrega confirmada" : "Confirmar entrega"}
-                        </button>
-                      )}
-                      {item.confirmacaoEntrega && (
-                        <button onClick={() => abrirDesfazerEntrega(item)} title="Desfazer confirmação de entrega (avisa o fornecedor)"
-                          className="p-1.5 rounded" style={{ color: C.red }}>
-                          <Undo2 size={14} />
-                        </button>
-                      )}
-                      <button onClick={() => copiarLink(item)} title="Copiar link de confirmação"
-                        className="p-1.5 rounded flex items-center gap-1 text-xs" style={{ color: linkCopiadoDe === item.token ? C.green : C.inkMuted }}>
-                        {linkCopiadoDe === item.token ? <Check size={14} /> : <Link2 size={14} />}
-                      </button>
-                      <button onClick={() => abrirWhatsApp(item)} title="Enviar link pelo WhatsApp"
-                        className="p-1.5 rounded" style={{ color: "#25D366" }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.85 9.85 0 0 0 12.04 2zm0 18.1a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.13.82.84-3.05-.2-.31a8.22 8.22 0 0 1-1.27-4.4c0-4.54 3.7-8.24 8.26-8.24 2.21 0 4.28.86 5.84 2.42a8.18 8.18 0 0 1 2.42 5.83c0 4.55-3.7 8.26-8.27 8.26zm4.53-6.19c-.25-.12-1.47-.72-1.7-.81-.23-.08-.4-.12-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.04-.38-1.98-1.22-.73-.65-1.23-1.46-1.37-1.71-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.15.16-.25.25-.42.08-.16.04-.31-.02-.43-.06-.13-.56-1.35-.77-1.85-.2-.48-.4-.42-.56-.42-.14-.01-.31-.01-.48-.01a.93.93 0 0 0-.67.31c-.23.25-.87.85-.87 2.08s.9 2.41 1.02 2.58c.13.16 1.77 2.7 4.28 3.79.6.26 1.07.41 1.43.53.6.19 1.15.16 1.58.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.14-1.18-.06-.1-.23-.16-.48-.28z"/>
-                        </svg>
-                      </button>
-                      <button onClick={() => setADisparar(item)} title={item.status === "Rascunho" ? "Disparar" : "Reenviar"}
-                        className="px-2.5 py-1.5 rounded-md text-xs font-semibold"
-                        style={{ background: situacao.precisaReenviar ? "#fd7e14" : C.navy, color: "white" }}>
-                        {item.status === "Rascunho" ? "Disparar" : "Reenviar"}
-                      </button>
-                      <button onClick={() => { setEditando(item); setErro(""); setModalAberto(true); }} title="Editar"
-                        className="p-1.5 rounded" style={{ color: C.inkMuted }}><Pencil size={14} /></button>
-                      <button onClick={() => setAExcluir(item)} title="Excluir"
-                        className="p-1.5 rounded" style={{ color: C.red }}><Trash2 size={14} /></button>
-                    </div>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -731,6 +682,91 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
           </div>
         </div>
       )}
+
+      {acoesDe && (() => {
+        const item = acoesDe;
+        const situacaoItem = calcularSituacao(item);
+        const fechar = () => setAcoesDe(null);
+        const ItemAcao = ({ icone: Icone, rotulo, sub, cor, onClick, href, download }) => {
+          const conteudo = (
+            <>
+              <Icone size={16} style={{ color: cor || C.navy, flexShrink: 0 }} />
+              <span className="flex-1 text-left">
+                <span className="block text-sm font-medium" style={{ color: C.ink }}>{rotulo}</span>
+                {sub && <span className="block text-[11px]" style={{ color: C.inkMuted }}>{sub}</span>}
+              </span>
+            </>
+          );
+          const classe = "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-black/[0.03] text-left";
+          return href ? (
+            <a href={href} download={download} onClick={fechar} className={classe}>{conteudo}</a>
+          ) : (
+            <button onClick={() => { onClick(); fechar(); }} className={classe}>{conteudo}</button>
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+            <div className="w-full max-w-md max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl">
+              <div className="flex items-center justify-between px-5 py-4 sticky top-0 bg-white border-b z-10" style={{ borderColor: C.border }}>
+                <div>
+                  <p className="text-xs" style={{ color: C.inkMuted }}>OF nº {item.numeroOf} · {item.empresa || "Empresa não informada"}</p>
+                  <p className="text-sm font-semibold" style={{ color: COR_SITUACAO[situacaoItem.chave] }}>{situacaoItem.texto}</p>
+                </div>
+                <button onClick={fechar} style={{ color: C.inkMuted }}><X size={18} /></button>
+              </div>
+
+              <div className="p-3">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-2" style={{ color: C.inkMuted }}>Comunicação com o fornecedor</p>
+                <ItemAcao icone={Send} rotulo={item.status === "Rascunho" ? "Disparar OF" : "Reenviar OF"}
+                  sub={situacaoItem.precisaReenviar ? "Sem resposta há mais de 24h" : "Envia por e-mail"}
+                  cor={situacaoItem.precisaReenviar ? "#fd7e14" : C.navy} onClick={() => setADisparar(item)} />
+                <ItemAcao icone={Link2} rotulo="Copiar link de confirmação" onClick={() => copiarLink(item)} />
+                <ItemAcao icone={MessageCircle} rotulo="Enviar link pelo WhatsApp" cor="#25D366" onClick={() => abrirWhatsApp(item)} />
+
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Confirmação da entrega</p>
+                {item.status === "Em Dia" ? (
+                  <>
+                    <ItemAcao icone={PackageCheck} rotulo={item.confirmacaoEntrega ? "Alterar confirmação de entrega" : "Confirmar entrega do produto"}
+                      cor={item.confirmacaoEntrega ? C.navy : C.green} onClick={() => abrirConfirmacaoEntrega(item)} />
+                    {item.confirmacaoEntrega && (
+                      <ItemAcao icone={Undo2} rotulo="Desfazer confirmação de entrega" sub="Avisa o fornecedor por e-mail" cor={C.red}
+                        onClick={() => abrirDesfazerEntrega(item)} />
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs px-2" style={{ color: C.inkMuted }}>Disponível depois que o fornecedor confirmar o recebimento.</p>
+                )}
+
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Notificação de atraso</p>
+                {(situacaoItem.atrasado || situacaoItem.naoEntregue || situacaoItem.precisaConfirmarEntrega) && (
+                  <ItemAcao icone={AlertCircle} rotulo="Notificar atraso/não entrega" cor="#b45309" onClick={() => abrirNotificacao(item)} />
+                )}
+                {item.notificacoes?.length > 0 ? (
+                  <ItemAcao icone={FileText} rotulo="Ver notificações já enviadas" sub={`${item.notificacoes.length} enviada(s)`}
+                    onClick={() => setVerNotificacoesDe(item)} />
+                ) : !(situacaoItem.atrasado || situacaoItem.naoEntregue || situacaoItem.precisaConfirmarEntrega) && (
+                  <p className="text-xs px-2" style={{ color: C.inkMuted }}>Nenhuma notificação necessária até agora.</p>
+                )}
+
+                {(item.reciboImutavel) && (
+                  <>
+                    <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Documentos</p>
+                    {item.pdfBase64 && (
+                      <ItemAcao icone={Download} rotulo="Baixar PDF anexado" href={item.pdfBase64} download={`OF-${item.numeroOf}.pdf`} />
+                    )}
+                    <ItemAcao icone={Printer} rotulo="Imprimir / baixar comprovante" onClick={() => imprimirRecibo(item)} />
+                  </>
+                )}
+
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Gestão</p>
+                <ItemAcao icone={Pencil} rotulo="Editar dados da OF" onClick={() => { setEditando(item); setErro(""); setModalAberto(true); }} />
+                <ItemAcao icone={Trash2} rotulo="Excluir OF" cor={C.red} onClick={() => setAExcluir(item)} />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {desfazendoEntregaDe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
