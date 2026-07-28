@@ -7,11 +7,12 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2 } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
-  calcularSituacao, emptyOf, GRUPOS_SITUACAO_OF, grupoDaSituacao,
+  calcularSituacao, emptyOf,
+  GRUPOS_ABA_OF, grupoAbaDaSituacao, ordenarLinhasOf,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
@@ -53,6 +54,13 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   const [acoesDe, setAcoesDe] = useState(null); // OF cujo painel de ações está aberto
   const [linkNotifCopiado, setLinkNotifCopiado] = useState(null); // "token_numero" copiado agora
   const [filtroAba, setFiltroAba] = useState("todas");
+  const [ordenacao, setOrdenacao] = useState({ campo: "prazoLimite", direcao: "asc" });
+
+  function alternarOrdenacao(campo) {
+    setOrdenacao(prev => prev.campo === campo
+      ? { campo, direcao: prev.direcao === "asc" ? "desc" : "asc" }
+      : { campo, direcao: "asc" });
+  }
   const [loteAberto, setLoteAberto] = useState(false);
   const [linkCopiadoDe, setLinkCopiadoDe] = useState(null); // token da OF cujo link acabou de ser copiado
 
@@ -346,13 +354,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   }
 
   const todasAsLinhas = ofs.map(item => ({ item, situacao: calcularSituacao(item) }));
-  const contagemPorGrupo = GRUPOS_SITUACAO_OF.reduce((acc, g) => {
+  const contagemPorGrupo = GRUPOS_ABA_OF.reduce((acc, g) => {
     acc[g.id] = g.id === "todas" ? todasAsLinhas.length
-      : todasAsLinhas.filter(l => grupoDaSituacao(l.situacao.chave) === g.id).length;
+      : todasAsLinhas.filter(l => grupoAbaDaSituacao(l.situacao.chave) === g.id).length;
     return acc;
   }, {});
-  const linhas = filtroAba === "todas" ? todasAsLinhas
-    : todasAsLinhas.filter(l => grupoDaSituacao(l.situacao.chave) === filtroAba);
+  const linhasFiltradas = filtroAba === "todas" ? todasAsLinhas
+    : todasAsLinhas.filter(l => grupoAbaDaSituacao(l.situacao.chave) === filtroAba);
+  const linhas = ordenarLinhasOf(linhasFiltradas, ordenacao.campo, ordenacao.direcao);
 
   // Sem uma entidade específica selecionada (ex.: "Todas as Entidades"), não
   // existe dono claro para a nova OF. Já aconteceu de isso cair em silêncio
@@ -416,7 +425,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
 
       {ofs.length > 0 && (
         <div className="flex items-center gap-1 mb-4 overflow-x-auto etp-scroll border-b" style={{ borderColor: C.border }}>
-          {GRUPOS_SITUACAO_OF.map(g => {
+          {GRUPOS_ABA_OF.map(g => {
             const ativo = filtroAba === g.id;
             const n = contagemPorGrupo[g.id] || 0;
             return (
@@ -448,8 +457,20 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
           <table className="w-full text-sm" style={{ minWidth: "820px" }}>
             <thead>
               <tr style={{ background: C.paperDark }}>
-                {["Nº OF", "Empresa / CNPJ", "Prazo limite", "Situação", "Ações"].map(t => (
-                  <th key={t} className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>{t}</th>
+                {[
+                  ["Nº OF", "numeroOf"], ["Empresa / CNPJ", "empresa"],
+                  ["Prazo limite", "prazoLimite"], ["Situação", "situacao"], ["Ações", null],
+                ].map(([t, campo]) => (
+                  <th key={t} className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                    {campo ? (
+                      <button onClick={() => alternarOrdenacao(campo)} className="flex items-center gap-1">
+                        {t}
+                        {ordenacao.campo === campo ? (
+                          ordenacao.direcao === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />
+                        ) : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+                      </button>
+                    ) : t}
+                  </th>
                 ))}
               </tr>
             </thead>

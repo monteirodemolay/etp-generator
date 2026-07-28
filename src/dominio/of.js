@@ -267,6 +267,56 @@ export function grupoDaSituacao(chaveSituacao) {
   }
 }
 
+// ---------- Abas simplificadas, pra tela de gestão ----------
+// Reaproveita o agrupamento fino acima (que os Relatórios continuam usando,
+// com toda a granularidade), só consolidando mais um nível — cinco abas em
+// vez de sete, agrupando pelo que importa no dia a dia: ainda em andamento,
+// já concluída, ou precisando de atenção.
+export const GRUPOS_ABA_OF = [
+  { id: "todas", rotulo: "Todas" },
+  { id: "rascunho", rotulo: "Rascunhos" },
+  { id: "em-andamento", rotulo: "Em andamento" },
+  { id: "concluidas", rotulo: "Concluídas" },
+  { id: "atencao", rotulo: "Precisa de atenção" },
+];
+
+export function grupoAbaDaSituacao(chaveSituacao) {
+  const grupo = grupoDaSituacao(chaveSituacao);
+  switch (grupo) {
+    case "rascunho": return "rascunho";
+    case "aguardando-fornecedor": case "aguardando-entrega": return "em-andamento";
+    case "entregues": return "concluidas";
+    case "nao-entregues": case "divergencias": return "atencao";
+    default: return "todas";
+  }
+}
+
+// ---------- Ordenação da tabela ----------
+function paraDataOrdenavel(item) {
+  if (item.prazoLimiteISO) return item.prazoLimiteISO;
+  if (!item.prazoLimite) return "";
+  const [d, m, a] = item.prazoLimite.split("/");
+  if (!d || !m || !a) return "";
+  return `${a}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+}
+
+// linhas: [{ item, situacao }] — o mesmo formato já usado na tabela.
+// campo: "numeroOf" | "empresa" | "prazoLimite" | "situacao"
+// direcao: "asc" | "desc"
+export function ordenarLinhasOf(linhas, campo, direcao) {
+  const mult = direcao === "desc" ? -1 : 1;
+  const copia = [...linhas];
+  copia.sort((a, b) => {
+    let va = "", vb = "";
+    if (campo === "numeroOf") { va = a.item.numeroOf || ""; vb = b.item.numeroOf || ""; }
+    else if (campo === "empresa") { va = a.item.empresa || ""; vb = b.item.empresa || ""; } // CNPJ nunca entra aqui, de propósito
+    else if (campo === "prazoLimite") { va = paraDataOrdenavel(a.item); vb = paraDataOrdenavel(b.item); }
+    else if (campo === "situacao") { va = a.situacao?.texto || ""; vb = b.situacao?.texto || ""; }
+    return mult * va.localeCompare(vb, "pt-BR", { numeric: true, sensitivity: "base" });
+  });
+  return copia;
+}
+
 // Calcula a data-limite (string pt-BR, para exibir) a partir de agora + prazoDias.
 // Mantida por compatibilidade com quem ainda não passa o calendário — não
 // considera feriado nenhum, só soma dias corridos puros.
