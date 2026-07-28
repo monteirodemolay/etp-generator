@@ -185,8 +185,9 @@ export default function PortaDeEntrada({ children }) {
             <rect width="100%" height="100%" fill="url(#grade)" />
             <rect width="100%" height="100%" fill="url(#brilho)" />
           </svg>
-
-        <div className="mb-9">
+        
+          <div className="relative z-10">
+          <div className="mb-9">
            <img
               src={logoHub}
               alt="Hub Compras Públicas"
