@@ -19,6 +19,8 @@ import { normalizarCnpj, formatarCnpj, cnpjValido,
 import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual } from "../../of-servico.js";
 import { METODOS_ENVIO_MANUAL, rotuloMetodoEnvio } from "../../dominio/envio-manual.js";
 import { comprimirImagemAnexo } from "../../dominio/imagem.js";
+import { montarSecoesPacote } from "../../dominio/pacote-processo.js";
+import { listarEventos } from "../../auditoria-servico.js";
 import { montarTextoNotificacaoAtraso, linkNotificacao, mensagemWhatsAppNotificacao } from "../../dominio/notificacao-of.js";
 import { ImportarLoteModal } from "./ImportarLoteModal.jsx";
 import { ComprovanteOf } from "./ComprovanteOf.jsx";
@@ -397,6 +399,84 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
       <style>body{font-family:sans-serif;padding:40px;color:#111;margin:0}</style>
       </head><body>
       ${htmlComprovante}
+      <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
+        <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+          🖨️ Imprimir / Salvar como PDF
+        </button>
+      </div>
+      <style>@media print { .botao-imprimir { display: none; } }</style>
+      </body></html>`);
+    janela.document.close();
+  }
+
+  async function gerarPacoteEncaminhamento(item) {
+    const janela = window.open("", "_blank");
+    janela.document.write("<p style='font-family:sans-serif;padding:40px;'>Reunindo os dados do processo...</p>");
+
+    const [cabecalho, eventosAuditoria] = await Promise.all([
+      item.timbreSnapshot || prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)),
+      listarEventos().catch(() => []),
+    ]);
+    const secoes = montarSecoesPacote(item, eventosAuditoria);
+
+    const htmlCabecalho = cabecalho?.tipo === "imagem" && cabecalho.dataUrl
+      ? `<img src="${cabecalho.dataUrl}" style="max-width:100%; max-height:90px; display:block; margin:0 auto 12px;" />`
+      : cabecalho?.tipo === "texto" && cabecalho.html
+        ? `<div style="text-align:center; margin-bottom:12px;">${cabecalho.html}</div>`
+        : `<h2 style="text-align:center; margin-bottom:4px;">Prefeitura Municipal</h2>`;
+
+    const listaHtml = (itens) => itens.length
+      ? `<ul>${itens.map(i => `<li>${i}</li>`).join("")}</ul>`
+      : `<p class="vazio">Nada registrado até o momento.</p>`;
+
+    const notificacoesHtml = secoes.notificacoes.length
+      ? secoes.notificacoes.map(n => `
+          <div class="notif">
+            <p><b>${n.titulo}</b></p>
+            <p style="font-size:11px;color:#6B675E;">Assinado por: ${n.assinante}</p>
+            <div class="texto-notif">${n.texto}</div>
+          </div>`).join("")
+      : `<p class="vazio">Nenhuma notificação de atraso foi enviada para esta OF.</p>`;
+
+    janela.document.open();
+    janela.document.write(`
+      <html><head><title>Pacote de encaminhamento - OF nº ${item.numeroOf}</title>
+      <style>
+        body{font-family:sans-serif;padding:40px;color:#111;max-width:760px;margin:0 auto}
+        .cabecalho{border-bottom:2px solid #1C2E4A;padding-bottom:16px;margin-bottom:20px}
+        h2{color:#1C2E4A;font-size:15px;border-bottom:1px solid #DAD3C2;padding-bottom:6px;margin-top:26px}
+        ul{padding-left:20px;font-size:13px;line-height:1.7}
+        .vazio{font-size:12px;color:#6B675E;font-style:italic}
+        .notif{background:#F1ECDF;border:1px solid #DAD3C2;border-radius:8px;padding:14px;margin-top:10px}
+        .texto-notif{white-space:pre-wrap;font-size:12px;background:#fff;border-radius:6px;padding:10px;margin-top:8px}
+        .rodape{font-size:11px;color:#6B675E;text-align:center;margin-top:30px}
+      </style>
+      </head><body>
+      <div class="cabecalho">
+        ${htmlCabecalho}
+        <h1 style="text-align:center;margin:8px 0 0;font-size:18px;">Pacote de Encaminhamento — Ordem de Fornecimento</h1>
+        <p style="text-align:center;font-size:12px;color:#6B675E;margin:4px 0 0;">Gerado em ${fmtDate(Date.now())}</p>
+      </div>
+
+      <h2>Dados gerais</h2>
+      ${listaHtml(secoes.dadosGerais)}
+
+      <h2>Histórico de disparo</h2>
+      ${listaHtml(secoes.historicoDisparo)}
+
+      <h2>Confirmação do fornecedor</h2>
+      ${listaHtml(secoes.confirmacaoFornecedor)}
+
+      <h2>Confirmação da entrega</h2>
+      ${listaHtml(secoes.confirmacaoEntrega)}
+
+      <h2>Notificações de atraso enviadas</h2>
+      ${notificacoesHtml}
+
+      <h2>Linha do tempo (log de auditoria desta OF)</h2>
+      ${listaHtml(secoes.eventosDaOf)}
+
+      <p class="rodape">Documento gerado eletronicamente pelo Gerador de ETP, reunindo os registros já existentes no sistema.</p>
       <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
         <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
           🖨️ Imprimir / Salvar como PDF
@@ -839,15 +919,16 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                   <p className="text-xs px-2" style={{ color: C.inkMuted }}>Nenhuma notificação necessária até agora.</p>
                 )}
 
-                {(item.reciboImutavel) && (
-                  <>
-                    <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Documentos</p>
-                    {item.pdfBase64 && (
-                      <ItemAcao icone={Download} rotulo="Baixar PDF anexado" href={item.pdfBase64} download={`OF-${item.numeroOf}.pdf`} />
-                    )}
-                    <ItemAcao icone={Printer} rotulo="Imprimir / baixar comprovante" onClick={() => imprimirRecibo(item)} />
-                  </>
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Documentos</p>
+                {item.pdfBase64 && (
+                  <ItemAcao icone={Download} rotulo="Baixar PDF anexado" href={item.pdfBase64} download={`OF-${item.numeroOf}.pdf`} />
                 )}
+                {item.reciboImutavel && (
+                  <ItemAcao icone={Printer} rotulo="Imprimir / baixar comprovante" onClick={() => imprimirRecibo(item)} />
+                )}
+                <ItemAcao icone={FileText} rotulo="Gerar pacote de encaminhamento"
+                  sub="Todos os dados do processo, prontos pra Comissão de Penalidades ou pra empresa"
+                  onClick={() => gerarPacoteEncaminhamento(item)} />
 
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Gestão</p>
                 <ItemAcao icone={Pencil} rotulo="Editar dados da OF" onClick={() => { setEditando(item); setErro(""); setModalAberto(true); }} />
