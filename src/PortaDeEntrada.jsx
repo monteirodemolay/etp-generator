@@ -12,7 +12,7 @@ import {
 import { auth } from "./firebase";
 import nuvem from "./storage";
 import local from "./storage-local";
-import logoHub from "./assets/hub_logo_transparente.png";
+import logoHub from "./assets/logo_hub_escuro.png";
 
 const VERSAO = "2.0";
 
@@ -192,7 +192,7 @@ export default function PortaDeEntrada({ children }) {
               src={logoHub}
               alt="Hub Compras Públicas"
               style={{
-              width: "320px",
+              width: "420px",
               maxWidth: "100%",
               height: "auto",
             }}
@@ -245,7 +245,7 @@ export default function PortaDeEntrada({ children }) {
             src={logoHub}
             alt="Hub Compras Públicas"
             style={{
-            width: "220px",
+            width: "280px",
             height: "auto",
             objectFit: "contain",
           }}
