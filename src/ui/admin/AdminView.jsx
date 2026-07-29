@@ -27,6 +27,7 @@ const SUBABAS = [
 export function AdminView({
   secretarias, onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria,
   municipios, onNovoMunicipio, onExcluirMunicipio,
+  reparticoes, onSalvarReparticao, onExcluirReparticao,
   feriados, onSalvarFeriado, onExcluirFeriado,
   termos, onSalvarTermos,
   usuarios, emailUsuario, onSalvarUsuario, onExcluirUsuario,
@@ -57,7 +58,8 @@ export function AdminView({
         <SecretariasView secretarias={secretarias} onSalvar={onSalvarSecretaria}
           etps={etps} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
           onNova={onNovaSecretaria} onExcluir={onExcluirSecretaria}
-          municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio} />
+          municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio}
+          reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao} onExcluirReparticao={onExcluirReparticao} />
       )}
 
       {subaba === "usuarios" && (

@@ -31,6 +31,7 @@ import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-
 import { aplicar as migrarIncisosIVeV } from "./migracoes/001-corrige-incisos-iv-v.js";
 import { aplicar as migrarMunicipios } from "./migracoes/003-separa-entidades-por-municipio.js";
 import { contarEntidadesDoMunicipio } from "./dominio/municipios.js";
+import { contarOfsDaReparticao } from "./dominio/reparticoes.js";
 import { gerarFeriadosNacionais, emptyFeriado } from "./dominio/dias-uteis.js";
 import { emptyTermos } from "./dominio/termos.js";
 import { listaResponsaveis } from "./dominio/etp.js";
@@ -46,6 +47,7 @@ export default function App({ emailUsuario = null }) {
   const [normativos, setNormativos] = useState([]);
   const [fornecedores, setFornecedores] = useState([]);
   const [municipios, setMunicipios] = useState([]);
+  const [reparticoes, setReparticoes] = useState([]);
   const [feriados, setFeriados] = useState([]);
   const [termos, setTermos] = useState(null);
   const [ofs, setOfs] = useState([]);
@@ -83,7 +85,7 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaFeriados, listaLixo] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaFeriados, listaLixo, listaReparticoes] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
@@ -94,6 +96,7 @@ export default function App({ emailUsuario = null }) {
       carregarColecao("municipio:"),
       carregarColecao("feriado:"),
       carregarColecao(PREFIXO_LIXO),
+      carregarColecao("reparticao:"),
     ]);
     // As Ordens de Fornecimento vivem numa coleção própria do Firestore (não
     // na nossa base "dados"), porque o fornecedor precisa lê-las e alterá-las
@@ -182,6 +185,7 @@ export default function App({ emailUsuario = null }) {
     setNormativos(listaNormas.sort((a, b) => b.enviadoEm - a.enviadoEm));
     setFornecedores(listaFornecedores);
     setMunicipios(municipiosFinais);
+    setReparticoes(listaReparticoes);
     setFeriados(feriadosFinais.sort((a, b) => a.data.localeCompare(b.data)));
     setTermos(termosFinais);
     setOfs(listaOfs);
@@ -392,6 +396,26 @@ export default function App({ emailUsuario = null }) {
     try {
       await storage.delete("municipio:" + id, false);
       setMunicipios(prev => prev.filter(m => m.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
+  // ----- Repartições (setores dentro de uma entidade, opcional) -----
+  async function salvarReparticao(r) {
+    const atualizado = { ...r, updatedAt: Date.now() };
+    setReparticoes(prev => {
+      const existe = prev.some(x => x.id === atualizado.id);
+      return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
+    });
+    storage.set("reparticao:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+
+  async function excluirReparticao(id) {
+    // Não deixa excluir se ainda houver OF apontando pra essa repartição —
+    // mesma cautela já usada em toda exclusão que poderia deixar algo órfão.
+    if (contarOfsDaReparticao(id, ofs) > 0) return;
+    try {
+      await storage.delete("reparticao:" + id, false);
+      setReparticoes(prev => prev.filter(r => r.id !== id));
     } catch (err) { console.error(err); }
   }
 
@@ -695,6 +719,7 @@ export default function App({ emailUsuario = null }) {
           onSalvarSecretaria={salvarSecretaria} onNovaSecretaria={novaSecretaria}
           onExcluirSecretaria={excluirSecretaria}
           municipios={municipios} onNovoMunicipio={salvarMunicipio} onExcluirMunicipio={excluirMunicipio}
+          reparticoes={reparticoes} onSalvarReparticao={salvarReparticao} onExcluirReparticao={excluirReparticao}
           feriados={feriados} onSalvarFeriado={salvarFeriado} onExcluirFeriado={excluirFeriado}
           termos={termos} onSalvarTermos={salvarTermos}
           onRecarregar={loadList}

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle, MapPin, ChevronDown, Search } from "lucide-react";
+import { Building2, Plus, Trash2, Upload, Info, ArrowLeft, AlertCircle, MapPin, ChevronDown, Search, X } from "lucide-react";
 import { C } from "../tokens.js";
 import { RichTextEditor, ConfirmarExclusao } from "../comuns/index.jsx";
 import { TIPOS_ENTIDADE } from "../../dominio/opcoes.js";
@@ -13,16 +13,20 @@ import { escapeHtml } from "../../dominio/texto.js";
 import { contarDocumentosDaEntidade } from "../../dominio/entidades.js";
 import { emailJsConfigCompleta } from "../../dominio/emailjs-config.js";
 import { emptyMunicipio, contarEntidadesDoMunicipio } from "../../dominio/municipios.js";
+import { emptyReparticao, reparticoesDaEntidade, contarOfsDaReparticao } from "../../dominio/reparticoes.js";
 
 
 // ---------- Cadastro de Secretarias ----------
 export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBack,
   municipios = [], onNovoMunicipio, onExcluirMunicipio,
+  reparticoes = [], onSalvarReparticao, onExcluirReparticao,
   etps = [], justificativas = [], declaracoes = [], ofs = [] }) {
   const [aExcluir, setAExcluir] = useState(null); // entidade aguardando confirmação
   const [novoMunicipioAberto, setNovoMunicipioAberto] = useState(false);
   const [novoMunicipioNome, setNovoMunicipioNome] = useState("");
   const [novoMunicipioUf, setNovoMunicipioUf] = useState("");
+  const [novaReparticaoNome, setNovaReparticaoNome] = useState({}); // { [entidadeId]: texto sendo digitado }
+  const [reparticaoAExcluir, setReparticaoAExcluir] = useState(null);
   // Quando usada como aba do painel não recebe onBack — o menu lateral já faz a navegação
   const fileRefs = useRef({});
 
@@ -30,6 +34,13 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
     if (!novoMunicipioNome.trim()) return;
     onNovoMunicipio(emptyMunicipio(novoMunicipioNome.trim(), novoMunicipioUf.trim().toUpperCase()));
     setNovoMunicipioNome(""); setNovoMunicipioUf(""); setNovoMunicipioAberto(false);
+  }
+
+  function criarReparticao(entidadeId) {
+    const nome = (novaReparticaoNome[entidadeId] || "").trim();
+    if (!nome) return;
+    onSalvarReparticao(emptyReparticao(nome, entidadeId));
+    setNovaReparticaoNome(prev => ({ ...prev, [entidadeId]: "" }));
   }
 
   const [busca, setBusca] = useState("");
@@ -332,6 +343,39 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
                 )}
               </div>
 
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: C.inkMuted }}>
+                  Repartições (setores desta entidade, opcional)
+                </p>
+                <p className="text-[11px] mb-2" style={{ color: C.inkMuted }}>
+                  Ex.: Setor de Compras, Almoxarifado, Área Técnica, TI. Sem nenhuma cadastrada, a
+                  entidade continua emitindo OF normalmente, sem esse nível de divisão.
+                </p>
+                {reparticoesDaEntidade(sec.id, reparticoes).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {reparticoesDaEntidade(sec.id, reparticoes).map(r => (
+                      <span key={r.id} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs"
+                        style={{ background: C.paperDark, color: C.navy }}>
+                        {r.nome}
+                        <button onClick={() => setReparticaoAExcluir(r)} title="Excluir repartição" style={{ color: C.red }}>
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input value={novaReparticaoNome[sec.id] || ""} placeholder="Nome da nova repartição"
+                    onChange={e => setNovaReparticaoNome(prev => ({ ...prev, [sec.id]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); criarReparticao(sec.id); } }}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                  <button onClick={() => criarReparticao(sec.id)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: C.paperDark, color: C.navy }}>
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+
               <div className="flex justify-end mt-3">
                 {secretarias.length <= 1 ? (
                   <span className="text-[10px]" style={{ color: C.inkMuted }}>A última entidade não pode ser excluída</span>
@@ -365,6 +409,24 @@ export function SecretariasView({ secretarias, onSalvar, onNova, onExcluir, onBa
             textoBotao="Excluir mesmo assim"
             onConfirmar={() => { onExcluir(aExcluir.id); setAExcluir(null); }}
             onCancelar={() => setAExcluir(null)}
+          />
+        );
+      })()}
+
+      {reparticaoAExcluir && (() => {
+        const qtdOfs = contarOfsDaReparticao(reparticaoAExcluir.id, ofs);
+        return (
+          <ConfirmarExclusao
+            titulo="Excluir esta repartição?"
+            descricao={
+              qtdOfs > 0
+                ? `"${reparticaoAExcluir.nome}" tem ${qtdOfs} Ordem(ns) de Fornecimento vinculada(s). Reatribua essas OFs a outra ` +
+                  `repartição (ou deixe sem repartição) antes de excluir — a exclusão não é permitida enquanto houver vínculo.`
+                : `"${reparticaoAExcluir.nome}" não tem nenhuma OF vinculada. A exclusão é definitiva.`
+            }
+            textoBotao={qtdOfs > 0 ? "Entendi" : "Excluir"}
+            onConfirmar={() => { if (qtdOfs === 0) onExcluirReparticao(reparticaoAExcluir.id); setReparticaoAExcluir(null); }}
+            onCancelar={() => setReparticaoAExcluir(null)}
           />
         );
       })()}

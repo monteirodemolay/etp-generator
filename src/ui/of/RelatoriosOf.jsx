@@ -9,6 +9,7 @@ import { BarChart3, Printer, Filter } from "lucide-react";
 import { C } from "../tokens.js";
 import { filtrarOfsParaRelatorio, anosDisponiveis, montarSintese, montarAnalitico } from "../../dominio/relatorio-of.js";
 import { GRUPOS_SITUACAO_OF } from "../../dominio/of.js";
+import { reparticoesDaEntidade } from "../../dominio/reparticoes.js";
 import { fmtDate } from "../../dominio/datas.js";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
@@ -43,12 +44,13 @@ function Barra({ label, valor, total, cor }) {
   );
 }
 
-export function RelatoriosOf({ ofs, secretarias, fornecedores }) {
+export function RelatoriosOf({ ofs, secretarias, fornecedores, reparticoes = [] }) {
   const [modo, setModo] = useState("sintetico"); // "sintetico" | "analitico"
   const [ano, setAno] = useState("");
   const [secretariaId, setSecretariaId] = useState("");
   const [cnpj, setCnpj] = useState("");
   const [grupoSituacao, setGrupoSituacao] = useState("");
+  const [reparticaoId, setReparticaoId] = useState("");
   const [imprimindo, setImprimindo] = useState(false);
 
   const filtros = {
@@ -56,9 +58,11 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores }) {
     secretariaId: secretariaId || undefined,
     cnpj: cnpj || undefined,
     grupoSituacao: grupoSituacao || undefined,
+    reparticaoId: reparticaoId || undefined,
   };
   const filtradas = filtrarOfsParaRelatorio(ofs, filtros);
   const anos = anosDisponiveis(ofs);
+  const reparticoesDisponiveis = !secretariaId ? reparticoes : reparticoesDaEntidade(secretariaId, reparticoes);
   const sintese = montarSintese(filtradas);
   const analitico = montarAnalitico(filtradas);
 
@@ -67,7 +71,7 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores }) {
   const rotuloGrupo = GRUPOS_SITUACAO_OF.find(g => g.id === grupoSituacao)?.rotulo;
 
   function limparFiltros() {
-    setAno(""); setSecretariaId(""); setCnpj(""); setGrupoSituacao("");
+    setAno(""); setSecretariaId(""); setCnpj(""); setGrupoSituacao(""); setReparticaoId("");
   }
 
   async function imprimir() {
@@ -209,8 +213,16 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores }) {
             <option value="">Todos os status</option>
             {GRUPOS_SITUACAO_OF.filter(g => g.id !== "todas").map(g => <option key={g.id} value={g.id}>{g.rotulo}</option>)}
           </select>
+
+          {reparticoesDisponiveis.length > 0 && (
+            <select value={reparticaoId} onChange={e => setReparticaoId(e.target.value)}
+              className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+              <option value="">Todas as repartições</option>
+              {reparticoesDisponiveis.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+            </select>
+          )}
         </div>
-        {(ano || secretariaId || cnpj || grupoSituacao) && (
+        {(ano || secretariaId || cnpj || grupoSituacao || reparticaoId) && (
           <button onClick={limparFiltros} className="mt-3 text-xs font-medium underline" style={{ color: C.brass }}>
             Limpar filtros
           </button>

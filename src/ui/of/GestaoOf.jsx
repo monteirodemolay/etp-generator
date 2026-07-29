@@ -28,6 +28,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
+import { reparticoesDaEntidade } from "../../dominio/reparticoes.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
 import { todayISO, fmtDateISO, fmtDate } from "../../dominio/datas.js";
 
@@ -37,7 +38,7 @@ const COR_SITUACAO = {
   "aguardando-entrega": C.brass, "aguardando-confirmacao": "#fd7e14", "nao-entregue": C.red,
 };
 
-export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
+export function GestaoOf({ ofs, fornecedores, secretarias, municipios, reparticoes = [], onSalvarReparticao, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
   const [lendoPdf, setLendoPdf] = useState(false);
@@ -65,6 +66,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
   const [acoesDe, setAcoesDe] = useState(null); // OF cujo painel de ações está aberto
   const [linkNotifCopiado, setLinkNotifCopiado] = useState(null); // "token_numero" copiado agora
   const [filtroAba, setFiltroAba] = useState("todas");
+  const [filtroReparticao, setFiltroReparticao] = useState(""); // "" = todas as repartições
   const [ordenacao, setOrdenacao] = useState({ campo: "prazoLimite", direcao: "asc" });
 
   function alternarOrdenacao(campo) {
@@ -493,9 +495,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
       : todasAsLinhas.filter(l => grupoAbaDaSituacao(l.situacao.chave) === g.id).length;
     return acc;
   }, {});
-  const linhasFiltradas = filtroAba === "todas" ? todasAsLinhas
+  const linhasFiltradasPorAba = filtroAba === "todas" ? todasAsLinhas
     : todasAsLinhas.filter(l => grupoAbaDaSituacao(l.situacao.chave) === filtroAba);
+  const linhasFiltradas = !filtroReparticao ? linhasFiltradasPorAba
+    : linhasFiltradasPorAba.filter(l => l.item.reparticaoId === filtroReparticao);
   const linhas = ordenarLinhasOf(linhasFiltradas, ordenacao.campo, ordenacao.direcao);
+  const reparticoesDaEntidadeAtiva = reparticoesDaEntidade(secretariaId, reparticoes);
 
   // Sem uma entidade específica selecionada (ex.: "Todas as Entidades"), não
   // existe dono claro para a nova OF. Já aconteceu de isso cair em silêncio
@@ -577,6 +582,17 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
         </div>
       )}
 
+      {reparticoesDaEntidadeAtiva.length > 0 && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs font-medium" style={{ color: C.inkMuted }}>Repartição:</span>
+          <select value={filtroReparticao} onChange={e => setFiltroReparticao(e.target.value)}
+            className="px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }}>
+            <option value="">Ver todas</option>
+            {reparticoesDaEntidadeAtiva.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+          </select>
+        </div>
+      )}
+
       {ofs.length === 0 ? (
         <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <Mail size={30} className="mx-auto mb-3" style={{ color: C.border }} />
@@ -613,6 +629,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                 <tr key={item.token} className="border-t" style={{ borderColor: C.border }}>
                   <td className="px-3 py-3 font-semibold" style={{ color: C.navy }}>
                     {item.numeroOf}
+                    {item.reparticaoId && (
+                      <span className="block text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit mt-0.5"
+                        style={{ background: "rgba(166,131,46,0.14)", color: C.brass }}>
+                        {reparticoes.find(r => r.id === item.reparticaoId)?.nome || "Repartição removida"}
+                      </span>
+                    )}
                     <p className="text-[10.5px] font-normal" style={{ color: C.inkMuted }}>
                       {item.dataEnvioStr ? `Notificada em ${item.dataEnvioStr}` : "Ainda não notificada"}
                     </p>
@@ -692,6 +714,19 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, secretari
                 </p>
               ) : null;
             })()}
+
+            {reparticoesDaEntidadeAtiva.length > 0 && (
+              <label className="block mb-4">
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                  Repartição (opcional)
+                </span>
+                <select value={editando.reparticaoId || ""} onChange={e => setEditando({ ...editando, reparticaoId: e.target.value || null })}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
+                  <option value="">Nenhuma específica</option>
+                  {reparticoesDaEntidadeAtiva.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                </select>
+              </label>
+            )}
 
             <label className="block mb-4">
               <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>

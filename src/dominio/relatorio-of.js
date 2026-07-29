@@ -10,12 +10,13 @@ import { calcularSituacao, grupoDaSituacao, GRUPOS_SITUACAO_OF } from "./of.js";
 // filtros: { ano, secretariaId, municipioId, cnpj, grupoSituacao }
 // Qualquer campo ausente/vazio simplesmente não filtra por aquele critério.
 export function filtrarOfsParaRelatorio(ofs, filtros = {}) {
-  const { ano, secretariaId, municipioId, cnpj, grupoSituacao } = filtros;
+  const { ano, secretariaId, municipioId, cnpj, grupoSituacao, reparticaoId } = filtros;
   return (ofs || []).filter(of_ => {
     if (ano && new Date(of_.createdAt || 0).getFullYear() !== Number(ano)) return false;
     if (secretariaId && of_.secretariaId !== secretariaId) return false;
     if (municipioId && of_.municipioId !== municipioId) return false;
     if (cnpj && of_.cnpj !== cnpj) return false;
+    if (reparticaoId && of_.reparticaoId !== reparticaoId) return false;
     if (grupoSituacao && grupoDaSituacao(calcularSituacao(of_).chave) !== grupoSituacao) return false;
     return true;
   });

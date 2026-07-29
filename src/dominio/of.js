@@ -401,6 +401,9 @@ export function emptyOf(dadosIniciais = {}) {
     // lógica do timbre: a entidade pode não ter conta própria, e nesse caso
     // usa o padrão do sistema (ver dominio/emailjs-config.js).
     emailJsSnapshot: dadosIniciais.emailJsSnapshot || null,
+    // Repartição (setor) dentro da entidade que emitiu esta OF — opcional;
+    // null quando a entidade não usa esse nível de divisão.
+    reparticaoId: dadosIniciais.reparticaoId || null,
     envios: [], // log de cada disparo/reenvio: { data, timestamp }
     createdAt: Date.now(),
     updatedAt: Date.now(),

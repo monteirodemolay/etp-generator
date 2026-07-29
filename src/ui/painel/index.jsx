@@ -47,6 +47,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   onAbrirJustificativa, onNovaJustificativa, onExcluirJustificativa, onDuplicarJustificativa,
   onSalvarSecretaria, onNovaSecretaria, onExcluirSecretaria, onRecarregar,
   municipios, onNovoMunicipio, onExcluirMunicipio,
+  reparticoes, onSalvarReparticao, onExcluirReparticao,
   feriados, onSalvarFeriado, onExcluirFeriado,
   termos, onSalvarTermos,
   usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
@@ -701,6 +702,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               secretarias={secretarias} onSalvarSecretaria={onSalvarSecretaria}
               onNovaSecretaria={onNovaSecretaria} onExcluirSecretaria={onExcluirSecretaria}
               municipios={municipios} onNovoMunicipio={onNovoMunicipio} onExcluirMunicipio={onExcluirMunicipio}
+              reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao} onExcluirReparticao={onExcluirReparticao}
               feriados={feriados} onSalvarFeriado={onSalvarFeriado} onExcluirFeriado={onExcluirFeriado}
               termos={termos} onSalvarTermos={onSalvarTermos}
               usuarios={usuarios} emailUsuario={emailUsuario}
@@ -712,6 +714,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
           {aba === "ordens_fornecimento" && (
             <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias} municipios={municipios}
+              reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao}
               secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
               municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}
               onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
@@ -723,7 +726,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           )}
 
           {aba === "relatorios_of" && (
-            <RelatoriosOf ofs={todasAsOfs} secretarias={secretarias} fornecedores={fornecedores} />
+            <RelatoriosOf ofs={todasAsOfs} secretarias={secretarias} fornecedores={fornecedores} reparticoes={reparticoes} />
           )}
 
           {aba === "normativos" && (
