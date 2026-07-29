@@ -14,7 +14,7 @@ import React, { useState } from "react";
 import { X, Upload, AlertCircle, Loader2, Mail } from "lucide-react";
 import { C } from "../tokens.js";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, emptyOf, recalcularErrosLote } from "../../dominio/of.js";
-import { buscarFornecedorPorCnpj, upsertFornecedor, cnpjValido } from "../../dominio/fornecedores.js";
+import { buscarFornecedorPorCnpj, upsertFornecedor, cnpjValido, normalizarCnpj } from "../../dominio/fornecedores.js";
 import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor } from "../../of-servico.js";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
@@ -42,13 +42,14 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
       try {
         const { pdfBase64, textoCompleto } = await lerPdfDeArquivo(file);
         const extraido = extrairDadosDoPdf(textoCompleto);
-        const fornecedor = extraido.cnpj ? buscarFornecedorPorCnpj(fornecedores, extraido.cnpj) : null;
+        const cnpjNormalizado = normalizarCnpj(extraido.cnpj);
+        const fornecedor = cnpjNormalizado ? buscarFornecedorPorCnpj(fornecedores, cnpjNormalizado) : null;
         novosItens.push({
           idLocal: "lote_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
           arquivo: file.name,
           numeroOf: extraido.numeroOf || gerarNumeroOfSugerido(),
           empresa: fornecedor?.razaoSocial || extraido.empresa || "",
-          cnpj: extraido.cnpj || "",
+          cnpj: cnpjNormalizado,
           emailFornecedor: fornecedor?.email || "",
           pdfBase64,
           jaCadastrado: !!fornecedor,

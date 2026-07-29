@@ -7,8 +7,9 @@
 import React, { useState } from "react";
 import { BarChart3, Printer, Filter } from "lucide-react";
 import { C } from "../tokens.js";
-import { filtrarOfsParaRelatorio, anosDisponiveis, montarSintese, montarAnalitico } from "../../dominio/relatorio-of.js";
+import { filtrarOfsParaRelatorio, anosDisponiveis, montarSintese, montarAnalitico, empresasNasOfs } from "../../dominio/relatorio-of.js";
 import { GRUPOS_SITUACAO_OF } from "../../dominio/of.js";
+import { normalizarCnpj, formatarCnpj } from "../../dominio/fornecedores.js";
 import { reparticoesDaEntidade } from "../../dominio/reparticoes.js";
 import { fmtDate } from "../../dominio/datas.js";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
@@ -62,12 +63,13 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores, reparticoes = [] 
   };
   const filtradas = filtrarOfsParaRelatorio(ofs, filtros);
   const anos = anosDisponiveis(ofs);
+  const empresasDisponiveis = empresasNasOfs(secretariaId ? ofs.filter(o => o.secretariaId === secretariaId) : ofs);
   const reparticoesDisponiveis = !secretariaId ? reparticoes : reparticoesDaEntidade(secretariaId, reparticoes);
-  const sintese = montarSintese(filtradas);
-  const analitico = montarAnalitico(filtradas);
+  const sintese = montarSintese(filtradas, reparticoes);
+  const analitico = montarAnalitico(filtradas, reparticoes);
 
   const nomeEntidade = secretarias.find(s => s.id === secretariaId);
-  const nomeEmpresa = fornecedores.find(f => f.cnpj === cnpj)?.razaoSocial;
+  const nomeEmpresa = empresasDisponiveis.find(e => normalizarCnpj(e.cnpj) === normalizarCnpj(cnpj))?.nome;
   const rotuloGrupo = GRUPOS_SITUACAO_OF.find(g => g.id === grupoSituacao)?.rotulo;
 
   function limparFiltros() {
@@ -103,18 +105,33 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores, reparticoes = [] 
         ${sintese.percentualNoPrazo !== null ? `<p><b>Entregas no prazo:</b> ${sintese.percentualNoPrazo}% (${sintese.entreguesNoPrazo} de ${sintese.entreguesNoPrazo + sintese.entreguesForaDoPrazo})</p>` : ""}
         ${sintese.tempoMedioConfirmacaoDias !== null ? `<p><b>Tempo médio até o fornecedor confirmar:</b> ${sintese.tempoMedioConfirmacaoDias} dia(s)</p>` : ""}
       </div>
+      <div class="box">
+        <h3>Comunicação e conformidade</h3>
+        <p><b>Notificações de atraso enviadas ao todo:</b> ${sintese.totalNotificacoesEnviadas}</p>
+        <p><b>OF(s) com divergência relatada:</b> ${sintese.ofsComDivergencia}</p>
+        <p><b>OF(s) comunicadas fora do sistema:</b> ${sintese.ofsComEnvioManual}</p>
+      </div>
+      ${sintese.porReparticao.length > 0 ? `
+        <div class="box">
+          <h3>Por repartição</h3>
+          ${sintese.porReparticao.map(r => `<p>${r.nome}: <b>${r.qtd}</b></p>`).join("")}
+        </div>
+      ` : ""}
     `;
 
     const corpoAnalitico = `
       <table>
-        <thead><tr><th>Nº OF</th><th>Empresa</th><th>CNPJ</th><th>Emitida em</th><th>Situação</th></tr></thead>
+        <thead><tr><th>Nº OF</th><th>Empresa</th><th>CNPJ</th><th>Repartição</th><th>Disparada em</th><th>Notificações</th><th>Alertas</th><th>Situação</th></tr></thead>
         <tbody>
-          ${analitico.map(({ of: o, situacao }) => `
+          ${analitico.map(({ of: o, situacao, nomeReparticao, notificacoesEnviadas, temDivergencia, dataDisparo, comunicadaForaDoSistema }) => `
             <tr>
               <td>${o.numeroOf}</td>
               <td>${o.empresa || "-"}</td>
-              <td>${o.cnpj || "-"}</td>
-              <td>${fmtDate(o.createdAt)}</td>
+              <td>${formatarCnpj(o.cnpj) || "-"}</td>
+              <td>${nomeReparticao || "-"}</td>
+              <td>${dataDisparo || "Não disparada"}</td>
+              <td>${notificacoesEnviadas > 0 ? notificacoesEnviadas : "-"}</td>
+              <td>${[temDivergencia && "Divergência", comunicadaForaDoSistema && "Fora do sistema"].filter(Boolean).join(", ") || "-"}</td>
               <td>${situacao.texto}</td>
             </tr>
           `).join("")}
@@ -205,7 +222,7 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores, reparticoes = [] 
           <select value={cnpj} onChange={e => setCnpj(e.target.value)}
             className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }}>
             <option value="">Todas as empresas</option>
-            {fornecedores.map(f => <option key={f.id} value={f.cnpj}>{f.razaoSocial || f.cnpj}</option>)}
+            {empresasDisponiveis.map(e => <option key={e.cnpj} value={e.cnpj}>{e.nome}</option>)}
           </select>
 
           <select value={grupoSituacao} onChange={e => setGrupoSituacao(e.target.value)}
@@ -272,25 +289,67 @@ export function RelatoriosOf({ ofs, secretarias, fornecedores, reparticoes = [] 
                 <Barra key={mes} label={mes} valor={qtd} total={sintese.total} cor={C.brass} />
               ))}
             </div>
+
+            <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+              <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: C.inkMuted }}>Comunicação e conformidade</p>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <p className="serif text-xl font-semibold" style={{ color: C.brass }}>{sintese.totalNotificacoesEnviadas}</p>
+                  <p className="text-[10.5px] mt-1" style={{ color: C.inkMuted }}>Notificações de atraso enviadas</p>
+                </div>
+                <div>
+                  <p className="serif text-xl font-semibold" style={{ color: sintese.ofsComDivergencia > 0 ? C.red : C.ink }}>{sintese.ofsComDivergencia}</p>
+                  <p className="text-[10.5px] mt-1" style={{ color: C.inkMuted }}>OF(s) com divergência</p>
+                </div>
+                <div>
+                  <p className="serif text-xl font-semibold" style={{ color: C.navy }}>{sintese.ofsComEnvioManual}</p>
+                  <p className="text-[10.5px] mt-1" style={{ color: C.inkMuted }}>Comunicadas fora do sistema</p>
+                </div>
+              </div>
+            </div>
+
+            {sintese.porReparticao.length > 0 && (
+              <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: C.inkMuted }}>Por repartição</p>
+                {sintese.porReparticao.map(r => (
+                  <Barra key={r.reparticaoId} label={r.nome} valor={r.qtd} total={sintese.total} cor={C.brass} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       ) : (
         <div className="rounded-xl border overflow-x-auto etp-scroll" style={{ borderColor: C.border, background: "white" }}>
-          <table className="w-full text-sm" style={{ minWidth: "680px" }}>
+          <table className="w-full text-sm" style={{ minWidth: "900px" }}>
             <thead>
               <tr style={{ background: C.paperDark }}>
-                {["Nº OF", "Empresa", "CNPJ", "Emitida em", "Situação"].map(t => (
+                {["Nº OF", "Empresa", "CNPJ", "Repartição", "Disparada em", "Notificações", "Alertas", "Situação"].map(t => (
                   <th key={t} className="text-left px-3 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>{t}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {analitico.map(({ of: o, situacao }) => (
+              {analitico.map(({ of: o, situacao, nomeReparticao, notificacoesEnviadas, temDivergencia, dataDisparo, comunicadaForaDoSistema }) => (
                 <tr key={o.token} className="border-t" style={{ borderColor: C.border }}>
                   <td className="px-3 py-2.5 font-medium" style={{ color: C.navy }}>{o.numeroOf}</td>
                   <td className="px-3 py-2.5">{o.empresa || "-"}</td>
-                  <td className="px-3 py-2.5" style={{ color: C.inkMuted }}>{o.cnpj || "-"}</td>
-                  <td className="px-3 py-2.5" style={{ color: C.inkMuted }}>{fmtDate(o.createdAt)}</td>
+                  <td className="px-3 py-2.5" style={{ color: C.inkMuted }}>{formatarCnpj(o.cnpj) || "-"}</td>
+                  <td className="px-3 py-2.5" style={{ color: C.inkMuted }}>{nomeReparticao || "-"}</td>
+                  <td className="px-3 py-2.5" style={{ color: C.inkMuted }}>{dataDisparo || "Não disparada"}</td>
+                  <td className="px-3 py-2.5" style={{ color: notificacoesEnviadas > 0 ? "#b45309" : C.inkMuted, fontWeight: notificacoesEnviadas > 0 ? 600 : 400 }}>
+                    {notificacoesEnviadas > 0 ? notificacoesEnviadas : "-"}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center gap-1">
+                      {temDivergencia && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: "rgba(166,64,61,0.14)", color: C.red }}>Divergência</span>
+                      )}
+                      {comunicadaForaDoSistema && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: "rgba(28,46,74,0.08)", color: C.navy }}>Fora do sistema</span>
+                      )}
+                      {!temDivergencia && !comunicadaForaDoSistema && <span style={{ color: C.inkMuted }}>-</span>}
+                    </div>
+                  </td>
                   <td className="px-3 py-2.5">
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
                       style={{ background: `${CORES_GRUPO[grupoDaSituacaoLocal(situacao.chave)]}22`, color: CORES_GRUPO[grupoDaSituacaoLocal(situacao.chave)] }}>

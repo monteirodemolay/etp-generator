@@ -119,11 +119,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, repartico
     try {
       const { pdfBase64, textoCompleto } = await lerPdfDeArquivo(file);
       const extraido = extrairDadosDoPdf(textoCompleto);
-      const fornecedor = extraido.cnpj ? buscarFornecedorPorCnpj(fornecedores, extraido.cnpj) : null;
+      const cnpjExtraidoNormalizado = normalizarCnpj(extraido.cnpj);
+      const fornecedor = cnpjExtraidoNormalizado ? buscarFornecedorPorCnpj(fornecedores, cnpjExtraidoNormalizado) : null;
       setEditando(emptyOf({
         numeroOf: extraido.numeroOf || gerarNumeroOfSugerido(),
         empresa: fornecedor?.razaoSocial || extraido.empresa,
-        cnpj: extraido.cnpj,
+        cnpj: cnpjExtraidoNormalizado,
         emailFornecedor: fornecedor?.email || "",
         telefoneFornecedor: fornecedor?.telefone || "",
         pdfBase64,
@@ -140,13 +141,17 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, repartico
   // Ao sair do campo CNPJ, busca no cadastro — se achar, preenche o resto.
   function aoSairDoCnpj() {
     const fornecedor = buscarFornecedorPorCnpj(fornecedores, editando.cnpj);
+    setEditando(prev => ({
+      ...prev,
+      // Normaliza aqui, na origem — é o que garante que toda comparação de
+      // CNPJ no resto do sistema (relatórios, histórico, etc.) bata certo,
+      // sem precisar lembrar de normalizar em cada lugar que compara.
+      cnpj: normalizarCnpj(prev.cnpj),
+      empresa: fornecedor ? (prev.empresa || fornecedor.razaoSocial) : prev.empresa,
+      emailFornecedor: fornecedor ? (prev.emailFornecedor || fornecedor.email) : prev.emailFornecedor,
+      telefoneFornecedor: fornecedor ? (prev.telefoneFornecedor || fornecedor.telefone) : prev.telefoneFornecedor,
+    }));
     if (fornecedor) {
-      setEditando(prev => ({
-        ...prev,
-        empresa: prev.empresa || fornecedor.razaoSocial,
-        emailFornecedor: prev.emailFornecedor || fornecedor.email,
-        telefoneFornecedor: prev.telefoneFornecedor || fornecedor.telefone,
-      }));
       setAviso(`Fornecedor já cadastrado: ${fornecedor.razaoSocial}`);
       setTimeout(() => setAviso(""), 4000);
     }
