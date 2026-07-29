@@ -133,7 +133,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
       {/* ---------- Barra lateral ---------- */}
       <aside className="w-60 shrink-0 flex flex-col sticky top-0 h-screen" style={{ background: C.navyDark }}>
       <div className="px-5 py-5 flex items-center">
-          <img src={logoHub} alt="Hub Compras Públicas" className="h-11 w-auto" />
+          <img src={logoHub} alt="Hub Compras Públicas" className="w-full h-auto max-w-[190px]" />
         </div>
 
         <nav className="px-3 mt-2 flex-1 overflow-y-auto etp-scroll">
