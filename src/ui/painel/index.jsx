@@ -63,6 +63,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     ? (viewAtual === "justificativa" ? "justificativas" : "declaracoes")
     : aba;
   const [showGuia, setShowGuia] = useState(false);
+  const [subVisaoOf, setSubVisaoOf] = useState("gestao"); // "gestao" | "relatorios"
   // Novo documento agora abre direto no editor (sem janela intermediária) — objeto, processo
   // e entidade ficam editáveis dentro do próprio documento, e nada é gravado até a primeira
   // alteração real (ver persist/salvarJustificativa/salvarDeclaracao).
@@ -119,7 +120,6 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento", icone: Mail, contador: ofs.length },
     { id: "fornecedores", rotulo: "Fornecedores", icone: Users2, contador: fornecedores.length },
-    { id: "relatorios_of", rotulo: "Relatórios de OF", icone: BarChart3 },
     { id: "normativos", rotulo: "Materiais Normativos", icone: Scale, contador: normativos.length },
     { id: "lixeira", rotulo: "Lixeira", icone: Trash2, contador: lixeira.length },
     // Entidades, Usuários, Dias Úteis e Backup viviam soltos na lateral — agora
@@ -713,20 +713,32 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
           )}
 
           {aba === "ordens_fornecimento" && (
-            <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias} municipios={municipios}
-              reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao}
-              secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
-              municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}
-              onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
+            <div>
+              <div className="flex gap-1 mb-5 border-b" style={{ borderColor: C.border }}>
+                {[["gestao", "Gestão", Mail], ["relatorios", "Relatórios", BarChart3]].map(([id, rotulo, Icone]) => (
+                  <button key={id} onClick={() => setSubVisaoOf(id)}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium -mb-px border-b-2"
+                    style={{ borderColor: subVisaoOf === id ? C.brass : "transparent", color: subVisaoOf === id ? C.navy : C.inkMuted }}>
+                    <Icone size={14} /> {rotulo}
+                  </button>
+                ))}
+              </div>
+
+              {subVisaoOf === "gestao" ? (
+                <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias} municipios={municipios}
+                  reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao}
+                  secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
+                  municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}
+                  onRecarregar={onRecarregarOfs} onSalvarFornecedor={onSalvarFornecedor} emailUsuario={emailUsuario} />
+              ) : (
+                <RelatoriosOf ofs={todasAsOfs} secretarias={secretarias} fornecedores={fornecedores} reparticoes={reparticoes} />
+              )}
+            </div>
           )}
 
           {aba === "fornecedores" && (
             <FornecedoresView fornecedores={fornecedores} ofs={todasAsOfs}
               onSalvar={onSalvarFornecedor} onExcluir={onExcluirFornecedor} />
-          )}
-
-          {aba === "relatorios_of" && (
-            <RelatoriosOf ofs={todasAsOfs} secretarias={secretarias} fornecedores={fornecedores} reparticoes={reparticoes} />
           )}
 
           {aba === "normativos" && (
