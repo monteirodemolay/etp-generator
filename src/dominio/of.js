@@ -142,7 +142,15 @@ export function gerarChaveRecibo(numeroOf) {
 export function calcularSituacao(item) {
   if (item.status === "Rascunho") return { chave: "rascunho", texto: "Rascunho" };
 
-  if (item.status === "Aguardando Aceite") {
+  // O recibo de confirmação (reciboImutavel) é a prova real de que o
+  // fornecedor confirmou o recebimento — nunca é apagado nem reescrito
+  // depois de criado. Se por algum motivo o campo "status" ficar
+  // desatualizado (ex.: um reenvio antigo, antes de uma correção, que
+  // resetava o status por engano), o recibo prevalece: a situação nunca
+  // volta a mostrar "aguardando" pra uma OF que já foi confirmada de verdade.
+  const statusEfetivo = (item.reciboImutavel && item.status === "Aguardando Aceite") ? "Em Dia" : item.status;
+
+  if (statusEfetivo === "Aguardando Aceite") {
     const vinteEQuatroHorasMs = 24 * 60 * 60 * 1000;
     const precisaReenviar = item.dataEnvioTimestamp && (Date.now() - item.dataEnvioTimestamp > vinteEQuatroHorasMs);
     return {
@@ -152,7 +160,7 @@ export function calcularSituacao(item) {
     };
   }
 
-  if (item.status === "Divergência") return { chave: "divergencia", texto: "Divergência relatada pelo fornecedor" };
+  if (statusEfetivo === "Divergência") return { chave: "divergencia", texto: "Divergência relatada pelo fornecedor" };
 
   // A partir daqui, o fornecedor já confirmou o recebimento da OF (status
   // "Em Dia"). Isso NÃO é o mesmo que o produto ter chegado — é só o

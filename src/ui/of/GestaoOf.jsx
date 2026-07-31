@@ -656,7 +656,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, repartico
                       style={{ background: `${COR_SITUACAO[situacao.chave]}1A`, color: COR_SITUACAO[situacao.chave] }}>
                       {situacao.texto}
                     </span>
-                    {item.status === "Em Dia" && (
+                    {!!item.reciboImutavel && (
                       <button onClick={() => abrirConfirmacaoEntrega(item)}
                         className="mt-1 text-[10.5px] font-semibold underline"
                         style={{ color: C.brass }}>
@@ -935,7 +935,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, repartico
                   onClick={() => abrirRegistrarEnvio(item)} />
 
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Confirmação da entrega</p>
-                {item.status === "Em Dia" ? (
+                {!!item.reciboImutavel ? (
                   <>
                     <ItemAcao icone={PackageCheck} rotulo={item.confirmacaoEntrega ? "Alterar confirmação de entrega" : "Confirmar entrega do produto"}
                       cor={item.confirmacaoEntrega ? C.navy : C.green} onClick={() => abrirConfirmacaoEntrega(item)} />
