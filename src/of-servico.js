@@ -153,13 +153,18 @@ export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
 
   // Guarda quem disparou dentro da própria OF (visível na tela) — o
   // registro definitivo, à prova de edição, fica no log de auditoria.
+  // Um reenvio NUNCA apaga nada: só empilha mais um registro em "envios",
+  // sem mexer no status se a OF já tiver sido confirmada (o botão existe
+  // só pra reenviar o link em caso de e-mail perdido, não pra "desconfirmar"
+  // nada), e sem sobrescrever a data original de notificação.
+  const primeiroDisparo = of.status === "Rascunho";
   const envioAtual = { data: agora.toLocaleString("pt-BR"), timestamp: agora.getTime(), disparadoPor: usuarioEmail || "desconhecido" };
   const payload = {
     ...of,
     token,
-    status: "Aguardando Aceite",
-    dataEnvioTimestamp: agora.getTime(),
-    dataEnvioStr: agora.toLocaleString("pt-BR"),
+    ...(primeiroDisparo ? { status: "Aguardando Aceite" } : {}),
+    dataEnvioTimestamp: of.dataEnvioTimestamp || agora.getTime(),
+    dataEnvioStr: of.dataEnvioStr || agora.toLocaleString("pt-BR"),
     disparadoPor: usuarioEmail || "desconhecido",
     envios: [...(of.envios || []), envioAtual],
   };
@@ -177,7 +182,9 @@ export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
   registrarEvento({
     tipo: TIPOS_EVENTO.OF_DISPARADA, usuarioEmail, secretariaId: of.secretariaId,
     alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
-    detalhes: `${payload.envios.length}ª vez que esta OF é disparada`,
+    detalhes: primeiroDisparo
+      ? "Primeiro disparo desta OF"
+      : `Reenvio nº ${payload.envios.length - 1} (total de ${payload.envios.length} envios). Status mantido: ${of.status}.`,
   });
 
   return payload;
