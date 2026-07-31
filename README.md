@@ -240,6 +240,7 @@ O fluxo recomendado de utilização é:
 - GitHub Actions
 - SheetJS
 - Lucide React
+- CloudFlare
 
 ---
 
