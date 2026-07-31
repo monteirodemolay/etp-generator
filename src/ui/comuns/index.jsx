@@ -7,8 +7,52 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { Table2 as TableIcon, AlertCircle } from "lucide-react";
+import { Table2 as TableIcon, AlertCircle, Upload } from "lucide-react";
 import { C } from "../tokens.js";
+
+// Área de upload por clique OU arrastar-e-soltar — usada em toda tela que
+// pede pra escolher um ou mais arquivos. Um único lugar pra manter esse
+// comportamento consistente em vez de reimplementar em cada tela.
+export function AreaUpload({ onArquivos, accept, multiple = false, disabled = false, className, style, children }) {
+  const [arrastandoSobre, setArrastandoSobre] = useState(false);
+  const inputRef = useRef(null);
+
+  function processarArquivos(lista) {
+    const arquivos = Array.from(lista || []);
+    if (arquivos.length > 0) onArquivos(multiple ? arquivos : [arquivos[0]]);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setArrastandoSobre(false);
+    if (disabled) return;
+    processarArquivos(e.dataTransfer?.files);
+  }
+
+  return (
+    <div
+      onClick={() => !disabled && inputRef.current?.click()}
+      onDragOver={e => { e.preventDefault(); if (!disabled) setArrastandoSobre(true); }}
+      onDragLeave={e => { e.preventDefault(); setArrastandoSobre(false); }}
+      onDrop={handleDrop}
+      className={className}
+      style={{
+        ...style,
+        cursor: disabled ? "default" : "pointer",
+        transition: "background 0.15s, border-color 0.15s",
+        ...(arrastandoSobre ? { background: "rgba(166,131,46,0.08)", borderColor: C.brass } : {}),
+      }}
+    >
+      <input ref={inputRef} type="file" accept={accept} multiple={multiple} disabled={disabled} className="hidden"
+        onChange={e => { processarArquivos(e.target.files); e.target.value = ""; }} />
+      {children}
+      {arrastandoSobre && (
+        <p className="text-xs font-semibold mt-1" style={{ color: C.brass }}>Solte aqui para enviar</p>
+      )}
+    </div>
+  );
+}
 
 
 

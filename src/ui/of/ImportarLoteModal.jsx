@@ -13,6 +13,7 @@
 import React, { useState } from "react";
 import { X, Upload, AlertCircle, Loader2, Mail } from "lucide-react";
 import { C } from "../tokens.js";
+import { AreaUpload } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, emptyOf, recalcularErrosLote } from "../../dominio/of.js";
 import { buscarFornecedorPorCnpj, upsertFornecedor, cnpjValido, normalizarCnpj } from "../../dominio/fornecedores.js";
 import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor } from "../../of-servico.js";
@@ -174,16 +175,15 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
             </div>
           ) : (
             <>
-              <label className="block border-2 border-dashed rounded-xl p-6 text-center text-sm mb-4 cursor-pointer"
+              <AreaUpload onArquivos={processarArquivos} accept="application/pdf" multiple disabled={processando}
+                className="block border-2 border-dashed rounded-xl p-6 text-center text-sm mb-4"
                 style={{ borderColor: C.border, color: C.inkMuted }}>
                 {processando ? <Loader2 size={20} className="mx-auto mb-2 animate-spin" style={{ color: C.brass }} />
                   : <Upload size={20} className="mx-auto mb-2" style={{ color: C.brass }} />}
                 {processando ? "Lendo os arquivos..." : (
-                  <>Clique para escolher os PDFs — <b style={{ color: C.navy }}>pode selecionar vários de uma vez</b></>
+                  <>Clique ou arraste os PDFs aqui — <b style={{ color: C.navy }}>pode soltar vários de uma vez</b></>
                 )}
-                <input type="file" accept="application/pdf" multiple className="hidden" disabled={processando}
-                  onChange={e => { processarArquivos(e.target.files); e.target.value = ""; }} />
-              </label>
+              </AreaUpload>
 
               {erro && (
                 <div className="mb-4 p-3 rounded-lg text-xs flex items-start gap-2" style={{ background: "rgba(166,64,61,0.1)", color: C.ink }}>

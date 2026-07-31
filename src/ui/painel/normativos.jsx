@@ -5,7 +5,7 @@
 import React, { useState, useRef } from "react";
 import { Upload, Download, Trash2, Scale, Search } from "lucide-react";
 import { C } from "../tokens.js";
-import { ConfirmarExclusao } from "../comuns/index.jsx";
+import { ConfirmarExclusao, AreaUpload } from "../comuns/index.jsx";
 import { formatarBytes, LIMITE_BYTES_NORMATIVO } from "../../dominio/normativos.js";
 import { fmtDateRelativa } from "../../dominio/datas.js";
 
@@ -21,15 +21,19 @@ export function NormativosView({ normativos, onUpload, onExcluir }) {
   const [erro, setErro] = useState("");
   const [aExcluir, setAExcluir] = useState(null);
 
-  function selecionarArquivo(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  function processarArquivoSelecionado(file) {
     if (!file) return;
     if (file.type !== "application/pdf") { setErro("Envie apenas arquivos em PDF."); return; }
     if (file.size > LIMITE_BYTES_NORMATIVO) { setErro("Arquivo maior que 8 MB — reduza o PDF antes de enviar."); return; }
     setErro("");
     setDescricao("");
     setPendente({ file });
+  }
+
+  function selecionarArquivo(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    processarArquivoSelecionado(file);
   }
 
   async function confirmarEnvio() {
@@ -85,18 +89,19 @@ export function NormativosView({ normativos, onUpload, onExcluir }) {
       )}
 
       {ordenados.length === 0 ? (
-        <div className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
+        <AreaUpload onArquivos={arquivos => processarArquivoSelecionado(arquivos[0])} accept="application/pdf"
+          className="text-center py-14 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <Scale size={30} className="mx-auto mb-3" style={{ color: C.border }} />
           <p className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>Nenhum material enviado ainda</p>
           <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-            Envie a Lei nº 14.133/2021, decretos municipais ou instruções normativas em PDF.
+            Envie a Lei nº 14.133/2021, decretos municipais ou instruções normativas em PDF — clique aqui ou arraste o arquivo.
           </p>
-          <button onClick={() => fileRef.current?.click()}
+          <button onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
             className="px-4 py-2.5 rounded-lg text-sm font-semibold"
             style={{ background: C.navy, color: C.paper }}>
             Enviar o primeiro PDF
           </button>
-        </div>
+        </AreaUpload>
       ) : filtrados.length === 0 ? (
         <div className="text-center py-10 rounded-xl border-2 border-dashed" style={{ borderColor: C.border }}>
           <p className="text-sm" style={{ color: C.inkMuted }}>Nenhum resultado para essa busca.</p>
