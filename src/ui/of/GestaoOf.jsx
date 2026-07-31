@@ -38,7 +38,7 @@ const COR_SITUACAO = {
   "aguardando-entrega": C.brass, "aguardando-confirmacao": "#fd7e14", "nao-entregue": C.red,
 };
 
-export function GestaoOf({ ofs, fornecedores, secretarias, municipios, reparticoes = [], onSalvarReparticao, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
+export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios = [], reparticoes = [], onSalvarReparticao, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
   const [lendoPdf, setLendoPdf] = useState(false);
@@ -424,7 +424,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, repartico
       item.timbreSnapshot || prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)),
       listarEventos().catch(() => []),
     ]);
-    const secoes = montarSecoesPacote(item, eventosAuditoria);
+    const secoes = montarSecoesPacote(item, eventosAuditoria, usuarios);
 
     const htmlCabecalho = cabecalho?.tipo === "imagem" && cabecalho.dataUrl
       ? `<img src="${cabecalho.dataUrl}" style="max-width:100%; max-height:90px; display:block; margin:0 auto 12px;" />`

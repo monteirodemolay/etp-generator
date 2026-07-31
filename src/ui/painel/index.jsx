@@ -726,6 +726,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
               {subVisaoOf === "gestao" ? (
                 <GestaoOf ofs={ofs} fornecedores={fornecedores} secretarias={secretarias} municipios={municipios}
+                  usuarios={usuarios}
                   reparticoes={reparticoes} onSalvarReparticao={onSalvarReparticao}
                   secretariaId={secretariaAtiva !== "todas" ? secretariaAtiva : null}
                   municipioId={secretariaAtiva !== "todas" ? (secAtiva?.municipioId || municipios[0]?.id || null) : null}

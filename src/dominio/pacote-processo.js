@@ -13,9 +13,18 @@ import { rotuloMetodoEnvio } from "./envio-manual.js";
 import { calcularSituacao } from "./of.js";
 import { rotuloEvento } from "./auditoria.js";
 
+// Nome completo de quem fez algo, a partir do cadastro de usuários — cai
+// pro e-mail se a pessoa não tiver nome cadastrado (ou não existir mais no
+// cadastro), pra nunca ficar em branco.
+function nomeDoUsuario(email, usuarios) {
+  if (!email) return "-";
+  const encontrado = (usuarios || []).find(u => u.email === String(email).toLowerCase());
+  return encontrado?.nomeCompleto || email;
+}
+
 // Monta as seções do pacote, em texto simples — a camada de UI decide como
 // exibir/imprimir cada uma.
-export function montarSecoesPacote(of, eventosAuditoria = []) {
+export function montarSecoesPacote(of, eventosAuditoria = [], usuarios = []) {
   const situacao = calcularSituacao(of);
 
   const dadosGerais = [
@@ -28,7 +37,7 @@ export function montarSecoesPacote(of, eventosAuditoria = []) {
 
   const historicoDisparo = [
     ...(of.envios || []).map(e =>
-      `Disparo pelo sistema — ${e.data}${e.disparadoPor ? ` (por ${e.disparadoPor})` : ""}`),
+      `Disparo pelo sistema — ${e.data}${e.disparadoPor ? ` (por ${nomeDoUsuario(e.disparadoPor, usuarios)})` : ""}`),
     ...(of.enviosManuais || []).map(e =>
       `Envio manual — ${rotuloMetodoEnvio(e.metodo)}, em ${e.dataEnvio}${e.observacao ? `: ${e.observacao}` : ""}`),
   ];
@@ -44,7 +53,7 @@ export function montarSecoesPacote(of, eventosAuditoria = []) {
     ? [
         `Situação da entrega: ${situacao.texto}`,
         of.confirmacaoEntrega.dataEntregaReal ? `Data informada da entrega: ${of.confirmacaoEntrega.dataEntregaReal}` : "Marcada como não entregue.",
-        `Confirmado por: ${of.confirmacaoEntrega.confirmadoPor || "-"}`,
+        `Confirmado por: ${nomeDoUsuario(of.confirmacaoEntrega.confirmadoPor, usuarios)}`,
       ]
     : ["A equipe ainda não confirmou a situação da entrega."];
 
@@ -57,7 +66,7 @@ export function montarSecoesPacote(of, eventosAuditoria = []) {
   const eventosDaOf = eventosAuditoria
     .filter(e => e.alvo?.tipo === "of" && e.alvo?.id === of.token)
     .sort((a, b) => a.quando - b.quando)
-    .map(e => `${new Date(e.quando).toLocaleString("pt-BR")} — ${e.usuarioEmail} — ${rotuloEvento(e.tipo)}${e.detalhes ? `: ${e.detalhes}` : ""}`);
+    .map(e => `${new Date(e.quando).toLocaleString("pt-BR")} — ${nomeDoUsuario(e.usuarioEmail, usuarios)} — ${rotuloEvento(e.tipo)}${e.detalhes ? `: ${e.detalhes}` : ""}`);
 
   return { dadosGerais, historicoDisparo, confirmacaoFornecedor, confirmacaoEntrega, notificacoes, eventosDaOf };
 }
