@@ -82,14 +82,16 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     setDisparando(true);
     // Mesmo timbre pra todas as OFs do lote -- todas são da mesma entidade.
     const timbreSnapshot = await prepararCabecalho(resolverCabecalho({ secretariaId }, secretarias, TIMBRE_PADRAO));
-    const emailJsSnapshot = resolverCredenciaisEmailJs(secretarias?.find(s => s.id === secretariaId));
+    const secretariaDoLote = secretarias?.find(s => s.id === secretariaId);
+    const emailJsSnapshot = resolverCredenciaisEmailJs(secretariaDoLote);
+    const nomeEntidadeSnapshot = secretariaDoLote?.sigla || secretariaDoLote?.nome || null;
     const sucesso = []; const falhas = [];
     for (const item of itens.filter(i => !i.erroLeitura && i.erro !== "Número de OF repetido")) {
       try {
         await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
           emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot, emailJsSnapshot,
+          timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
         }));
         if (cnpjValido(item.cnpj)) {
           onSalvarFornecedor(upsertFornecedor(fornecedores, {
@@ -107,14 +109,16 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     setDisparando(true);
     setConfirmando(false);
     const timbreSnapshot = await prepararCabecalho(resolverCabecalho({ secretariaId }, secretarias, TIMBRE_PADRAO));
-    const emailJsSnapshot = resolverCredenciaisEmailJs(secretarias?.find(s => s.id === secretariaId));
+    const secretariaDoLote = secretarias?.find(s => s.id === secretariaId);
+    const emailJsSnapshot = resolverCredenciaisEmailJs(secretariaDoLote);
+    const nomeEntidadeSnapshot = secretariaDoLote?.sigla || secretariaDoLote?.nome || null;
     const sucesso = []; const falhas = [];
     for (const item of prontos) {
       try {
         const salva = await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
           emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot, emailJsSnapshot,
+          timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
         }));
         await dispararNotificacaoFornecedor(salva);
         if (cnpjValido(item.cnpj)) {

@@ -9,10 +9,9 @@
 
 import React, { useState } from "react";
 import { buscarOfsDoFornecedor, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
-import { calcularSituacao, agruparOfsPorAnoMes } from "../../dominio/of.js";
+import { calcularSituacao } from "../../dominio/of.js";
 import { formatarCnpj } from "../../dominio/fornecedores.js";
 
-const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const C = { ink: "#111827", inkMuted: "#6B7280", border: "#e5e7eb", green: "#0f5132", red: "#dc3545", brass: "#A6832E" };
 
 export function CentralFornecedor() {
@@ -47,7 +46,7 @@ export function CentralFornecedor() {
     setAcaoEmAndamento(null);
   }
 
-  const agrupado = resultado ? agruparOfsPorAnoMes(resultado) : [];
+  const listaOrdenada = resultado ? [...resultado].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) : [];
 
   return (
     <div style={{ fontFamily: "sans-serif", background: "#f3f4f6", minHeight: "100vh", padding: 20 }}>
@@ -104,41 +103,47 @@ export function CentralFornecedor() {
                 ← Buscar outro CNPJ/e-mail
               </button>
             </div>
-            {agrupado.map(({ ano, meses }) => (
-              <div key={ano} style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 18, color: C.ink, borderBottom: `2px solid ${C.border}`, paddingBottom: 6 }}>{ano}</h2>
-                {meses.map(({ mes, itens }) => (
-                  <div key={mes} style={{ marginTop: 12 }}>
-                    <h3 style={{ fontSize: 13, color: C.inkMuted, textTransform: "uppercase", letterSpacing: 0.5 }}>{MESES[mes]}</h3>
-                    {itens.map(of_ => {
-                      const situacao = calcularSituacao(of_);
-                      const podeConfirmar = of_.status === "Aguardando Aceite";
-                      return (
-                        <div key={of_.token} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginTop: 8 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                            <div>
-                              <b>OF nº {of_.numeroOf}</b>
-                              <span style={{ marginLeft: 8, fontSize: 12, color: C.inkMuted }}>{formatarCnpj(of_.cnpj)}</span>
-                            </div>
-                            <span style={{ fontSize: 11, fontWeight: "bold", padding: "3px 10px", borderRadius: 999,
-                              background: situacao.naoEntregue || situacao.atrasado ? "#f8d7da" : situacao.chave === "em-dia" ? "#d1e7dd" : "#fff3cd",
-                              color: situacao.naoEntregue || situacao.atrasado ? C.red : situacao.chave === "em-dia" ? C.green : "#664d03" }}>
-                              {situacao.texto}
-                            </span>
-                          </div>
-                          {podeConfirmar && (
-                            <button onClick={() => confirmar(of_)} disabled={acaoEmAndamento === of_.token}
-                              style={{ marginTop: 10, background: "#056535", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 6, fontSize: 13, cursor: "pointer" }}>
-                              {acaoEmAndamento === of_.token ? "Confirmando..." : "✅ Confirmar recebimento"}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+            {listaOrdenada.map(of_ => {
+              const situacao = calcularSituacao(of_);
+              const podeConfirmar = of_.status === "Aguardando Aceite";
+              const linkDetalhes = `${window.location.origin}${window.location.pathname}?of=${of_.token}`;
+              return (
+                <div key={of_.token} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <div>
+                      <b>OF nº {of_.numeroOf}</b>
+                      <span style={{ marginLeft: 8, fontSize: 12, color: C.inkMuted }}>{formatarCnpj(of_.cnpj)}</span>
+                      {of_.nomeEntidadeSnapshot && (
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: "bold", color: C.brass }}>{of_.nomeEntidadeSnapshot}</span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: "bold", padding: "3px 10px", borderRadius: 999,
+                      background: situacao.naoEntregue || situacao.atrasado ? "#f8d7da" : situacao.chave === "em-dia" ? "#d1e7dd" : "#fff3cd",
+                      color: situacao.naoEntregue || situacao.atrasado ? C.red : situacao.chave === "em-dia" ? C.green : "#664d03" }}>
+                      {situacao.texto}
+                    </span>
                   </div>
-                ))}
-              </div>
-            ))}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                    {podeConfirmar && (
+                      <button onClick={() => confirmar(of_)} disabled={acaoEmAndamento === of_.token}
+                        style={{ background: "#056535", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 6, fontSize: 13, cursor: "pointer" }}>
+                        {acaoEmAndamento === of_.token ? "Confirmando..." : "✅ Confirmar recebimento"}
+                      </button>
+                    )}
+                    <a href={linkDetalhes} style={{ display: "inline-block", padding: "8px 14px", borderRadius: 6, fontSize: 13,
+                      border: `1px solid ${C.border}`, color: C.ink, textDecoration: "none" }}>
+                      Ver detalhes
+                    </a>
+                    {of_.pdfBase64 && (
+                      <a href={of_.pdfBase64} download={`OF-${of_.numeroOf}.pdf`} style={{ display: "inline-block", padding: "8px 14px", borderRadius: 6, fontSize: 13,
+                        border: `1px solid ${C.border}`, color: C.ink, textDecoration: "none" }}>
+                        📄 Baixar PDF da OF
+                      </a>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </>
         )}
       </div>

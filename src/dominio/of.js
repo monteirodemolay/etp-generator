@@ -409,6 +409,10 @@ export function emptyOf(dadosIniciais = {}) {
     // lógica do timbre: a entidade pode não ter conta própria, e nesse caso
     // usa o padrão do sistema (ver dominio/emailjs-config.js).
     emailJsSnapshot: dadosIniciais.emailJsSnapshot || null,
+    // Nome da entidade "congelado" no momento da criação — mesmo motivo do
+    // timbre: a Central do Fornecedor é pública e não tem acesso à lista de
+    // entidades, então precisa que a OF já traga isso consigo.
+    nomeEntidadeSnapshot: dadosIniciais.nomeEntidadeSnapshot || null,
     // Repartição (setor) dentro da entidade que emitiu esta OF — opcional;
     // null quando a entidade não usa esse nível de divisão.
     reparticaoId: dadosIniciais.reparticaoId || null,

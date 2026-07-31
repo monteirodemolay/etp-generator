@@ -182,8 +182,10 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
     const secretariaDaOf = secretarias?.find(s => s.id === item.secretariaId);
     const comTimbre = item.timbreSnapshot ? item
       : { ...item, timbreSnapshot: await prepararCabecalho(resolverCabecalho(item, secretarias, TIMBRE_PADRAO)) };
-    return comTimbre.emailJsSnapshot ? comTimbre
+    const comEmailJs = comTimbre.emailJsSnapshot ? comTimbre
       : { ...comTimbre, emailJsSnapshot: resolverCredenciaisEmailJs(secretariaDaOf) };
+    return comEmailJs.nomeEntidadeSnapshot ? comEmailJs
+      : { ...comEmailJs, nomeEntidadeSnapshot: secretariaDaOf?.sigla || secretariaDaOf?.nome || null };
   }
 
   async function handleSalvarRascunho(e) {

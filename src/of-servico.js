@@ -171,6 +171,11 @@ export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
   };
 
   await setDoc(doc(db, COL_OF, token), payload, { merge: true });
+  // "Disparar" tem seu próprio caminho de gravação (não passa por salvarOf) —
+  // por isso precisa manter o índice do fornecedor aqui também. Sem isso, uma
+  // OF criada indo direto pro "Disparar" (sem passar por "Salvar rascunho"
+  // antes) nunca aparecia na Central do Fornecedor, mesmo existindo de verdade.
+  await manterIndiceFornecedor(payload);
 
   const credenciais = of.emailJsSnapshot || EMAILJS_PADRAO;
   await emailjs.send(credenciais.serviceId, credenciais.templateIdOf, {
