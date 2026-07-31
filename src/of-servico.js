@@ -219,8 +219,14 @@ export async function confirmarRecebimento(token, ofAtual) {
     feriados = valores.filter(Boolean).map(v => JSON.parse(v.value));
   } catch (e) { console.error("Não foi possível carregar o calendário de feriados", e); }
 
+  // O prazo conta a partir da PRIMEIRA notificação à empresa, não do momento
+  // em que ela clica em confirmar — senão, quanto mais a empresa demora pra
+  // confirmar, mais prazo ela ganha de graça. Só cai pra "agora" se por
+  // algum motivo não houver data de notificação registrada (não deveria
+  // acontecer, já que confirmar pressupõe ter sido notificado antes).
+  const dataInicioPrazo = ofAtual.dataEnvioTimestamp ? new Date(ofAtual.dataEnvioTimestamp) : agora;
   const prazoLimiteISO = calcularPrazoLimiteComCalendario(
-    prazoDias, ofAtual.tipoContagemPrazo || "corridos", feriados, ofAtual.municipioId, agora);
+    prazoDias, ofAtual.tipoContagemPrazo || "corridos", feriados, ofAtual.municipioId, dataInicioPrazo);
   const prazoLimiteStr = fmtDateISO(prazoLimiteISO);
   const chave = `REC-${ofAtual.numeroOf}-${agora.getTime()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
