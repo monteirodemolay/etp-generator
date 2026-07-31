@@ -21,6 +21,8 @@ import { resolverCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { chavePcaEntidade } from "../../dominio/entidades.js";
 import storage from "../../storage.js";
+import { lerPdfComPosicoes } from "../../pdf-posicoes-servico.js";
+import { detectarFormatoPdfPca, extrairItensDfd, extrairItensPedido, combinarItensDeMultiplosArquivos } from "../../dominio/pdf-pca.js";
 
 // ---------- Ferramenta avulsa: Verificar Itens no PCA ----------
 // Independente de qualquer ETP — fica salva neste navegador para reutilização.
@@ -42,6 +44,10 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const fileItensRef = useRef(null);
   const filePcaRef = useRef(null);
   const [importingItens, setImportingItens] = useState(false);
+  const filePdfRef = useRef(null);
+  const [importingPdf, setImportingPdf] = useState(false);
+  const [errorPdf, setErrorPdf] = useState("");
+  const [revisandoPdf, setRevisandoPdf] = useState(null); // array de itens extraídos, aguardando confirmação
   const [importingPca, setImportingPca] = useState(false);
   const [errorItens, setErrorItens] = useState("");
   const [errorPca, setErrorPca] = useState("");
@@ -87,6 +93,56 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
     }
     setImportingItens(false);
     e.target.value = "";
+  }
+
+  async function handleImportPdfs(e) {
+    const arquivos = Array.from(e.target.files || []);
+    if (arquivos.length === 0) return;
+    setImportingPdf(true);
+    setErrorPdf("");
+    try {
+      const resultadosPorArquivo = [];
+      for (const arquivo of arquivos) {
+        const { paginas, textoCompleto } = await lerPdfComPosicoes(arquivo);
+        const formato = detectarFormatoPdfPca(textoCompleto);
+        let itensDoArquivo = [];
+        if (formato === "dfd") itensDoArquivo = extrairItensDfd(paginas);
+        else if (formato === "pedido") itensDoArquivo = extrairItensPedido(paginas);
+        else {
+          setErrorPdf(prev => (prev ? prev + " " : "") + `"${arquivo.name}" não parece ser um Pedido nem um DFD — ignorado.`);
+          continue;
+        }
+        resultadosPorArquivo.push({ nomeArquivo: arquivo.name, itens: itensDoArquivo });
+      }
+      const combinados = combinarItensDeMultiplosArquivos(resultadosPorArquivo);
+      if (combinados.length === 0) {
+        setErrorPdf(prev => prev || "Nenhum item foi encontrado nos arquivos selecionados.");
+      } else {
+        setRevisandoPdf(combinados);
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorPdf("Não foi possível ler um dos PDFs: " + (err.message || err));
+    }
+    setImportingPdf(false);
+    e.target.value = "";
+  }
+
+  function confirmarItensRevisados() {
+    atualizarItens(revisandoPdf.map(it => ({
+      id: "it_" + Math.random().toString(36).slice(2, 8),
+      idProduto: it.idProduto, descricao: it.descricao, unidade: it.unidade || "UNIDADE",
+      quantidade: it.quantidade, classificacao: "",
+    })));
+    setRevisandoPdf(null);
+  }
+
+  function atualizarItemRevisado(idx, campo, valor) {
+    setRevisandoPdf(prev => prev.map((it, i) => (i === idx ? { ...it, [campo]: valor } : it)));
+  }
+
+  function removerItemRevisado(idx) {
+    setRevisandoPdf(prev => prev.filter((_, i) => i !== idx));
   }
 
   async function handleImportPca(e) {
@@ -193,6 +249,13 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                     {importingItens ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
                     {importingItens ? "Importando..." : "Importar do Sistema Centi"}
                   </button>
+                  <input ref={filePdfRef} type="file" accept=".pdf" multiple onChange={handleImportPdfs} className="hidden" />
+                  <button onClick={() => filePdfRef.current?.click()} disabled={importingPdf}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+                    style={{ background: C.brass, color: C.navyDark }}>
+                    {importingPdf ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                    {importingPdf ? "Lendo PDFs..." : "Importar de PDF (Pedido ou DFD)"}
+                  </button>
                   <button onClick={baixarModeloPlanilha}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
                     style={{ background: "white", color: C.navy, border: `1px solid ${C.border}` }}>
@@ -205,7 +268,12 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                     </button>
                   )}
                 </div>
+                <p className="text-[11px] mt-2" style={{ color: C.inkMuted }}>
+                  Pode selecionar vários PDFs de uma vez (de Pedidos diferentes) — os itens de todos são juntados
+                  numa lista só, ordenada por código do produto, com uma revisão antes de confirmar.
+                </p>
                 {errorItens && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorItens}</p>}
+                {errorPdf && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorPdf}</p>}
               </div>
 
               <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
@@ -398,6 +466,48 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                   <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} pendente(s))
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revisandoPdf && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Revisar itens extraídos ({revisandoPdf.length})
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              Confira código, descrição e quantidade antes de confirmar — a leitura de PDF é melhor esforço,
+              e pode errar em casos raros. Pode editar qualquer campo aqui, ou remover um item indevido.
+            </p>
+            <div className="space-y-2 mb-4">
+              {revisandoPdf.map((it, idx) => (
+                <div key={idx} className="rounded-lg border p-3 grid sm:grid-cols-12 gap-2 items-start" style={{ borderColor: C.border }}>
+                  <input value={it.idProduto} onChange={e => atualizarItemRevisado(idx, "idProduto", e.target.value)}
+                    placeholder="Código" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs font-mono" style={{ borderColor: C.border }} />
+                  <textarea value={it.descricao} onChange={e => atualizarItemRevisado(idx, "descricao", e.target.value)}
+                    rows={2} placeholder="Descrição" className="sm:col-span-6 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <input value={it.unidade} onChange={e => atualizarItemRevisado(idx, "unidade", e.target.value)}
+                    placeholder="Unidade" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <input value={it.quantidade} onChange={e => atualizarItemRevisado(idx, "quantidade", e.target.value)}
+                    placeholder="Qtd." className="sm:col-span-1 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <button onClick={() => removerItemRevisado(idx)} title="Remover este item"
+                    className="sm:col-span-1 flex justify-center py-1.5" style={{ color: C.red }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRevisandoPdf(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button onClick={confirmarItensRevisados} disabled={revisandoPdf.length === 0}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                Confirmar e usar estes {revisandoPdf.length} item(ns)
+              </button>
             </div>
           </div>
         </div>
