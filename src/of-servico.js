@@ -38,6 +38,7 @@ import { TIPOS_EVENTO } from "./dominio/auditoria.js";
 import { montarTextoNotificacaoAtraso, formatarPrazoNotificacao, emptyNotificacao, linkNotificacao } from "./dominio/notificacao-of.js";
 import { EMAILJS_PADRAO } from "./dominio/emailjs-config.js";
 import { emptyEnvioManual, rotuloMetodoEnvio } from "./dominio/envio-manual.js";
+import { emptyDisputa, novaMensagemDisputa, disputaAtiva } from "./dominio/disputa.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -338,7 +339,11 @@ export async function dispararNotificacaoAtraso(token, dadosNotificacao) {
   });
 
   const notificacoes = [...(of.notificacoes || []), registro];
-  await updateDoc(doc(db, COL_OF, token), { notificacoes, updatedAt: Date.now() });
+  const mudancas = { notificacoes, updatedAt: Date.now() };
+  if (!disputaAtiva(of)) {
+    mudancas.disputaAtual = emptyDisputa(`Notificação de atraso nº ${numeroSeq} enviada`, "notificacao");
+  }
+  await updateDoc(doc(db, COL_OF, token), mudancas);
 
   const linkIntegra = linkNotificacao(
     `${window.location.origin}${window.location.pathname}`, token, numeroSeq
@@ -401,10 +406,113 @@ export async function registrarEnvioManual(token, dados) {
 }
 
 export async function reportarDivergencia(token, texto) {
+  const of = await buscarOfPorToken(token);
   const agora = new Date().toLocaleString("pt-BR");
-  await updateDoc(doc(db, COL_OF, token), {
+  const mudancas = {
     status: "Divergência", motivoDivergencia: texto, dataDivergencia: agora, updatedAt: Date.now(),
+  };
+  // Abre a disputa automaticamente, com a própria divergência como a
+  // primeira mensagem (o "empresa aponta o problema") — só se ainda não
+  // houver uma disputa ativa nesta OF.
+  if (of && !disputaAtiva(of)) {
+    mudancas.disputaAtual = {
+      ...emptyDisputa(`Divergência reportada pelo fornecedor: ${texto}`, "divergencia"),
+      mensagens: [novaMensagemDisputa("fornecedor", texto)],
+    };
+  }
+  await updateDoc(doc(db, COL_OF, token), mudancas);
+}
+
+// ---------- Modo Disputa ----------
+// Conversa registrada e limitada (no máximo 5 passos) entre equipe e
+// fornecedor, pra resolver uma divergência ou atraso sem virar um vaivém
+// infinito. Ver dominio/disputa.js pra sequência completa.
+
+export async function abrirDisputaManual(token, motivo, usuarioEmail) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  if (disputaAtiva(of)) throw new Error("Já existe uma disputa em andamento para esta OF.");
+  const disputaAtual = emptyDisputa(motivo, "manual");
+  await updateDoc(doc(db, COL_OF, token), { disputaAtual, updatedAt: Date.now() });
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_DISPUTA_ABERTA, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Aberta manualmente. Motivo: ${motivo}`,
   });
+  return { ...of, disputaAtual };
+}
+
+export async function adicionarMensagemDisputaFornecedor(token, texto, prazoPropostoISO) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const atual = disputaAtiva(of);
+  if (!atual) throw new Error("Não há disputa em andamento para esta OF.");
+  const disputaAtual = {
+    ...atual,
+    mensagens: [...atual.mensagens, novaMensagemDisputa("fornecedor", texto, null, prazoPropostoISO)],
+  };
+  await updateDoc(doc(db, COL_OF, token), { disputaAtual, updatedAt: Date.now() });
+  return { ...of, disputaAtual };
+}
+
+export async function adicionarMensagemDisputaEquipe(token, texto, nomeAssinante, usuarioEmail) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const atual = disputaAtiva(of);
+  if (!atual) throw new Error("Não há disputa em andamento para esta OF.");
+  const disputaAtual = {
+    ...atual,
+    mensagens: [...atual.mensagens, novaMensagemDisputa("equipe", texto, nomeAssinante)],
+  };
+  await updateDoc(doc(db, COL_OF, token), { disputaAtual, updatedAt: Date.now() });
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_DISPUTA_MENSAGEM, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Respondeu na disputa: ${texto}`,
+  });
+  return { ...of, disputaAtual };
+}
+
+// Solução final: encerra a disputa. "decisao" é "manter_prazo" ou
+// "novo_prazo" — só aceita um novo prazo se o próprio fornecedor tiver
+// proposto um em alguma mensagem (não dá pra equipe inventar um prazo que
+// ninguém propôs, isso é decisão de outra tela, não desta conversa).
+export async function encerrarDisputa(token, decisao, texto, decididoPor) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const atual = disputaAtiva(of);
+  if (!atual) throw new Error("Não há disputa em andamento para esta OF.");
+
+  const prazoProposto = [...atual.mensagens].reverse().find(m => m.prazoPropostoISO)?.prazoPropostoISO;
+  if (decisao === "novo_prazo" && !prazoProposto) {
+    throw new Error("Nenhum prazo foi proposto pelo fornecedor nesta disputa.");
+  }
+
+  const disputaEncerrada = {
+    ...atual, aberta: false,
+    resolucao: {
+      decisao, texto, quando: Date.now(), decididoPor,
+      ...(decisao === "novo_prazo" ? { novoPrazoISO: prazoProposto } : {}),
+    },
+  };
+
+  const mudancas = {
+    disputaAtual: null,
+    disputasEncerradas: [...(of.disputasEncerradas || []), disputaEncerrada],
+    updatedAt: Date.now(),
+  };
+  if (decisao === "novo_prazo" && prazoProposto) {
+    mudancas.prazoLimiteISO = prazoProposto;
+    mudancas.prazoLimite = fmtDateISO(prazoProposto);
+  }
+
+  await updateDoc(doc(db, COL_OF, token), mudancas);
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_DISPUTA_ENCERRADA, usuarioEmail: decididoPor, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Solução final: ${decisao === "novo_prazo" ? `novo prazo aceito (${mudancas.prazoLimite})` : "mantido o prazo original"}. ${texto}`,
+  });
+  return { ...of, ...mudancas };
 }
 
 // ---------- Conferência pública do recibo (por chave digitada) ----------

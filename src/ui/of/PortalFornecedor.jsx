@@ -7,7 +7,8 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia } from "../../of-servico.js";
+import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia, adicionarMensagemDisputaFornecedor } from "../../of-servico.js";
+import { proximoTurno, precisaAvisoSemResposta } from "../../dominio/disputa.js";
 import { fmtDateISO } from "../../dominio/datas.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
 import { ComprovanteOf } from "./ComprovanteOf.jsx";
@@ -26,6 +27,9 @@ export function PortalFornecedor({ token }) {
   const [enviando, setEnviando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [qrCode, setQrCode] = useState(null);
+  const [mensagemDisputa, setMensagemDisputa] = useState("");
+  const [prazoPropostoDisputa, setPrazoPropostoDisputa] = useState("");
+  const [enviandoDisputa, setEnviandoDisputa] = useState(false);
 
   useEffect(() => {
     buscarOfPorToken(token)
@@ -58,11 +62,26 @@ export function PortalFornecedor({ token }) {
     setEnviando(true);
     try {
       await reportarDivergencia(token, divergencia.trim());
-      setOf({ ...of, status: "Divergência", motivoDivergencia: divergencia.trim() });
+      const atualizado = await buscarOfPorToken(token);
+      setOf(atualizado);
     } catch (e) {
       setErro("Não foi possível registrar agora: " + (e.message || e));
     }
     setEnviando(false);
+  }
+
+  async function handleResponderDisputa() {
+    if (!mensagemDisputa.trim()) { setErro("Escreva sua mensagem antes de enviar."); return; }
+    setEnviandoDisputa(true);
+    try {
+      const atualizado = await adicionarMensagemDisputaFornecedor(token, mensagemDisputa.trim(), prazoPropostoDisputa || null);
+      setOf(atualizado);
+      setMensagemDisputa("");
+      setPrazoPropostoDisputa("");
+    } catch (e) {
+      setErro("Não foi possível enviar sua resposta agora: " + (e.message || e));
+    }
+    setEnviandoDisputa(false);
   }
 
   const linkConferencia = of?.reciboImutavel?.chave
@@ -175,6 +194,59 @@ export function PortalFornecedor({ token }) {
                   style={{ background: C.red, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
                   {enviando ? "Enviando..." : "Reportar divergência"}
                 </button>
+              </div>
+            )}
+
+            {of.disputaAtual && (
+              <div style={{ marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                <h4 style={{ margin: "0 0 10px 0", color: C.navy }}>💬 Conversa sobre esta OF</h4>
+                <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 12px 0" }}>{of.disputaAtual.motivoAbertura}</p>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {of.disputaAtual.mensagens.map((m, i) => (
+                    <div key={i} style={{
+                      alignSelf: m.autor === "fornecedor" ? "flex-end" : "flex-start",
+                      maxWidth: "85%", background: m.autor === "fornecedor" ? "#dbeafe" : "#f3f4f6",
+                      borderRadius: 8, padding: "8px 12px",
+                    }}>
+                      <p style={{ margin: 0, fontSize: 11, fontWeight: "bold", color: C.inkMuted }}>
+                        {m.autor === "fornecedor" ? "Você" : (m.nome || "Equipe")}
+                      </p>
+                      <p style={{ margin: "2px 0 0 0", fontSize: 13, whiteSpace: "pre-wrap" }}>{m.texto}</p>
+                      {m.prazoPropostoISO && (
+                        <p style={{ margin: "4px 0 0 0", fontSize: 11, color: "#b45309" }}>
+                          Sugeriu novo prazo: {fmtDateISO(m.prazoPropostoISO)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {of.disputaAtual.resolucao ? (
+                  <div style={{ background: "#d1e7dd", borderRadius: 8, padding: 12 }}>
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: "bold", color: "#0f5132" }}>
+                      ✅ Solução final: {of.disputaAtual.resolucao.decisao === "novo_prazo" ? "novo prazo aceito" : "prazo original mantido"}
+                    </p>
+                    <p style={{ margin: "4px 0 0 0", fontSize: 12, color: "#0f5132" }}>{of.disputaAtual.resolucao.texto}</p>
+                  </div>
+                ) : proximoTurno(of.disputaAtual) === "fornecedor" ? (
+                  <div>
+                    <textarea rows="3" value={mensagemDisputa} onChange={e => setMensagemDisputa(e.target.value)}
+                      placeholder="Escreva sua resposta..."
+                      style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", marginBottom: 8 }} />
+                    <label style={{ display: "block", fontSize: 11, color: C.inkMuted, marginBottom: 8 }}>
+                      Precisa de mais prazo? Sugira uma nova data (opcional):
+                      <input type="date" value={prazoPropostoDisputa} onChange={e => setPrazoPropostoDisputa(e.target.value)}
+                        style={{ display: "block", marginTop: 4, padding: 6, borderRadius: 4, border: "1px solid #ccc" }} />
+                    </label>
+                    <button onClick={handleResponderDisputa} disabled={enviandoDisputa}
+                      style={{ background: C.navy, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
+                      {enviandoDisputa ? "Enviando..." : "Enviar resposta"}
+                    </button>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 12, color: C.inkMuted, fontStyle: "italic" }}>Aguardando resposta da equipe.</p>
+                )}
               </div>
             )}
           </>

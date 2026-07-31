@@ -30,7 +30,7 @@ service cloud.firestore {
       allow get: if true;
       allow create: if daEquipe();
       allow delete: if daEquipe();
-      allow update: if daEquipe() || transicaoDoFornecedorEhValida();
+      allow update: if daEquipe() || transicaoDoFornecedorEhValida() || disputaTransicaoDoFornecedorEhValida();
 
       function transicaoDoFornecedorEhValida() {
         let antes = resource.data;
@@ -47,6 +47,39 @@ service cloud.firestore {
         // continua sendo só a equipe, ver desfazerConfirmacaoEntrega).
         let divergenciaAposConfirmar = antes.status == 'Em Dia' && depois.status == 'Divergência';
         return apenasEstesCamposMudaram && (primeiraConfirmacao || divergenciaAposConfirmar);
+      }
+
+      // Modo Disputa: o fornecedor pode escrever em "disputaAtual" (nunca em
+      // "disputasEncerradas", que é só histórico gravado pela equipe) só
+      // quando é genuinamente a vez dele -- adicionando EXATAMENTE uma
+      // mensagem com autor "fornecedor", sem apagar nem alterar nenhuma
+      // mensagem já existente.
+      function disputaTransicaoDoFornecedorEhValida() {
+        let antes = resource.data;
+        let depois = request.resource.data;
+        let apenasCamposDaDisputaMudaram = depois.diff(antes).affectedKeys().hasOnly([
+          'disputaAtual', 'status', 'motivoDivergencia', 'dataDivergencia', 'updatedAt'
+        ]);
+
+        let antesD = antes.get('disputaAtual', null);
+        let depoisD = depois.get('disputaAtual', null);
+
+        // Abrindo a disputa pela primeira vez, junto com reportar uma
+        // divergência -- a própria divergência já é a primeira mensagem.
+        let abrindoComDivergencia = antesD == null && depoisD != null &&
+          depoisD.resolucao == null &&
+          depoisD.mensagens.size() == 1 &&
+          depoisD.mensagens[0].autor == 'fornecedor';
+
+        // Respondendo numa disputa já aberta (pela equipe, manualmente ou
+        // por uma notificação de atraso), exatamente na vez do fornecedor.
+        let respondendoNaVez = antesD != null && depoisD != null &&
+          antesD.resolucao == null && depoisD.resolucao == null &&
+          depoisD.mensagens.size() == antesD.mensagens.size() + 1 &&
+          depoisD.mensagens[antesD.mensagens.size()].autor == 'fornecedor' &&
+          (antesD.mensagens.size() == 0 || antesD.mensagens.size() == 2);
+
+        return apenasCamposDaDisputaMudaram && (abrindoComDivergencia || respondendoNaVez);
       }
     }
 

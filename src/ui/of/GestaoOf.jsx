@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useRef } from "react";
-import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown, Camera } from "lucide-react";
+import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown, Camera, MessageSquare, MessageSquareWarning } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
@@ -16,7 +16,8 @@ import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual, abrirDisputaManual, adicionarMensagemDisputaEquipe, encerrarDisputa } from "../../of-servico.js";
+import { proximoTurno, precisaAvisoSemResposta, disputaAtiva } from "../../dominio/disputa.js";
 import { METODOS_ENVIO_MANUAL, rotuloMetodoEnvio } from "../../dominio/envio-manual.js";
 import { comprimirImagemAnexo } from "../../dominio/imagem.js";
 import { montarSecoesPacote } from "../../dominio/pacote-processo.js";
@@ -50,6 +51,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
   const [desfazendo, setDesfazendo] = useState(false);
   const [notificandoDe, setNotificandoDe] = useState(null); // OF sendo notificada
   const [registrandoEnvioDe, setRegistrandoEnvioDe] = useState(null); // OF cujo envio manual está sendo registrado
+  const [disputaDe, setDisputaDe] = useState(null); // OF cuja conversa/disputa está aberta na tela
+  const [abrindoDisputaManual, setAbrindoDisputaManual] = useState(false);
+  const [motivoDisputaManual, setMotivoDisputaManual] = useState("");
+  const [mensagemEquipeDisputa, setMensagemEquipeDisputa] = useState("");
+  const [assinanteEquipeDisputa, setAssinanteEquipeDisputa] = useState("");
+  const [decisaoFinalDisputa, setDecisaoFinalDisputa] = useState("manter_prazo");
+  const [textoFinalDisputa, setTextoFinalDisputa] = useState("");
+  const [enviandoDisputaEquipe, setEnviandoDisputaEquipe] = useState(false);
   const [envioMetodo, setEnvioMetodo] = useState("whatsapp");
   const [envioData, setEnvioData] = useState(todayISO());
   const [envioObs, setEnvioObs] = useState("");
@@ -321,6 +330,61 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
       setErro("Não foi possível enviar a notificação: " + (e2.message || e2));
     }
     setEnviandoNotificacao(false);
+  }
+
+  function abrirDisputa(item) {
+    setDisputaDe(item);
+    setAbrindoDisputaManual(false);
+    setMotivoDisputaManual("");
+    setMensagemEquipeDisputa("");
+    setAssinanteEquipeDisputa(emailUsuario || "");
+    setDecisaoFinalDisputa("manter_prazo");
+    setTextoFinalDisputa("");
+    setErro("");
+  }
+
+  async function handleAbrirDisputaManual() {
+    if (!motivoDisputaManual.trim()) return;
+    setEnviandoDisputaEquipe(true);
+    setErro("");
+    try {
+      const atualizado = await abrirDisputaManual(disputaDe.token, motivoDisputaManual.trim(), emailUsuario);
+      setDisputaDe(atualizado);
+      setAbrindoDisputaManual(false);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível abrir a disputa: " + (e2.message || e2));
+    }
+    setEnviandoDisputaEquipe(false);
+  }
+
+  async function handleResponderDisputaEquipe() {
+    if (!mensagemEquipeDisputa.trim()) return;
+    setEnviandoDisputaEquipe(true);
+    setErro("");
+    try {
+      const atualizado = await adicionarMensagemDisputaEquipe(disputaDe.token, mensagemEquipeDisputa.trim(), assinanteEquipeDisputa.trim(), emailUsuario);
+      setDisputaDe(atualizado);
+      setMensagemEquipeDisputa("");
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível enviar a resposta: " + (e2.message || e2));
+    }
+    setEnviandoDisputaEquipe(false);
+  }
+
+  async function handleEncerrarDisputa() {
+    if (!textoFinalDisputa.trim()) return;
+    setEnviandoDisputaEquipe(true);
+    setErro("");
+    try {
+      const atualizado = await encerrarDisputa(disputaDe.token, decisaoFinalDisputa, textoFinalDisputa.trim(), emailUsuario);
+      setDisputaDe(atualizado);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível encerrar a disputa: " + (e2.message || e2));
+    }
+    setEnviandoDisputaEquipe(false);
   }
 
   function abrirRegistrarEnvio(item) {
@@ -669,8 +733,8 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
                       style={{ background: C.paperDark, color: C.navy }}>
                       <MoreHorizontal size={14} /> Ações
-                      {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega) && (
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#b45309" }} title="Precisa de atenção" />
+                      {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega || disputaAtiva(item)) && (
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#b45309" }} title={disputaAtiva(item) ? "Disputa em andamento" : "Precisa de atenção"} />
                       )}
                     </button>
                   </td>
@@ -934,6 +998,22 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
                   sub={item.enviosManuais?.length ? `${item.enviosManuais.length} registro(s) já feito(s)` : "WhatsApp pessoal, e-mail direto, presencial..."}
                   onClick={() => abrirRegistrarEnvio(item)} />
 
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Disputa / conversa com o fornecedor</p>
+                {disputaAtiva(item) ? (
+                  <ItemAcao icone={MessageSquareWarning} rotulo="Ver conversa em andamento"
+                    cor={precisaAvisoSemResposta(disputaAtiva(item)) ? "#b45309" : C.navy}
+                    sub={precisaAvisoSemResposta(disputaAtiva(item)) ? "Fornecedor sem responder há mais de 48h" : "Disputa aberta, aguardando movimentação"}
+                    onClick={() => abrirDisputa(item)} />
+                ) : (
+                  <ItemAcao icone={MessageSquare} rotulo="Abrir disputa manualmente"
+                    sub="Pra formalizar uma conversa, ex.: depois de uma ligação do fornecedor"
+                    onClick={() => abrirDisputa(item)} />
+                )}
+                {(item.disputasEncerradas?.length > 0) && (
+                  <ItemAcao icone={MessageSquare} rotulo="Ver histórico de disputas encerradas"
+                    sub={`${item.disputasEncerradas.length} já encerrada(s)`} onClick={() => abrirDisputa(item)} />
+                )}
+
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Confirmação da entrega</p>
                 {!!item.reciboImutavel ? (
                   <>
@@ -1011,6 +1091,149 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
           </div>
         </div>
       )}
+
+      {disputaDe && (() => {
+        const disputa = disputaAtiva(disputaDe);
+        const turno = disputa ? proximoTurno(disputa) : null;
+        const semResposta = disputa && precisaAvisoSemResposta(disputa);
+        const prazoJaProposto = disputa ? [...disputa.mensagens].reverse().find(m => m.prazoPropostoISO)?.prazoPropostoISO : null;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+            <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="serif text-lg font-semibold" style={{ color: C.navy }}>
+                  Disputa — OF nº {disputaDe.numeroOf}
+                </h2>
+                <button onClick={() => setDisputaDe(null)} style={{ color: C.inkMuted }}><X size={18} /></button>
+              </div>
+
+              {!disputa ? (
+                <>
+                  <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+                    Abre uma conversa registrada com o fornecedor — útil pra formalizar algo combinado por telefone,
+                    ou pra dar espaço pra ele responder a uma notificação ou divergência. No máximo 5 idas e vindas:
+                    ele aponta, a equipe responde, ele responde de novo, e a equipe dá a solução final.
+                  </p>
+                  <textarea rows={3} value={motivoDisputaManual} onChange={e => setMotivoDisputaManual(e.target.value)}
+                    placeholder="Motivo da abertura (ex.: fornecedor ligou pedindo mais prazo por falta de material)"
+                    className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setDisputaDe(null)}
+                      className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                      Cancelar
+                    </button>
+                    <button onClick={handleAbrirDisputaManual} disabled={enviandoDisputaEquipe || !motivoDisputaManual.trim()}
+                      className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                      {enviandoDisputaEquipe ? "Abrindo..." : "Abrir disputa"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs mb-3" style={{ color: C.inkMuted }}>{disputa.motivoAbertura}</p>
+
+                  <div className="flex flex-col gap-2 mb-4">
+                    {disputa.mensagens.map((m, i) => (
+                      <div key={i} className="rounded-lg p-3 max-w-[85%]"
+                        style={{ alignSelf: m.autor === "equipe" ? "flex-end" : "flex-start", background: m.autor === "equipe" ? "#F1ECDF" : "#dbeafe" }}>
+                        <p className="text-[11px] font-semibold" style={{ color: C.inkMuted }}>
+                          {m.autor === "equipe" ? (m.nome || "Equipe") : "Fornecedor"}
+                        </p>
+                        <p className="text-sm whitespace-pre-wrap">{m.texto}</p>
+                        {m.prazoPropostoISO && (
+                          <p className="text-xs mt-1" style={{ color: "#b45309" }}>Sugeriu novo prazo: {fmtDateISO(m.prazoPropostoISO)}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {semResposta && (
+                    <div className="rounded-lg p-2.5 mb-3 text-xs" style={{ background: "#fff3cd", color: "#664d03" }}>
+                      ⚠️ Fornecedor sem responder há mais de 48h.
+                    </div>
+                  )}
+
+                  {turno === "equipe" && (
+                    <div>
+                      <input value={assinanteEquipeDisputa} onChange={e => setAssinanteEquipeDisputa(e.target.value)}
+                        placeholder="Seu nome (aparece na conversa)"
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-2" style={{ borderColor: C.border }} />
+                      <textarea rows={3} value={mensagemEquipeDisputa} onChange={e => setMensagemEquipeDisputa(e.target.value)}
+                        placeholder="Sua resposta ao fornecedor..."
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setDisputaDe(null)}
+                          className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                          Fechar
+                        </button>
+                        <button onClick={handleResponderDisputaEquipe} disabled={enviandoDisputaEquipe || !mensagemEquipeDisputa.trim()}
+                          className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                          {enviandoDisputaEquipe ? "Enviando..." : "Enviar resposta"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {turno === "fornecedor" && (
+                    <p className="text-xs italic" style={{ color: C.inkMuted }}>Aguardando resposta do fornecedor.</p>
+                  )}
+
+                  {turno === "equipe_decidir" && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>Solução final</p>
+                      <div className="flex gap-2 mb-2">
+                        <button onClick={() => setDecisaoFinalDisputa("manter_prazo")}
+                          className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border"
+                          style={{ borderColor: decisaoFinalDisputa === "manter_prazo" ? C.navy : C.border, background: decisaoFinalDisputa === "manter_prazo" ? C.navy : "white", color: decisaoFinalDisputa === "manter_prazo" ? "white" : C.ink }}>
+                          Manter prazo original
+                        </button>
+                        <button onClick={() => setDecisaoFinalDisputa("novo_prazo")} disabled={!prazoJaProposto}
+                          title={!prazoJaProposto ? "O fornecedor não propôs nenhum novo prazo nesta conversa" : ""}
+                          className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-40"
+                          style={{ borderColor: decisaoFinalDisputa === "novo_prazo" ? C.brass : C.border, background: decisaoFinalDisputa === "novo_prazo" ? C.brass : "white", color: decisaoFinalDisputa === "novo_prazo" ? C.navyDark : C.ink }}>
+                          Acatar novo prazo{prazoJaProposto ? ` (${fmtDateISO(prazoJaProposto)})` : ""}
+                        </button>
+                      </div>
+                      <textarea rows={3} value={textoFinalDisputa} onChange={e => setTextoFinalDisputa(e.target.value)}
+                        placeholder="Explique a decisão final..."
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setDisputaDe(null)}
+                          className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                          Fechar
+                        </button>
+                        <button onClick={handleEncerrarDisputa} disabled={enviandoDisputaEquipe || !textoFinalDisputa.trim()}
+                          className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.green, color: "white" }}>
+                          {enviandoDisputaEquipe ? "Encerrando..." : "Encerrar com esta solução"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {disputaDe.disputasEncerradas?.length > 0 && (
+                <div className="mt-5 pt-4 border-t" style={{ borderColor: C.border }}>
+                  <p className="text-[10.5px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+                    Disputas anteriores, já encerradas
+                  </p>
+                  <div className="space-y-2">
+                    {disputaDe.disputasEncerradas.map((d, i) => (
+                      <div key={i} className="rounded-lg border p-2.5 text-xs" style={{ borderColor: C.border }}>
+                        <p style={{ color: C.ink }}>{d.motivoAbertura}</p>
+                        <p style={{ color: C.inkMuted, marginTop: 4 }}>
+                          Solução: {d.resolucao?.decisao === "novo_prazo" ? `novo prazo aceito (${fmtDateISO(d.resolucao.novoPrazoISO)})` : "prazo original mantido"} — {d.resolucao?.texto}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {registrandoEnvioDe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
