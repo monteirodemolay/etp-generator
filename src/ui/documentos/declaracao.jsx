@@ -7,10 +7,10 @@ import { mesmoCodigo } from "../../dominio/pca.js";
 
 import React, { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
-         Info, Loader2, ListChecks, ListX, X, Lock } from "lucide-react";
+         Info, Loader2, ListChecks, ListX, X, Lock, Plus } from "lucide-react";
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
-import { cruzarComPca } from "../../dominio/pca.js";
+import { cruzarComPca, buscarNoPca } from "../../dominio/pca.js";
 import * as XLSX from "xlsx";
 import { parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti } from "../../dominio/planilhas.js";
@@ -48,6 +48,9 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const [importingPdf, setImportingPdf] = useState(false);
   const [errorPdf, setErrorPdf] = useState("");
   const [revisandoPdf, setRevisandoPdf] = useState(null); // array de itens extraídos, aguardando confirmação
+  const [adicionandoManual, setAdicionandoManual] = useState(false);
+  const [buscaManual, setBuscaManual] = useState("");
+  const [novoItemManual, setNovoItemManual] = useState(null); // {idProduto, descricao, unidade, quantidade} depois de escolher/digitar
   const [importingPca, setImportingPca] = useState(false);
   const [errorItens, setErrorItens] = useState("");
   const [errorPca, setErrorPca] = useState("");
@@ -143,6 +146,45 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
 
   function removerItemRevisado(idx) {
     setRevisandoPdf(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  const resultadosBuscaManual = pca ? buscarNoPca(pca, buscaManual, 8) : [];
+
+  function selecionarResultadoBusca(linhaPca) {
+    setNovoItemManual({
+      idProduto: linhaPca.codigo || linhaPca.sequencial || "",
+      descricao: linhaPca.produto || "",
+      unidade: "UNIDADE",
+      quantidade: linhaPca.quantidade || "",
+    });
+  }
+
+  function atualizarNovoItemManual(campo, valor) {
+    setNovoItemManual(prev => ({
+      idProduto: prev?.idProduto ?? "", descricao: prev?.descricao ?? (pca ? "" : buscaManual),
+      unidade: prev?.unidade ?? "UNIDADE", quantidade: prev?.quantidade ?? "",
+      [campo]: valor,
+    }));
+  }
+
+  function cancelarItemManual() {
+    setAdicionandoManual(false);
+    setBuscaManual("");
+    setNovoItemManual(null);
+  }
+
+  function confirmarItemManual() {
+    const descricao = (novoItemManual?.descricao ?? (pca ? "" : buscaManual)).trim();
+    if (!descricao) return;
+    atualizarItens([...itens, {
+      id: "it_" + Math.random().toString(36).slice(2, 8),
+      idProduto: (novoItemManual?.idProduto || "").trim(),
+      descricao,
+      unidade: (novoItemManual?.unidade || "UNIDADE").trim(),
+      quantidade: (novoItemManual?.quantidade || "").trim(),
+      classificacao: "",
+    }]);
+    cancelarItemManual();
   }
 
   async function handleImportPca(e) {
@@ -274,6 +316,72 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                 </p>
                 {errorItens && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorItens}</p>}
                 {errorPdf && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorPdf}</p>}
+
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+                  {!adicionandoManual ? (
+                    <button onClick={() => setAdicionandoManual(true)}
+                      className="flex items-center gap-1.5 text-xs font-medium" style={{ color: C.brass }}>
+                      <Plus size={13} /> Adicionar um item manualmente
+                    </button>
+                  ) : (
+                    <div className="relative">
+                      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+                        Adicionar item manualmente
+                      </p>
+                      <label className="block mb-2">
+                        <span className="text-[11px]" style={{ color: C.inkMuted }}>
+                          Busque pelo código ou nome do produto {pca ? "no PCA já importado" : "(importe a planilha do PCA abaixo pra poder buscar)"}
+                        </span>
+                        <input value={buscaManual} onChange={e => { setBuscaManual(e.target.value); setNovoItemManual(null); }}
+                          placeholder="Ex.: 5241938182 ou CADEIRA DE RODAS" disabled={!pca}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-sm disabled:opacity-50" style={{ borderColor: C.border }} />
+                      </label>
+
+                      {pca && buscaManual.trim().length >= 2 && !novoItemManual && (
+                        resultadosBuscaManual.length > 0 ? (
+                          <div className="mb-3 rounded-lg border divide-y max-h-48 overflow-y-auto etp-scroll" style={{ borderColor: C.border }}>
+                            {resultadosBuscaManual.map((l, i) => (
+                              <button key={i} onClick={() => selecionarResultadoBusca(l)}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-black/[0.03]">
+                                <span className="font-mono" style={{ color: C.brass }}>{l.codigo || l.sequencial}</span>
+                                <span style={{ color: C.ink }}> — {l.produto}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mb-3 rounded-lg border p-3 text-xs" style={{ borderColor: C.border, background: "#fff3cd", color: "#664d03" }}>
+                            Não encontrado no PCA. Pode incluir mesmo assim, com o descritivo abaixo — serve de base
+                            pra pedir a inclusão do item faltante.
+                          </div>
+                        )
+                      )}
+
+                      {(novoItemManual || (pca && buscaManual.trim().length >= 2 && resultadosBuscaManual.length === 0) || !pca) && (
+                        <div className="grid sm:grid-cols-12 gap-2 mb-3">
+                          <input value={novoItemManual?.idProduto ?? ""} onChange={e => atualizarNovoItemManual("idProduto", e.target.value)}
+                            placeholder="Código (opcional)" className="sm:col-span-3 px-2.5 py-1.5 rounded-lg border text-xs font-mono" style={{ borderColor: C.border }} />
+                          <input value={novoItemManual?.descricao ?? (pca ? "" : buscaManual)} onChange={e => atualizarNovoItemManual("descricao", e.target.value)}
+                            placeholder="Descrição do produto" className="sm:col-span-6 px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                          <input value={novoItemManual?.unidade ?? "UNIDADE"} onChange={e => atualizarNovoItemManual("unidade", e.target.value)}
+                            placeholder="Unidade" className="sm:col-span-1 px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                          <input value={novoItemManual?.quantidade ?? ""} onChange={e => atualizarNovoItemManual("quantidade", e.target.value)}
+                            placeholder="Qtd." className="sm:col-span-2 px-2.5 py-1.5 rounded-lg border text-xs" style={{ borderColor: C.border }} />
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button onClick={cancelarItemManual}
+                          className="px-3 py-1.5 rounded-md text-xs font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                          Cancelar
+                        </button>
+                        <button onClick={confirmarItemManual}
+                          className="px-3 py-1.5 rounded-md text-xs font-semibold" style={{ background: C.navy, color: C.paper }}>
+                          Adicionar à lista
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
