@@ -56,14 +56,22 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
   documentoAberto = null, viewAtual, onFecharDocumento, podeVerTodasEntidades }) {
 
-  const [aba, setAba] = useState("painel");
+  const [aba, setAbaState] = useState(() => localStorage.getItem("hub_aba_atual") || "painel");
+  function setAba(novaAba) {
+    setAbaState(novaAba);
+    try { localStorage.setItem("hub_aba_atual", novaAba); } catch { /* navegador sem localStorage (raro) -- só não persiste */ }
+  }
   // Enquanto um documento (Justificativa/Declaração) está aberto, ele ocupa o conteúdo, mas o
   // menu lateral continua indicando a seção correspondente — não a última aba clicada.
   const abaAtiva = documentoAberto
     ? (viewAtual === "justificativa" ? "justificativas" : "declaracoes")
     : aba;
   const [showGuia, setShowGuia] = useState(false);
-  const [subVisaoOf, setSubVisaoOf] = useState("gestao"); // "gestao" | "relatorios"
+  const [subVisaoOf, setSubVisaoOfState] = useState(() => localStorage.getItem("hub_subaba_of") || "gestao"); // "gestao" | "relatorios"
+  function setSubVisaoOf(nova) {
+    setSubVisaoOfState(nova);
+    try { localStorage.setItem("hub_subaba_of", nova); } catch { /* raro */ }
+  }
   // Novo documento agora abre direto no editor (sem janela intermediária) — objeto, processo
   // e entidade ficam editáveis dentro do próprio documento, e nada é gravado até a primeira
   // alteração real (ver persist/salvarJustificativa/salvarDeclaracao).

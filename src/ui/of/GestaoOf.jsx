@@ -9,7 +9,7 @@
 import React, { useState, useRef } from "react";
 import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown, Camera, MessageSquare, MessageSquareWarning } from "lucide-react";
 import { C } from "../tokens.js";
-import { ConfirmarExclusao } from "../comuns/index.jsx";
+import { ConfirmarExclusao, LinhaDoTempoDisputa } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
   calcularSituacao, emptyOf,
   GRUPOS_ABA_OF, grupoAbaDaSituacao, ordenarLinhasOf,
@@ -578,6 +578,139 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
   // na entidade mais antiga cadastrada — agora bloqueia de verdade.
   const semEntidadeEspecifica = !secretariaId;
 
+  // Disputa aberta: assume a tela inteira, em vez de um modal por cima da
+  // tabela — pedido explícito, pra ficar mais fácil de ler a conversa.
+  if (disputaDe) {
+    const disputa = disputaAtiva(disputaDe);
+    const turno = disputa ? proximoTurno(disputa) : null;
+    const semResposta = disputa && precisaAvisoSemResposta(disputa);
+    const prazoJaProposto = disputa ? [...disputa.mensagens].reverse().find(m => m.prazoPropostoISO)?.prazoPropostoISO : null;
+
+    return (
+      <div className="max-w-2xl mx-auto">
+        <button onClick={() => setDisputaDe(null)} className="flex items-center gap-1.5 text-sm font-medium mb-4" style={{ color: C.inkMuted }}>
+          ← Voltar pra Ordens de Fornecimento
+        </button>
+
+        <div className="flex items-center gap-2 mb-1" style={{ color: C.brass }}>
+          <MessageSquare size={15} />
+          <span className="text-xs font-semibold tracking-widest uppercase">Disputa</span>
+        </div>
+        <h1 className="serif text-2xl font-semibold mb-4" style={{ color: C.navy }}>OF nº {disputaDe.numeroOf}</h1>
+
+        {erro && (
+          <div className="mb-4 p-3 rounded-lg text-xs flex items-start gap-2" style={{ background: "rgba(166,64,61,0.1)", color: C.ink }}>
+            <AlertCircle size={13} className="shrink-0 mt-0.5" style={{ color: C.red }} />{erro}
+          </div>
+        )}
+
+        {!disputa ? (
+          <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+            <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
+              Abre uma conversa registrada com o fornecedor — útil pra formalizar algo combinado por telefone,
+              ou pra dar espaço pra ele responder a uma notificação ou divergência. No máximo 5 idas e vindas:
+              ele aponta, a equipe responde, ele responde de novo, e a equipe dá a solução final.
+            </p>
+            <textarea rows={3} value={motivoDisputaManual} onChange={e => setMotivoDisputaManual(e.target.value)}
+              placeholder="Motivo da abertura (ex.: fornecedor ligou pedindo mais prazo por falta de material)"
+              className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDisputaDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button onClick={handleAbrirDisputaManual} disabled={enviandoDisputaEquipe || !motivoDisputaManual.trim()}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                {enviandoDisputaEquipe ? "Abrindo..." : "Abrir disputa"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border p-5" style={{ borderColor: C.border, background: "white" }}>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>{disputa.motivoAbertura}</p>
+
+            <LinhaDoTempoDisputa disputa={disputa} />
+
+            {semResposta && (
+              <div className="rounded-lg p-2.5 my-4 text-xs" style={{ background: "#fff3cd", color: "#664d03" }}>
+                ⚠️ Fornecedor sem responder há mais de 48h.
+              </div>
+            )}
+
+            {turno === "equipe" && (
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+                <input value={assinanteEquipeDisputa} onChange={e => setAssinanteEquipeDisputa(e.target.value)}
+                  placeholder="Seu nome (aparece na conversa)"
+                  className="w-full px-3 py-2 rounded-lg border text-sm mb-2" style={{ borderColor: C.border }} />
+                <textarea rows={4} value={mensagemEquipeDisputa} onChange={e => setMensagemEquipeDisputa(e.target.value)}
+                  placeholder="Sua resposta ao fornecedor — seja o mais detalhado possível..."
+                  className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+                <div className="flex justify-end gap-2">
+                  <button onClick={handleResponderDisputaEquipe} disabled={enviandoDisputaEquipe || !mensagemEquipeDisputa.trim()}
+                    className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                    {enviandoDisputaEquipe ? "Enviando..." : "Enviar resposta"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {turno === "fornecedor" && (
+              <p className="text-xs italic mt-4 pt-4 border-t" style={{ color: C.inkMuted, borderColor: C.border }}>
+                Aguardando resposta do fornecedor.
+              </p>
+            )}
+
+            {turno === "equipe_decidir" && (
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>Solução final</p>
+                <div className="flex gap-2 mb-2">
+                  <button onClick={() => setDecisaoFinalDisputa("manter_prazo")}
+                    className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border"
+                    style={{ borderColor: decisaoFinalDisputa === "manter_prazo" ? C.navy : C.border, background: decisaoFinalDisputa === "manter_prazo" ? C.navy : "white", color: decisaoFinalDisputa === "manter_prazo" ? "white" : C.ink }}>
+                    Manter prazo original
+                  </button>
+                  <button onClick={() => setDecisaoFinalDisputa("novo_prazo")} disabled={!prazoJaProposto}
+                    title={!prazoJaProposto ? "O fornecedor não propôs nenhum novo prazo nesta conversa" : ""}
+                    className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-40"
+                    style={{ borderColor: decisaoFinalDisputa === "novo_prazo" ? C.brass : C.border, background: decisaoFinalDisputa === "novo_prazo" ? C.brass : "white", color: decisaoFinalDisputa === "novo_prazo" ? C.navyDark : C.ink }}>
+                    Acatar novo prazo{prazoJaProposto ? ` (${fmtDateISO(prazoJaProposto)})` : ""}
+                  </button>
+                </div>
+                <textarea rows={3} value={textoFinalDisputa} onChange={e => setTextoFinalDisputa(e.target.value)}
+                  placeholder="Explique a decisão final..."
+                  className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
+                <div className="flex justify-end gap-2">
+                  <button onClick={handleEncerrarDisputa} disabled={enviandoDisputaEquipe || !textoFinalDisputa.trim()}
+                    className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.green, color: "white" }}>
+                    {enviandoDisputaEquipe ? "Encerrando..." : "Encerrar com esta solução"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {disputaDe.disputasEncerradas?.length > 0 && (
+          <div className="mt-5">
+            <p className="text-[10.5px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+              Disputas anteriores, já encerradas
+            </p>
+            <div className="space-y-2">
+              {disputaDe.disputasEncerradas.map((d, i) => (
+                <div key={i} className="rounded-lg border p-3 text-xs" style={{ borderColor: C.border, background: "white" }}>
+                  <p style={{ color: C.ink }}>{d.motivoAbertura}</p>
+                  <p style={{ color: C.inkMuted, marginTop: 4 }}>
+                    Solução: {d.resolucao?.decisao === "novo_prazo" ? `novo prazo aceito (${fmtDateISO(d.resolucao.novoPrazoISO)})` : "prazo original mantido"} — {d.resolucao?.texto}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
@@ -731,14 +864,24 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
                     )}
                   </td>
                   <td className="px-3 py-3">
-                    <button onClick={() => setAcoesDe(item)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
-                      style={{ background: C.paperDark, color: C.navy }}>
-                      <MoreHorizontal size={14} /> Ações
-                      {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega || disputaAtiva(item)) && (
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#b45309" }} title={disputaAtiva(item) ? "Disputa em andamento" : "Precisa de atenção"} />
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => setAcoesDe(item)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold"
+                        style={{ background: C.paperDark, color: C.navy }}>
+                        <MoreHorizontal size={14} /> Ações
+                        {(situacao.atrasado || situacao.naoEntregue || situacao.precisaConfirmarEntrega) && (
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#b45309" }} title="Precisa de atenção" />
+                        )}
+                      </button>
+                      {disputaAtiva(item) && (
+                        <button onClick={() => abrirDisputa(item)} title="Há uma disputa em andamento nesta OF"
+                          className="p-1.5 rounded-md"
+                          style={{ background: precisaAvisoSemResposta(disputaAtiva(item)) ? "#fff3cd" : "#dbeafe",
+                            color: precisaAvisoSemResposta(disputaAtiva(item)) ? "#664d03" : C.navy }}>
+                          <MessageSquare size={14} />
+                        </button>
                       )}
-                    </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1093,149 +1236,6 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
           </div>
         </div>
       )}
-
-      {disputaDe && (() => {
-        const disputa = disputaAtiva(disputaDe);
-        const turno = disputa ? proximoTurno(disputa) : null;
-        const semResposta = disputa && precisaAvisoSemResposta(disputa);
-        const prazoJaProposto = disputa ? [...disputa.mensagens].reverse().find(m => m.prazoPropostoISO)?.prazoPropostoISO : null;
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
-            <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="serif text-lg font-semibold" style={{ color: C.navy }}>
-                  Disputa — OF nº {disputaDe.numeroOf}
-                </h2>
-                <button onClick={() => setDisputaDe(null)} style={{ color: C.inkMuted }}><X size={18} /></button>
-              </div>
-
-              {!disputa ? (
-                <>
-                  <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
-                    Abre uma conversa registrada com o fornecedor — útil pra formalizar algo combinado por telefone,
-                    ou pra dar espaço pra ele responder a uma notificação ou divergência. No máximo 5 idas e vindas:
-                    ele aponta, a equipe responde, ele responde de novo, e a equipe dá a solução final.
-                  </p>
-                  <textarea rows={3} value={motivoDisputaManual} onChange={e => setMotivoDisputaManual(e.target.value)}
-                    placeholder="Motivo da abertura (ex.: fornecedor ligou pedindo mais prazo por falta de material)"
-                    className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setDisputaDe(null)}
-                      className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
-                      Cancelar
-                    </button>
-                    <button onClick={handleAbrirDisputaManual} disabled={enviandoDisputaEquipe || !motivoDisputaManual.trim()}
-                      className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
-                      {enviandoDisputaEquipe ? "Abrindo..." : "Abrir disputa"}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-xs mb-3" style={{ color: C.inkMuted }}>{disputa.motivoAbertura}</p>
-
-                  <div className="flex flex-col gap-2 mb-4">
-                    {disputa.mensagens.map((m, i) => (
-                      <div key={i} className="rounded-lg p-3 max-w-[85%]"
-                        style={{ alignSelf: m.autor === "equipe" ? "flex-end" : "flex-start", background: m.autor === "equipe" ? "#F1ECDF" : "#dbeafe" }}>
-                        <p className="text-[11px] font-semibold" style={{ color: C.inkMuted }}>
-                          {m.autor === "equipe" ? (m.nome || "Equipe") : "Fornecedor"}
-                        </p>
-                        <p className="text-sm whitespace-pre-wrap">{m.texto}</p>
-                        {m.prazoPropostoISO && (
-                          <p className="text-xs mt-1" style={{ color: "#b45309" }}>Sugeriu novo prazo: {fmtDateISO(m.prazoPropostoISO)}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {semResposta && (
-                    <div className="rounded-lg p-2.5 mb-3 text-xs" style={{ background: "#fff3cd", color: "#664d03" }}>
-                      ⚠️ Fornecedor sem responder há mais de 48h.
-                    </div>
-                  )}
-
-                  {turno === "equipe" && (
-                    <div>
-                      <input value={assinanteEquipeDisputa} onChange={e => setAssinanteEquipeDisputa(e.target.value)}
-                        placeholder="Seu nome (aparece na conversa)"
-                        className="w-full px-3 py-2 rounded-lg border text-sm mb-2" style={{ borderColor: C.border }} />
-                      <textarea rows={3} value={mensagemEquipeDisputa} onChange={e => setMensagemEquipeDisputa(e.target.value)}
-                        placeholder="Sua resposta ao fornecedor..."
-                        className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => setDisputaDe(null)}
-                          className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
-                          Fechar
-                        </button>
-                        <button onClick={handleResponderDisputaEquipe} disabled={enviandoDisputaEquipe || !mensagemEquipeDisputa.trim()}
-                          className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
-                          {enviandoDisputaEquipe ? "Enviando..." : "Enviar resposta"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {turno === "fornecedor" && (
-                    <p className="text-xs italic" style={{ color: C.inkMuted }}>Aguardando resposta do fornecedor.</p>
-                  )}
-
-                  {turno === "equipe_decidir" && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>Solução final</p>
-                      <div className="flex gap-2 mb-2">
-                        <button onClick={() => setDecisaoFinalDisputa("manter_prazo")}
-                          className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border"
-                          style={{ borderColor: decisaoFinalDisputa === "manter_prazo" ? C.navy : C.border, background: decisaoFinalDisputa === "manter_prazo" ? C.navy : "white", color: decisaoFinalDisputa === "manter_prazo" ? "white" : C.ink }}>
-                          Manter prazo original
-                        </button>
-                        <button onClick={() => setDecisaoFinalDisputa("novo_prazo")} disabled={!prazoJaProposto}
-                          title={!prazoJaProposto ? "O fornecedor não propôs nenhum novo prazo nesta conversa" : ""}
-                          className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-40"
-                          style={{ borderColor: decisaoFinalDisputa === "novo_prazo" ? C.brass : C.border, background: decisaoFinalDisputa === "novo_prazo" ? C.brass : "white", color: decisaoFinalDisputa === "novo_prazo" ? C.navyDark : C.ink }}>
-                          Acatar novo prazo{prazoJaProposto ? ` (${fmtDateISO(prazoJaProposto)})` : ""}
-                        </button>
-                      </div>
-                      <textarea rows={3} value={textoFinalDisputa} onChange={e => setTextoFinalDisputa(e.target.value)}
-                        placeholder="Explique a decisão final..."
-                        className="w-full px-3 py-2 rounded-lg border text-sm mb-3" style={{ borderColor: C.border }} />
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => setDisputaDe(null)}
-                          className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
-                          Fechar
-                        </button>
-                        <button onClick={handleEncerrarDisputa} disabled={enviandoDisputaEquipe || !textoFinalDisputa.trim()}
-                          className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.green, color: "white" }}>
-                          {enviandoDisputaEquipe ? "Encerrando..." : "Encerrar com esta solução"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {disputaDe.disputasEncerradas?.length > 0 && (
-                <div className="mt-5 pt-4 border-t" style={{ borderColor: C.border }}>
-                  <p className="text-[10.5px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
-                    Disputas anteriores, já encerradas
-                  </p>
-                  <div className="space-y-2">
-                    {disputaDe.disputasEncerradas.map((d, i) => (
-                      <div key={i} className="rounded-lg border p-2.5 text-xs" style={{ borderColor: C.border }}>
-                        <p style={{ color: C.ink }}>{d.motivoAbertura}</p>
-                        <p style={{ color: C.inkMuted, marginTop: 4 }}>
-                          Solução: {d.resolucao?.decisao === "novo_prazo" ? `novo prazo aceito (${fmtDateISO(d.resolucao.novoPrazoISO)})` : "prazo original mantido"} — {d.resolucao?.texto}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
 
       {registrandoEnvioDe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>

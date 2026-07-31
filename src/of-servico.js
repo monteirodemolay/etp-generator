@@ -23,7 +23,7 @@
  */
 
 import {
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, orderBy,
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, orderBy, onSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
@@ -93,6 +93,18 @@ export async function listarOfs() {
   const q = query(collection(db, COL_OF), orderBy("numeroOf", "desc"));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// Versão "ao vivo" de listarOfs — em vez de buscar uma vez, fica ouvindo o
+// Firestore e chama "callback" de novo toda vez que QUALQUER OF muda (o
+// fornecedor confirma, reporta divergência, responde numa disputa...), sem
+// precisar de F5 nem de um botão de atualizar. Retorna a função que
+// encerra a escuta (chamar no cleanup do useEffect que a usa).
+export function escutarOfs(callback) {
+  const q = query(collection(db, COL_OF), orderBy("numeroOf", "desc"));
+  return onSnapshot(q, snap => {
+    callback(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  }, erro => console.error("Erro ao escutar OFs em tempo real", erro));
 }
 
 export async function salvarOf(of) {

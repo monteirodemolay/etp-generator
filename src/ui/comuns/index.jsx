@@ -7,7 +7,8 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { Table2 as TableIcon, AlertCircle, Upload } from "lucide-react";
+import { Table2 as TableIcon, AlertCircle, Upload, CheckCircle2 } from "lucide-react";
+import { fmtDateISO } from "../../dominio/datas.js";
 import { C } from "../tokens.js";
 
 // Área de upload por clique OU arrastar-e-soltar — usada em toda tela que
@@ -49,6 +50,51 @@ export function AreaUpload({ onArquivos, accept, multiple = false, disabled = fa
       {children}
       {arrastandoSobre && (
         <p className="text-xs font-semibold mt-1" style={{ color: C.brass }}>Solte aqui para enviar</p>
+      )}
+    </div>
+  );
+}
+
+// Linha do tempo do Modo Disputa — puramente visual, sem lógica de negócio,
+// pra ser usada tanto pela equipe quanto pelo fornecedor. Empilha as
+// mensagens de cima pra baixo (sem lado esquerdo/direito, que ficava
+// bagunçado), com uma faixa colorida à esquerda distinguindo quem escreveu.
+export function LinhaDoTempoDisputa({ disputa }) {
+  if (!disputa) return null;
+  return (
+    <div>
+      <div className="rounded-lg px-3.5 py-2.5 mb-4" style={{ background: "#fff3cd", border: "1px solid #ffecb5" }}>
+        <p className="text-xs" style={{ color: "#664d03", margin: 0 }}>
+          ⚠️ <b>Poucas oportunidades de resposta nesta conversa</b> — dê o máximo de detalhes possível em
+          cada mensagem. A disputa segue no máximo 5 passos até a solução final, sem muitas idas e vindas.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {disputa.mensagens.map((m, i) => (
+          <div key={i} className="pl-3" style={{ borderLeft: `3px solid ${m.autor === "equipe" ? C.navy : C.brass}` }}>
+            <p className="text-[11px] font-semibold" style={{ color: C.inkMuted, margin: 0 }}>
+              {m.autor === "equipe" ? (m.nome || "Equipe") : "Fornecedor"}
+              <span className="font-normal" style={{ marginLeft: 8 }}>{new Date(m.quando).toLocaleString("pt-BR")}</span>
+            </p>
+            <p className="text-sm whitespace-pre-wrap" style={{ margin: "4px 0 0 0", lineHeight: 1.5, color: C.ink }}>{m.texto}</p>
+            {m.prazoPropostoISO && (
+              <p className="text-xs font-semibold" style={{ margin: "6px 0 0 0", color: "#b45309" }}>
+                📅 Sugeriu novo prazo: {fmtDateISO(m.prazoPropostoISO)}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {disputa.resolucao && (
+        <div className="rounded-lg p-3.5 mt-4" style={{ background: "#d1e7dd" }}>
+          <p className="text-sm font-semibold flex items-center gap-1.5" style={{ color: "#0f5132", margin: 0 }}>
+            <CheckCircle2 size={15} /> Solução final: {disputa.resolucao.decisao === "novo_prazo"
+              ? `novo prazo aceito (${fmtDateISO(disputa.resolucao.novoPrazoISO)})` : "prazo original mantido"}
+          </p>
+          <p className="text-sm" style={{ margin: "6px 0 0 0", color: "#0f5132" }}>{disputa.resolucao.texto}</p>
+        </div>
       )}
     </div>
   );

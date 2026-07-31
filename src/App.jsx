@@ -24,7 +24,7 @@ import { emptySecretaria, secretariaDoDoc } from "./dominio/entidades.js";
 import { usuarioPorEmail, permissoesDe, entidadesVisiveis, emptyUsuario,
          podeVerTodasEntidades, entidadeInicial, entidadeEhSomenteLeitura } from "./dominio/permissoes.js";
 import { criarRegistroNormativo } from "./dominio/normativos.js";
-import { listarOfs } from "./of-servico.js";
+import { listarOfs, escutarOfs } from "./of-servico.js";
 import { moverParaLixeira, restaurarDaLixeira, excluirDefinitivo,
          limparLixeiraVencida, PREFIXO_LIXO } from "./dominio/lixeira.js";
 import { aplicar as migrarPcaPorEntidade } from "./migracoes/002-separa-pca-por-entidade.js";
@@ -196,6 +196,15 @@ export default function App({ emailUsuario = null }) {
   }, [carregarColecao]);
 
   useEffect(() => { loadList(); }, [loadList]);
+
+  // OFs em tempo real: assim que o fornecedor confirma, reporta divergência
+  // ou responde numa disputa, a tela atualiza sozinha — sem precisar de F5
+  // nem de recarregar manualmente. loadList() acima já traz uma primeira
+  // leitura; esta escuta mantém atualizado dali em diante.
+  useEffect(() => {
+    const pararDeEscutar = escutarOfs(setOfs);
+    return () => pararDeEscutar();
+  }, []);
 
   const persist = useCallback((etp) => {
     if (somenteLeituraPara(etp)) return; // trava de segurança: a tela já bloqueia a edição, isto é reforço

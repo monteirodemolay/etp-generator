@@ -12,6 +12,7 @@ import { proximoTurno, precisaAvisoSemResposta } from "../../dominio/disputa.js"
 import { fmtDateISO } from "../../dominio/datas.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
 import { ComprovanteOf } from "./ComprovanteOf.jsx";
+import { LinhaDoTempoDisputa } from "../comuns/index.jsx";
 
 const C = {
   navy: "#1C2E4A", paper: "#FAF7F0", brass: "#A6832E",
@@ -202,50 +203,27 @@ export function PortalFornecedor({ token }) {
                 <h4 style={{ margin: "0 0 10px 0", color: C.navy }}>💬 Conversa sobre esta OF</h4>
                 <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 12px 0" }}>{of.disputaAtual.motivoAbertura}</p>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {of.disputaAtual.mensagens.map((m, i) => (
-                    <div key={i} style={{
-                      alignSelf: m.autor === "fornecedor" ? "flex-end" : "flex-start",
-                      maxWidth: "85%", background: m.autor === "fornecedor" ? "#dbeafe" : "#f3f4f6",
-                      borderRadius: 8, padding: "8px 12px",
-                    }}>
-                      <p style={{ margin: 0, fontSize: 11, fontWeight: "bold", color: C.inkMuted }}>
-                        {m.autor === "fornecedor" ? "Você" : (m.nome || "Equipe")}
-                      </p>
-                      <p style={{ margin: "2px 0 0 0", fontSize: 13, whiteSpace: "pre-wrap" }}>{m.texto}</p>
-                      {m.prazoPropostoISO && (
-                        <p style={{ margin: "4px 0 0 0", fontSize: 11, color: "#b45309" }}>
-                          Sugeriu novo prazo: {fmtDateISO(m.prazoPropostoISO)}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                <LinhaDoTempoDisputa disputa={of.disputaAtual} />
 
-                {of.disputaAtual.resolucao ? (
-                  <div style={{ background: "#d1e7dd", borderRadius: 8, padding: 12 }}>
-                    <p style={{ margin: 0, fontSize: 12, fontWeight: "bold", color: "#0f5132" }}>
-                      ✅ Solução final: {of.disputaAtual.resolucao.decisao === "novo_prazo" ? "novo prazo aceito" : "prazo original mantido"}
-                    </p>
-                    <p style={{ margin: "4px 0 0 0", fontSize: 12, color: "#0f5132" }}>{of.disputaAtual.resolucao.texto}</p>
-                  </div>
-                ) : proximoTurno(of.disputaAtual) === "fornecedor" ? (
-                  <div>
-                    <textarea rows="3" value={mensagemDisputa} onChange={e => setMensagemDisputa(e.target.value)}
-                      placeholder="Escreva sua resposta..."
-                      style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", marginBottom: 8 }} />
-                    <label style={{ display: "block", fontSize: 11, color: C.inkMuted, marginBottom: 8 }}>
-                      Precisa de mais prazo? Sugira uma nova data (opcional):
-                      <input type="date" value={prazoPropostoDisputa} onChange={e => setPrazoPropostoDisputa(e.target.value)}
-                        style={{ display: "block", marginTop: 4, padding: 6, borderRadius: 4, border: "1px solid #ccc" }} />
-                    </label>
-                    <button onClick={handleResponderDisputa} disabled={enviandoDisputa}
-                      style={{ background: C.navy, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
-                      {enviandoDisputa ? "Enviando..." : "Enviar resposta"}
-                    </button>
-                  </div>
-                ) : (
-                  <p style={{ fontSize: 12, color: C.inkMuted, fontStyle: "italic" }}>Aguardando resposta da equipe.</p>
+                {!of.disputaAtual.resolucao && (
+                  proximoTurno(of.disputaAtual) === "fornecedor" ? (
+                    <div style={{ marginTop: 16 }}>
+                      <textarea rows="4" value={mensagemDisputa} onChange={e => setMensagemDisputa(e.target.value)}
+                        placeholder="Escreva sua resposta com o máximo de detalhes possível..."
+                        style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", marginBottom: 8 }} />
+                      <label style={{ display: "block", fontSize: 11, color: C.inkMuted, marginBottom: 8 }}>
+                        Precisa de mais prazo? Sugira uma nova data (opcional):
+                        <input type="date" value={prazoPropostoDisputa} onChange={e => setPrazoPropostoDisputa(e.target.value)}
+                          style={{ display: "block", marginTop: 4, padding: 6, borderRadius: 4, border: "1px solid #ccc" }} />
+                      </label>
+                      <button onClick={handleResponderDisputa} disabled={enviandoDisputa}
+                        style={{ background: C.navy, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4, cursor: "pointer" }}>
+                        {enviandoDisputa ? "Enviando..." : "Enviar resposta"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 12, color: C.inkMuted, fontStyle: "italic", marginTop: 12 }}>Aguardando resposta da equipe.</p>
+                  )
                 )}
               </div>
             )}
