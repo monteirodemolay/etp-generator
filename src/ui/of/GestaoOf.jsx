@@ -1103,21 +1103,21 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
         const item = acoesDe;
         const situacaoItem = calcularSituacao(item);
         const fechar = () => setAcoesDe(null);
-        const ItemAcao = ({ icone: Icone, rotulo, sub, cor, onClick, href, download }) => {
+        const ItemAcao = ({ icone: Icone, rotulo, sub, cor, onClick, href, download, disabled }) => {
           const conteudo = (
             <>
-              <Icone size={16} style={{ color: cor || C.navy, flexShrink: 0 }} />
+              <Icone size={16} style={{ color: disabled ? C.inkMuted : (cor || C.navy), flexShrink: 0 }} />
               <span className="flex-1 text-left">
-                <span className="block text-sm font-medium" style={{ color: C.ink }}>{rotulo}</span>
+                <span className="block text-sm font-medium" style={{ color: disabled ? C.inkMuted : C.ink }}>{rotulo}</span>
                 {sub && <span className="block text-[11px]" style={{ color: C.inkMuted }}>{sub}</span>}
               </span>
             </>
           );
-          const classe = "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-black/[0.03] text-left";
+          const classe = `w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left ${disabled ? "cursor-not-allowed opacity-60" : "hover:bg-black/[0.03]"}`;
           return href ? (
             <a href={href} download={download} onClick={fechar} className={classe}>{conteudo}</a>
           ) : (
-            <button onClick={() => { onClick(); fechar(); }} className={classe}>{conteudo}</button>
+            <button onClick={() => { if (!disabled) { onClick(); fechar(); } }} disabled={disabled} className={classe}>{conteudo}</button>
           );
         };
 
@@ -1175,7 +1175,9 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
 
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Notificação de atraso</p>
                 {(situacaoItem.atrasado || situacaoItem.naoEntregue || situacaoItem.precisaConfirmarEntrega) && (
-                  <ItemAcao icone={AlertCircle} rotulo="Notificar atraso/não entrega" cor="#b45309" onClick={() => abrirNotificacao(item)} />
+                  <ItemAcao icone={AlertCircle} rotulo="Notificar atraso/não entrega" cor="#b45309" onClick={() => abrirNotificacao(item)}
+                    disabled={situacaoItem.chave === "aguardando-entrega"}
+                    sub={situacaoItem.chave === "aguardando-entrega" ? "Só libera depois que o prazo de entrega vencer" : undefined} />
                 )}
                 {item.notificacoes?.length > 0 ? (
                   <ItemAcao icone={FileText} rotulo="Ver notificações já enviadas" sub={`${item.notificacoes.length} enviada(s)`}

@@ -191,7 +191,7 @@ export function calcularSituacao(item) {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
     if (hoje > dataLimite) {
-      return { chave: "aguardando-confirmacao", texto: "Prazo vencido — aguardando confirmação da entrega", precisaConfirmarEntrega: true };
+      return { chave: "aguardando-confirmacao", texto: "Prazo vencido — já pode notificar ou confirmar a entrega", precisaConfirmarEntrega: true };
     }
   }
 
