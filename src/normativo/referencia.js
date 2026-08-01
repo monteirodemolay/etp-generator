@@ -1,5 +1,5 @@
 /**
- * Referência normativa — o contrato entre o Gerador de ETP e o Core Normativo.
+ * Referência normativa — o contrato entre o Hub Compras Públicas e o Core Normativo.
  *
  * Este é o único ponto de acoplamento entre os dois projetos. Enquanto o formato
  * aqui definido não mudar, cada lado evolui livremente.

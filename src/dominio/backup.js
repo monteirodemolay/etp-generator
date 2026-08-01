@@ -103,7 +103,7 @@ export function lerBackup(texto) {
     throw new Error("O arquivo não é um JSON válido.");
   }
   if (dados?.formato !== "gerador-etp-backup") {
-    throw new Error("Este arquivo não é um backup do Gerador de ETP.");
+    throw new Error("Este arquivo não é um backup do Hub Compras Públicas.");
   }
   if (!dados.colecoes || !dados.unicos) {
     throw new Error("O backup está incompleto ou corrompido.");

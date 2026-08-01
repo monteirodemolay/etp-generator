@@ -42,7 +42,7 @@ export function TermosPrivacidade() {
 
         <div style={{ borderBottom: `2px solid ${C.border}`, paddingBottom: 16, marginBottom: 8 }}>
           <span style={{ fontSize: 11, color: C.brass, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>
-            Gerador de ETP
+            Hub Compras Públicas
           </span>
           <h1 style={{ margin: "6px 0 0 0", color: C.navy, fontSize: 22 }}>Termos de Uso e Política de Privacidade</h1>
           {conteudo?.atualizadoEm && (

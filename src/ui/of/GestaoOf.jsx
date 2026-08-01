@@ -549,7 +549,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
       <h2>Linha do tempo (log de auditoria desta OF)</h2>
       ${listaHtml(secoes.eventosDaOf)}
 
-      <p class="rodape">Documento gerado eletronicamente pelo Gerador de ETP, reunindo os registros já existentes no sistema.</p>
+      <p class="rodape">Documento gerado eletronicamente pelo Hub Compras Públicas, reunindo os registros já existentes no sistema.</p>
       <div class="botao-imprimir" style="text-align:center;margin-top:24px;">
         <button onclick="window.print()" style="background:#1C2E4A;color:#fff;border:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
           🖨️ Imprimir / Salvar como PDF

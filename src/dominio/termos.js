@@ -23,7 +23,7 @@ export function emptySecaoTermos(titulo = "", corpo = "") {
 export function secoesPadrao() {
   return [
     emptySecaoTermos("1. O que é este sistema", `
-      <p>O Gerador de ETP é uma ferramenta usada pela administração pública municipal para elaborar
+      <p>O Hub Compras Públicas é uma ferramenta usada pela administração pública municipal para elaborar
       Estudos Técnicos Preliminares, Declarações, Justificativas e Ordens de Fornecimento, com base
       na Lei nº 14.133/2021 (Lei de Licitações e Contratos Administrativos). Ele é operado pelos
       municípios e órgãos cadastrados (Prefeituras, Câmaras Municipais, secretarias, fundos e

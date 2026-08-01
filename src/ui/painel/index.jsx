@@ -17,6 +17,8 @@ import { ConfirmarExclusao } from "../comuns/index.jsx";
 import { FRASES, DICAS, saudacaoPorHora, primeiroNomeDe, sortearFrase } from "../../conteudo/frases.js";
 import { TIPOS_OBJETO } from "../../dominio/opcoes.js";
 import { progress, situacaoEtp, tituloDocumento } from "../../dominio/modelos.js";
+import { calcularSituacao } from "../../dominio/of.js";
+import { disputaAtiva, precisaAvisoSemResposta } from "../../dominio/disputa.js";
 import { valorTotalEtp, brl } from "../../dominio/valores.js";
 import { fmtDateRelativa, fmtDate } from "../../dominio/datas.js";
 import { secretariaDoDoc } from "../../dominio/entidades.js";
@@ -98,7 +100,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   // Dois sinais: (1) impeditivos do checklist de conformidade e (2) ETP sem edição há mais
   // de 15 dias e ainda não concluído. Ordenado do mais urgente (mais impeditivos) para o menos.
   const DIAS_ETP_PARADO = 15;
-  const notificacoes = useMemo(() => {
+  const notificacoesEtp = useMemo(() => {
     const agora = Date.now();
     return base
       .filter(e => situacaoEtp(e).chave !== "concluido")
@@ -107,11 +109,39 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
         const diasParado = Math.floor((agora - etp.updatedAt) / 86400000);
         const parado = diasParado >= DIAS_ETP_PARADO;
         if (impeditivos === 0 && !parado) return null;
-        return { etp, impeditivos, diasParado, parado };
+        return { tipo: "etp", chave: "etp_" + etp.id, etp, impeditivos, diasParado, parado };
       })
       .filter(Boolean)
       .sort((a, b) => b.impeditivos - a.impeditivos || b.diasParado - a.diasParado);
   }, [base]);
+
+  // Pendências de Ordens de Fornecimento: divergência reportada pelo
+  // fornecedor, sem resposta há mais de 24h, ou disputa parada esperando o
+  // fornecedor há mais de 48h — as três coisas que valem um aviso no sino,
+  // combinadas com as pendências de ETP no mesmo lugar.
+  const notificacoesOf = useMemo(() => {
+    return (todasAsOfs || [])
+      .map(of_ => {
+        const situacao = calcularSituacao(of_);
+        if (situacao.chave === "divergencia") {
+          return { tipo: "of", chave: "of_div_" + of_.token, of: of_, impeditivo: true,
+            texto: `OF nº ${of_.numeroOf} — Divergência relatada`, sub: of_.empresa || "Fornecedor não identificado" };
+        }
+        if (situacao.chave === "sem-resposta") {
+          return { tipo: "of", chave: "of_semresp_" + of_.token, of: of_, impeditivo: false,
+            texto: `OF nº ${of_.numeroOf} — Sem resposta do fornecedor`, sub: "Mais de 24h sem confirmação" };
+        }
+        const disputa = disputaAtiva(of_);
+        if (disputa && precisaAvisoSemResposta(disputa)) {
+          return { tipo: "of", chave: "of_disputa_" + of_.token, of: of_, impeditivo: false,
+            texto: `OF nº ${of_.numeroOf} — Disputa parada`, sub: "Fornecedor sem responder há mais de 48h" };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [todasAsOfs]);
+
+  const notificacoes = useMemo(() => [...notificacoesEtp, ...notificacoesOf], [notificacoesEtp, notificacoesOf]);
   const porSituacao = { concluido: [], elaboracao: [], rascunho: [] };
   base.forEach(e => porSituacao[situacaoEtp(e).chave].push(e));
   const valorTotal = base.reduce((soma, e) => soma + valorTotalEtp(e), 0);
@@ -212,18 +242,20 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                         Nenhuma pendência no momento.
                       </p>
                     ) : notificacoes.slice(0, 8).map(n => (
-                      <button key={n.etp.id} onClick={() => { setNotifAberta(false); onOpen(n.etp); }}
+                      <button key={n.chave}
+                        onClick={() => { setNotifAberta(false); n.tipo === "etp" ? onOpen(n.etp) : setAba("ordens_fornecimento"); }}
                         className="w-full text-left flex items-start gap-2.5 px-4 py-3 border-b hover:bg-black/[0.02]"
                         style={{ borderColor: C.border }}>
-                        <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: n.impeditivos > 0 ? C.red : C.brass }} />
+                        <AlertTriangle size={14} className="shrink-0 mt-0.5"
+                          style={{ color: (n.tipo === "etp" ? n.impeditivos > 0 : n.impeditivo) ? C.red : C.brass }} />
                         <span className="min-w-0">
                           <span className="block text-xs font-medium truncate" style={{ color: C.navy }}>
-                            {n.etp.meta.titulo || "ETP sem título"}
+                            {n.tipo === "etp" ? (n.etp.meta.titulo || "ETP sem título") : n.texto}
                           </span>
                           <span className="block text-[11px]" style={{ color: C.inkMuted }}>
-                            {n.impeditivos > 0
-                              ? `${n.impeditivos} pendência(s) impeditiva(s)`
-                              : `Sem atualização há ${n.diasParado} dias`}
+                            {n.tipo === "etp"
+                              ? (n.impeditivos > 0 ? `${n.impeditivos} pendência(s) impeditiva(s)` : `Sem atualização há ${n.diasParado} dias`)
+                              : n.sub}
                           </span>
                         </span>
                       </button>
@@ -300,11 +332,13 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
 
               {/* ---------- Faixa proativa: pendências reais, mesmo dado do sino de notificações ---------- */}
               {notificacoes.length > 0 && (() => {
-                const impeditivosTotais = notificacoes.filter(n => n.impeditivos > 0).length;
-                const paradosTotais = notificacoes.filter(n => n.impeditivos === 0 && n.parado).length;
+                const impeditivosTotais = notificacoesEtp.filter(n => n.impeditivos > 0).length;
+                const paradosTotais = notificacoesEtp.filter(n => n.impeditivos === 0 && n.parado).length;
+                const ofsTotais = notificacoesOf.length;
                 const partes = [];
                 if (impeditivosTotais > 0) partes.push(`${impeditivosTotais} ETP${impeditivosTotais > 1 ? "s" : ""} com pendência impeditiva`);
                 if (paradosTotais > 0) partes.push(`${paradosTotais} ETP${paradosTotais > 1 ? "s" : ""} sem atualização há mais de ${DIAS_ETP_PARADO} dias`);
+                if (ofsTotais > 0) partes.push(`${ofsTotais} Ordem${ofsTotais > 1 ? "ns" : ""} de Fornecimento precisando de atenção`);
                 return (
                   <div className="rounded-xl px-4 py-3 flex items-center gap-3 mb-5"
                     style={{ background: "rgba(166,131,46,0.1)" }}>
