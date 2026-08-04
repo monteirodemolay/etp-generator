@@ -15,6 +15,10 @@ import { listaResponsaveis, objetoCompleto, linhaAssinaturaData } from "../domin
 import { cruzarComPca } from "../dominio/pca.js";
 import { secoesParaRelatorio } from "../dominio/numeracao.js";
 import { gerarRelatorioEstimativaHtml } from "../dominio/estimativa.js";
+import { brl } from "../dominio/valores.js";
+import {
+  rotuloFonte, calcularEstatisticasCotacoes, totalGeralPesquisa, FONTES_PESQUISA_PRECOS,
+} from "../dominio/pesquisa-precos.js";
 
 
 // Gera um documento .doc (HTML compatível com o Word) editável, com o timbre no cabeçalho
@@ -127,5 +131,91 @@ ${assinaturas}`;
     corpoOoxml: htmlParaOoxml(html),
     cabecalho: cab,
     nomeArquivo: `ETP_${(etp.meta.processo || todayISO()).replace(/[^\w-]/g, "_")}.docx`,
+  });
+}
+
+// Pesquisa de Preços — documento próprio, em .docx nativo. Reúne os itens
+// pesquisados, as cotações de cada um (por fonte, na ordem de preferência
+// da IN 65/2021), a metodologia adotada e o preço estimado final.
+export async function gerarDocumentoPesquisaPrecos(pesquisa, cabecalho) {
+  const cab = await prepararCabecalho(cabecalho);
+
+  const rotuloMetodologia = { media: "Média", mediana: "Mediana", "menor-valor": "Menor valor" }[pesquisa.metodologia] || "Mediana";
+
+  const linhasItens = (pesquisa.itens || []).map(item => {
+    const stats = calcularEstatisticasCotacoes(pesquisa.cotacoes?.[item.id]);
+    const valorAdotado = Number(pesquisa.valoresAdotados?.[item.id]) || 0;
+    const quantidade = Number(item.quantidade) || 0;
+    const linhaItem = `
+      <tr>
+        <td><b>${escapeHtml(item.descricao || "-")}</b></td>
+        <td>${escapeHtml(item.unidade || "-")}</td>
+        <td>${quantidade}</td>
+        <td>${brl(valorAdotado)}</td>
+        <td>${brl(valorAdotado * quantidade)}</td>
+      </tr>`;
+
+    const cotacoesDoItem = pesquisa.cotacoes?.[item.id] || [];
+    const linhasCotacoes = cotacoesDoItem.length === 0
+      ? `<tr><td colspan="4"><i>Nenhuma cotação registrada para este item.</i></td></tr>`
+      : cotacoesDoItem.map(c => `
+        <tr${c.excluida ? ' style="color:#888"' : ""}>
+          <td>${escapeHtml(rotuloFonte(c.fonteId))}</td>
+          <td>${escapeHtml(c.origem || "-")}</td>
+          <td>${brl(Number(c.valor) || 0)}</td>
+          <td>${c.excluida ? `Excluída — ${escapeHtml(c.justificativaExclusao || "sem justificativa registrada")}` : "Considerada"}</td>
+        </tr>`).join("");
+
+    return `
+      ${linhaItem}
+      <tr><td colspan="5">
+        <table>
+          <tr><th>Fonte</th><th>Origem / empresa</th><th>Valor</th><th>Situação</th></tr>
+          ${linhasCotacoes}
+        </table>
+        <p style="font-size:10pt">${stats.n} cotação(ões) válida(s) · Mediana: ${brl(stats.mediana)} · Média: ${brl(stats.media)}</p>
+      </td></tr>`;
+  }).join("");
+
+  const fontesUsadas = [...new Set(Object.values(pesquisa.cotacoes || {}).flat().map(c => c.fonteId))]
+    .sort((a, b) => (FONTES_PESQUISA_PRECOS.find(f => f.id === a)?.ordem || 99) - (FONTES_PESQUISA_PRECOS.find(f => f.id === b)?.ordem || 99));
+
+  const html = `
+<h1 style="text-align:center">PESQUISA DE PREÇOS</h1>
+<p style="text-align:center"><i>Lei nº 14.133/2021 · art. 23</i></p>
+<table>
+  <tr><td><b>Objeto</b></td><td>${escapeHtml(pesquisa.objeto || "-")}</td></tr>
+  <tr><td><b>Órgão</b></td><td>${escapeHtml(pesquisa.orgao || "-")}</td></tr>
+  <tr><td><b>Processo</b></td><td>${escapeHtml(pesquisa.numeroProcesso || "-")}</td></tr>
+  <tr><td><b>Responsável</b></td><td>${escapeHtml(pesquisa.responsavelNome || "-")}${pesquisa.responsavelCargo ? ` — ${escapeHtml(pesquisa.responsavelCargo)}` : ""}</td></tr>
+  <tr><td><b>Data</b></td><td>${fmtDateISO(pesquisa.dataElaboracao) || fmtDate(Date.now())}</td></tr>
+</table>
+
+<h2>Fontes consultadas</h2>
+${fontesUsadas.length > 0
+  ? `<ul>${fontesUsadas.map(id => `<li>${escapeHtml(rotuloFonte(id))}</li>`).join("")}</ul>`
+  : "<p><i>Nenhuma fonte registrada ainda.</i></p>"}
+
+<h2>Metodologia de cálculo</h2>
+<p>Preço estimado adotado com base em: <b>${rotuloMetodologia}</b> das cotações válidas por item.</p>
+${pesquisa.justificativaMetodologia?.trim() ? `<p>${escapeHtml(pesquisa.justificativaMetodologia).replace(/\n/g, "<br/>")}</p>` : ""}
+
+<h2>Itens pesquisados</h2>
+<table>
+  <tr><th>Item</th><th>Unidade</th><th>Quantidade</th><th>Valor unitário adotado</th><th>Valor total</th></tr>
+  ${linhasItens}
+</table>
+
+<p style="text-align:right"><b>Valor total estimado: ${brl(totalGeralPesquisa(pesquisa))}</b></p>
+
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center">_______________________________________</p>
+<p style="text-align:center"><b>${escapeHtml(pesquisa.responsavelNome || "[Responsável técnico]")}</b></p>
+${pesquisa.responsavelCargo ? `<p style="text-align:center">${escapeHtml(pesquisa.responsavelCargo)}</p>` : ""}`;
+
+  baixarDocx({
+    corpoOoxml: htmlParaOoxml(html),
+    cabecalho: cab,
+    nomeArquivo: `pesquisa_precos_${(pesquisa.numeroProcesso || todayISO()).replace(/[^\w-]/g, "_")}.docx`,
   });
 }

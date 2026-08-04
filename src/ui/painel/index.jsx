@@ -42,6 +42,7 @@ import { GuiaRapido, JanelaNovoDocumento } from "./janelas.jsx";
 // ---------- Painel principal ----------
 // Barra lateral fixa + área de conteúdo. As abas trocam o conteúdo sem sair da tela.
 export function ListView({ etps, todosEtps, justificativas, declaracoes,
+  pesquisasPrecos = [], onAbrirPesquisa, onNovaPesquisa, onExcluirPesquisa, onDuplicarPesquisa,
   secretarias, secretariaAtiva, setSecretariaAtiva,
   loading, search, setSearch,
   onOpen, onNew, onDelete, onDuplicar,
@@ -155,6 +156,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     { id: "painel", rotulo: "Painel", icone: ClipboardList },
     { id: "etps", rotulo: "Meus ETPs", icone: FileText, contador: base.length },
     { id: "declaracoes", rotulo: "Declarações de PCA", icone: ListChecks, contador: declaracoes.length },
+    { id: "pesquisaPrecos", rotulo: "Pesquisa de Preços", icone: TrendingUp, contador: pesquisasPrecos.length },
     { id: "justificativas", rotulo: "Justificativas", icone: FileEdit, contador: justificativas.length },
     { id: "ordens_fornecimento", rotulo: "Ordens de Fornecimento", icone: Mail, contador: ofs.length },
     { id: "fornecedores", rotulo: "Fornecedores", icone: Users2, contador: fornecedores.length },
@@ -734,6 +736,21 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               <ListaDocumentos titulo="Declarações" docs={declaracoes}
                 onAbrir={onAbrirDeclaracao} onExcluir={onExcluirDeclaracao} onDuplicar={onDuplicarDeclaracao}
                 onNovo={() => onNovaDeclaracao({})} icone={ListChecks} vazio="Nenhuma declaração criada ainda."
+                secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
+                podeCriar={podeCriarDocumentos} podeExcluir={permissoes.excluirDocumentos} />
+            </>
+          )}
+
+          {aba === "pesquisaPrecos" && (
+            <>
+              <h1 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>Pesquisa de Preços</h1>
+              <p className="text-sm mb-5" style={{ color: C.inkMuted }}>
+                Registre os itens pesquisados, as cotações por fonte (na ordem de preferência da IN 65/2021) e a
+                metodologia adotada para chegar ao preço estimado — art. 23 da Lei nº 14.133/2021.
+              </p>
+              <ListaDocumentos titulo="Pesquisas de preços" docs={pesquisasPrecos}
+                onAbrir={onAbrirPesquisa} onExcluir={onExcluirPesquisa} onDuplicar={onDuplicarPesquisa}
+                onNovo={() => onNovaPesquisa({})} icone={TrendingUp} vazio="Nenhuma pesquisa de preços criada ainda."
                 secretarias={secretarias} mostrarSecretaria={secretariaAtiva === "todas"}
                 podeCriar={podeCriarDocumentos} podeExcluir={permissoes.excluirDocumentos} />
             </>

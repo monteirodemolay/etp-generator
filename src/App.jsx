@@ -15,11 +15,13 @@ import { ListView } from "./ui/painel/index.jsx";
 import { EditorView } from "./ui/etp/editor.jsx";
 import { PreviewView } from "./ui/etp/previsualizacao.jsx";
 import { DeclaracaoView } from "./ui/documentos/declaracao.jsx";
+import { PesquisaPrecosView } from "./ui/pesquisaPrecos/PesquisaPrecosView.jsx";
 import { JustificativaView } from "./ui/documentos/justificativa.jsx";
 
 // domínio
 import { C } from "./ui/tokens.js";
 import { emptyEtp, emptyJustificativa, emptyDeclaracao, duplicarDocumento } from "./dominio/modelos.js";
+import { emptyPesquisaPrecos } from "./dominio/pesquisa-precos.js";
 import { emptySecretaria, secretariaDoDoc } from "./dominio/entidades.js";
 import { usuarioPorEmail, permissoesDe, entidadesVisiveis, emptyUsuario,
          podeVerTodasEntidades, entidadeInicial, entidadeEhSomenteLeitura } from "./dominio/permissoes.js";
@@ -42,6 +44,7 @@ export default function App({ emailUsuario = null }) {
   const [etps, setEtps] = useState([]);
   const [justificativas, setJustificativas] = useState([]);
   const [declaracoes, setDeclaracoes] = useState([]);
+  const [pesquisasPrecos, setPesquisasPrecos] = useState([]);
   const [secretarias, setSecretarias] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [normativos, setNormativos] = useState([]);
@@ -55,6 +58,7 @@ export default function App({ emailUsuario = null }) {
   const [secretariaAtiva, setSecretariaAtiva] = useState("todas"); // "todas" | id
   const [currentJust, setCurrentJust] = useState(null);
   const [currentDecl, setCurrentDecl] = useState(null);
+  const [currentPesquisa, setCurrentPesquisa] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentId, setCurrentId] = useState(null);
   const [current, setCurrent] = useState(null);
@@ -85,7 +89,7 @@ export default function App({ emailUsuario = null }) {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaFeriados, listaLixo, listaReparticoes] = await Promise.all([
+    const [listaEtps, listaJust, listaDecl, listaSec, listaUsr, listaNormas, listaFornecedores, listaMunicipios, listaFeriados, listaLixo, listaReparticoes, listaPesquisas] = await Promise.all([
       carregarColecao("etp:"),
       carregarColecao("just:"),
       carregarColecao("decl:"),
@@ -97,6 +101,7 @@ export default function App({ emailUsuario = null }) {
       carregarColecao("feriado:"),
       carregarColecao(PREFIXO_LIXO),
       carregarColecao("reparticao:"),
+      carregarColecao("pesq:"),
     ]);
     // As Ordens de Fornecimento vivem numa coleção própria do Firestore (não
     // na nossa base "dados"), porque o fornecedor precisa lê-las e alterá-las
@@ -186,6 +191,7 @@ export default function App({ emailUsuario = null }) {
     setFornecedores(listaFornecedores);
     setMunicipios(municipiosFinais);
     setReparticoes(listaReparticoes);
+    setPesquisasPrecos(listaPesquisas);
     setFeriados(feriadosFinais.sort((a, b) => a.data.localeCompare(b.data)));
     setTermos(termosFinais);
     setOfs(listaOfs);
@@ -525,6 +531,46 @@ export default function App({ emailUsuario = null }) {
     } catch (err) { console.error(err); }
   }
 
+  // ----- Pesquisas de Preços -----
+  function abrirPesquisa(doc) {
+    setCurrentPesquisa(doc);
+    setView("pesquisaPrecos");
+  }
+  function novaPesquisa(dados = {}) {
+    const sec = secretarias.find(x => x.id === dados.secretariaId) || secretariaParaNovoDoc();
+    const doc = emptyPesquisaPrecos({
+      secretariaId: sec?.id || null, orgao: sec?.nome || "", municipioId: sec?.municipioId || null,
+      objeto: dados.objeto || "",
+    });
+    storage.set("pesq:" + doc.id, JSON.stringify(doc), false).catch(() => {});
+    setPesquisasPrecos(prev => [doc, ...prev]);
+    abrirPesquisa(doc);
+  }
+
+  function duplicarPesquisa(doc, e) {
+    e?.stopPropagation();
+    const copia = duplicarDocumento(doc, "pesq");
+    setPesquisasPrecos(prev => [copia, ...prev]);
+    storage.set("pesq:" + copia.id, JSON.stringify(copia), false).catch(() => {});
+  }
+  function salvarPesquisa(doc) {
+    if (somenteLeituraPara(doc)) return;
+    const atualizado = { ...doc, updatedAt: Date.now() };
+    setCurrentPesquisa(atualizado);
+    setPesquisasPrecos(prev => prev.map(d => (d.id === atualizado.id ? atualizado : d)));
+    storage.set("pesq:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+  }
+  async function excluirPesquisa(id, e) {
+    e?.stopPropagation?.();
+    const doc = pesquisasPrecos.find(x => x.id === id);
+    if (!doc) return;
+    try {
+      const reg = await moverParaLixeira(storage, "pesq:", id, doc);
+      setPesquisasPrecos(prev => prev.filter(x => x.id !== id));
+      setLixeira(prev => [reg, ...prev]);
+    } catch (err) { console.error(err); }
+  }
+
   // ----- Lixeira -----
   async function restaurarDocumento(registro) {
     try {
@@ -658,6 +704,7 @@ export default function App({ emailUsuario = null }) {
   const etpsDaSecretaria = etps.filter(pertenceASecretariaAtiva);
   const justificativasDaSecretaria = justificativas.filter(pertenceASecretariaAtiva);
   const declaracoesDaSecretaria = declaracoes.filter(pertenceASecretariaAtiva);
+  const pesquisasPrecosDaSecretaria = pesquisasPrecos.filter(pertenceASecretariaAtiva);
   const ofsDaSecretaria = ofs.filter(pertenceASecretariaAtiva);
 
   const filteredEtps = etpsDaSecretaria.filter(e => {
@@ -711,10 +758,13 @@ export default function App({ emailUsuario = null }) {
         .timbre-fixed-print { display: none; }
       `}</style>
 
-      {(view === "list" || (view === "justificativa" && currentJust) || (view === "declaracao" && currentDecl)) && (
+      {(view === "list" || (view === "justificativa" && currentJust) || (view === "declaracao" && currentDecl) || (view === "pesquisaPrecos" && currentPesquisa)) && (
         <ListView
           etps={filteredEtps} todosEtps={etpsDaSecretaria}
           justificativas={justificativasDaSecretaria} declaracoes={declaracoesDaSecretaria}
+          pesquisasPrecos={pesquisasPrecosDaSecretaria}
+          onAbrirPesquisa={abrirPesquisa} onNovaPesquisa={novaPesquisa}
+          onExcluirPesquisa={excluirPesquisa} onDuplicarPesquisa={duplicarPesquisa}
           ofs={ofsDaSecretaria} fornecedores={fornecedores} onSalvarFornecedor={salvarFornecedor}
           onExcluirFornecedor={excluirFornecedor} todasAsOfs={ofs}
           onRecarregarOfs={loadList}
@@ -749,6 +799,10 @@ export default function App({ emailUsuario = null }) {
                 onSalvar={salvarDeclaracao} onBack={backToList}
                 onGerarJustificativa={(dados) => novaJustificativa(dados)}
                 somenteLeitura={somenteLeituraPara(currentDecl)} embutido />
+            ) : view === "pesquisaPrecos" && currentPesquisa ? (
+              <PesquisaPrecosView doc={currentPesquisa} secretarias={secretarias}
+                onSalvar={salvarPesquisa} onBack={backToList}
+                somenteLeitura={somenteLeituraPara(currentPesquisa)} />
             ) : null
           }
         />
