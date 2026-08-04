@@ -43,7 +43,7 @@ export function emptyPesquisaPrecos(dadosIniciais = {}) {
     dataElaboracao: dadosIniciais.dataElaboracao || "",
     secretariaId: dadosIniciais.secretariaId || null,
     municipioId: dadosIniciais.municipioId || null,
-    itens: dadosIniciais.itens || [], // { id, descricao, unidade, quantidade }
+    itens: dadosIniciais.itens || [], // { id, codigo, descricao, unidade, quantidade }
     cotacoes: dadosIniciais.cotacoes || {}, // { itemId: [{ id, fonteId, origem, valor, dataAcesso, excluida, justificativaExclusao }] }
     metodologia: dadosIniciais.metodologia || "mediana", // "media" | "mediana" | "menor-valor"
     justificativaMetodologia: dadosIniciais.justificativaMetodologia || "",
@@ -105,4 +105,70 @@ export function itensSemCotacao(pesquisa) {
     const stats = calcularEstatisticasCotacoes(pesquisa.cotacoes?.[item.id]);
     return stats.n === 0;
   });
+}
+
+// ---------- Importação de itens: Excel, PDF ou Word ----------
+// As três formas convergem para o mesmo parser de tabela genérica —
+// reconhece variações de nome de coluna (Descrição/Item/Produto,
+// Unidade/Un/UN, Quantidade/Qtd, Código/Cód), em vez de exigir um layout
+// fixo como as planilhas do Sistema Centi.
+
+function normalizarCabecalho(texto) {
+  return String(texto || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // tira acento
+    .toLowerCase().trim();
+}
+
+const SINONIMOS_COLUNA = {
+  codigo: ["codigo", "cod", "cod.", "catmat", "id produto", "idproduto", "código"],
+  descricao: ["descricao", "descrição", "item", "produto", "nome do produto", "objeto", "especificacao", "especificação"],
+  unidade: ["unidade", "un", "un.", "unid", "unid.", "un medida", "unidade medida", "um"],
+  quantidade: ["quantidade", "qtd", "qtd.", "qtde", "quant"],
+};
+
+function localizarColunas(linhaCabecalho) {
+  const colunas = {};
+  linhaCabecalho.forEach((celula, idx) => {
+    const norm = normalizarCabecalho(celula);
+    if (!norm) return;
+    for (const [campo, sinonimos] of Object.entries(SINONIMOS_COLUNA)) {
+      if (colunas[campo] !== undefined) continue; // já achou essa coluna, não sobrescreve
+      if (sinonimos.includes(norm)) colunas[campo] = idx;
+    }
+  });
+  return colunas;
+}
+
+// linhas: array de arrays (célula por célula) — o mesmo formato que
+// XLSX.utils.sheet_to_json({ header: 1 }) devolve, e que também é fácil de
+// montar a partir de uma tabela HTML (Word) ou de texto de PDF já
+// tabulado. Acha a linha de cabeçalho sozinho, testando linha por linha até
+// reconhecer pelo menos "descrição" e ("unidade" ou "quantidade").
+export function parseItensTabela(linhas) {
+  let indiceCabecalho = -1;
+  let colunas = {};
+  for (let i = 0; i < Math.min(linhas.length, 15); i++) {
+    const candidatas = localizarColunas(linhas[i] || []);
+    if (candidatas.descricao !== undefined && (candidatas.unidade !== undefined || candidatas.quantidade !== undefined)) {
+      indiceCabecalho = i;
+      colunas = candidatas;
+      break;
+    }
+  }
+  if (indiceCabecalho === -1) return [];
+
+  const itens = [];
+  for (let i = indiceCabecalho + 1; i < linhas.length; i++) {
+    const linha = linhas[i] || [];
+    const descricao = colunas.descricao !== undefined ? String(linha[colunas.descricao] ?? "").trim() : "";
+    if (!descricao) continue; // linha em branco, ou fora da tabela (rodapé etc.)
+    itens.push({
+      id: "item_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+      codigo: colunas.codigo !== undefined ? String(linha[colunas.codigo] ?? "").trim() : "",
+      descricao,
+      unidade: colunas.unidade !== undefined ? (String(linha[colunas.unidade] ?? "").trim() || "UNIDADE") : "UNIDADE",
+      quantidade: colunas.quantidade !== undefined ? String(linha[colunas.quantidade] ?? "1").trim() || "1" : "1",
+    });
+  }
+  return itens;
 }

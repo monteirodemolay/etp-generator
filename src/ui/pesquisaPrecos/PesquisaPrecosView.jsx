@@ -7,17 +7,22 @@
 
 import React, { useState } from "react";
 import {
-  ArrowLeft, Plus, Trash2, Download, AlertCircle, Check, X, Info,
+  ArrowLeft, Plus, Trash2, Download, Upload, AlertCircle, Check, X, Info,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { C } from "../tokens.js";
 import {
   FONTES_PESQUISA_PRECOS, rotuloFonte, calcularEstatisticasCotacoes, valorPelaMetodologia,
-  foraDoPadrao, totalGeralPesquisa, itensSemCotacao,
+  foraDoPadrao, totalGeralPesquisa, itensSemCotacao, parseItensTabela,
 } from "../../dominio/pesquisa-precos.js";
+import { lerTabelaDeWord } from "../../dominio/word-leitura.js";
+import { lerPdfComPosicoes } from "../../pdf-posicoes-servico.js";
+import { detectarFormatoPdfPca, extrairItensDfd, extrairItensPedido } from "../../dominio/pdf-pca.js";
 import { gerarDocumentoPesquisaPrecos } from "../../docx/documentos.js";
 import { resolverCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { brl, num } from "../../dominio/valores.js";
+import { AreaUpload } from "../comuns/index.jsx";
 
 export function PesquisaPrecosView({ doc, secretarias, onSalvar, onBack, somenteLeitura = false }) {
   const [activeItemId, setActiveItemId] = useState(doc.itens?.[0]?.id || null);
@@ -30,6 +35,63 @@ export function PesquisaPrecosView({ doc, secretarias, onSalvar, onBack, somente
   const [novoValor, setNovoValor] = useState("");
   const [gerando, setGerando] = useState(false);
   const [erro, setErro] = useState("");
+  const [importando, setImportando] = useState(false);
+  const [revisandoImport, setRevisandoImport] = useState(null); // itens candidatos, aguardando confirmação
+
+  async function handleImportarArquivos(arquivos) {
+    setImportando(true);
+    setErro("");
+    try {
+      const todosItens = [];
+      for (const arquivo of arquivos) {
+        const nomeMin = arquivo.name.toLowerCase();
+        if (nomeMin.endsWith(".xlsx") || nomeMin.endsWith(".xls")) {
+          const buffer = await arquivo.arrayBuffer();
+          const wb = XLSX.read(buffer, { type: "array" });
+          const linhas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+          todosItens.push(...parseItensTabela(linhas));
+        } else if (nomeMin.endsWith(".docx")) {
+          const linhas = await lerTabelaDeWord(arquivo);
+          todosItens.push(...parseItensTabela(linhas));
+        } else if (nomeMin.endsWith(".pdf")) {
+          const { paginas, textoCompleto } = await lerPdfComPosicoes(arquivo);
+          const formato = detectarFormatoPdfPca(textoCompleto);
+          if (formato === "dfd") todosItens.push(...extrairItensDfd(paginas).map(mapearItemPca));
+          else if (formato === "pedido") todosItens.push(...extrairItensPedido(paginas).map(mapearItemPca));
+          else setErro(prev => (prev ? prev + " " : "") + `"${arquivo.name}" não é um PDF de DFD nem de Pedido (os únicos formatos de PDF reconhecidos) — ignorado.`);
+        } else {
+          setErro(prev => (prev ? prev + " " : "") + `"${arquivo.name}": formato não reconhecido (use .xlsx, .docx ou .pdf).`);
+        }
+      }
+      if (todosItens.length === 0) {
+        setErro(prev => prev || "Nenhum item foi reconhecido nos arquivos selecionados.");
+      } else {
+        setRevisandoImport(todosItens);
+      }
+    } catch (e) {
+      setErro("Não foi possível ler um dos arquivos: " + (e.message || e));
+    }
+    setImportando(false);
+  }
+
+  function mapearItemPca(it) {
+    return { id: "item_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+      codigo: it.idProduto || "", descricao: it.descricao || "", unidade: it.unidade || "UNIDADE", quantidade: it.quantidade || "1" };
+  }
+
+  function confirmarImportacao() {
+    atualizar({ itens: [...(doc.itens || []), ...revisandoImport] });
+    if (!activeItemId && revisandoImport[0]) setActiveItemId(revisandoImport[0].id);
+    setRevisandoImport(null);
+  }
+
+  function atualizarItemRevisado(idx, campo, valor) {
+    setRevisandoImport(prev => prev.map((it, i) => (i === idx ? { ...it, [campo]: valor } : it)));
+  }
+
+  function removerItemRevisado(idx) {
+    setRevisandoImport(prev => prev.filter((_, i) => i !== idx));
+  }
 
   function atualizar(campos) {
     onSalvar({ ...doc, ...campos });
@@ -147,6 +209,13 @@ export function PesquisaPrecosView({ doc, secretarias, onSalvar, onBack, somente
 
         <div className="rounded-xl border p-5 mb-5" style={{ borderColor: C.border, background: "white" }}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: C.inkMuted }}>2. Itens pesquisados</p>
+
+          <AreaUpload onArquivos={handleImportarArquivos} accept=".xlsx,.xls,.docx,.pdf" multiple disabled={importando}
+            className="flex items-center justify-center gap-2 border-2 border-dashed rounded-lg py-3 mb-4 text-xs"
+            style={{ borderColor: C.border, color: C.inkMuted }}>
+            <Upload size={14} style={{ color: C.brass }} />
+            {importando ? "Lendo arquivo(s)..." : (<>Clique ou arraste pra importar itens — <b style={{ color: C.navy }}>Excel, Word ou PDF (DFD/Pedido)</b></>)}
+          </AreaUpload>
 
           <div className="flex flex-wrap gap-2 mb-4">
             {(doc.itens || []).map(item => {
@@ -313,6 +382,47 @@ export function PesquisaPrecosView({ doc, secretarias, onSalvar, onBack, somente
         style={{ background: C.brass, color: C.navyDark }}>
         <Download size={15} /> {gerando ? "Gerando..." : "Exportar em Word"}
       </button>
+
+      {revisandoImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+          <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Revisar itens importados ({revisandoImport.length})
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              Confira antes de confirmar — a leitura automática é melhor esforço. Pode editar qualquer campo, ou remover um item indevido.
+            </p>
+            <div className="space-y-2 mb-4">
+              {revisandoImport.map((it, idx) => (
+                <div key={idx} className="rounded-lg border p-3 grid sm:grid-cols-12 gap-2 items-start" style={{ borderColor: C.border }}>
+                  <input value={it.codigo} onChange={e => atualizarItemRevisado(idx, "codigo", e.target.value)}
+                    placeholder="Código" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs font-mono" style={{ borderColor: C.border }} />
+                  <input value={it.descricao} onChange={e => atualizarItemRevisado(idx, "descricao", e.target.value)}
+                    placeholder="Descrição" className="sm:col-span-6 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <input value={it.unidade} onChange={e => atualizarItemRevisado(idx, "unidade", e.target.value)}
+                    placeholder="Unidade" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <input value={it.quantidade} onChange={e => atualizarItemRevisado(idx, "quantidade", e.target.value)}
+                    placeholder="Qtd." className="sm:col-span-1 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                  <button onClick={() => removerItemRevisado(idx)} title="Remover este item"
+                    className="sm:col-span-1 flex justify-center py-1.5" style={{ color: C.red }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRevisandoImport(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button onClick={confirmarImportacao} disabled={revisandoImport.length === 0}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: C.navy, color: C.paper }}>
+                Adicionar estes {revisandoImport.length} item(ns)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
