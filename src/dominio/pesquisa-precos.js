@@ -120,10 +120,10 @@ function normalizarCabecalho(texto) {
 }
 
 const SINONIMOS_COLUNA = {
-  codigo: ["codigo", "cod", "cod.", "catmat", "id produto", "idproduto", "código"],
-  descricao: ["descricao", "descrição", "item", "produto", "nome do produto", "objeto", "especificacao", "especificação"],
-  unidade: ["unidade", "un", "un.", "unid", "unid.", "un medida", "unidade medida", "um"],
-  quantidade: ["quantidade", "qtd", "qtd.", "qtde", "quant"],
+  codigo: ["codigo", "cod", "catmat", "referencia", "ref"],
+  descricao: ["descricao", "item", "produto", "especificacao", "discriminacao", "objeto"],
+  unidade: ["unidade", "un", "und", "um"],
+  quantidade: ["quantidade", "qtd", "qtde", "quant"],
 };
 
 function localizarColunas(linhaCabecalho) {
@@ -131,9 +131,14 @@ function localizarColunas(linhaCabecalho) {
   linhaCabecalho.forEach((celula, idx) => {
     const norm = normalizarCabecalho(celula);
     if (!norm) return;
+    // Divide em palavras — pega "descrição" dentro de "Descrição do Produto",
+    // mas não deixa "Valor Unitário" ser confundido com "Unidade" (que usa o
+    // sinônimo curto "un"): só bate se alguma palavra INTEIRA do cabeçalho
+    // corresponder a um sinônimo, não uma parte de palavra qualquer.
+    const palavras = norm.split(/[^a-z0-9]+/).filter(Boolean);
     for (const [campo, sinonimos] of Object.entries(SINONIMOS_COLUNA)) {
-      if (colunas[campo] !== undefined) continue; // já achou essa coluna, não sobrescreve
-      if (sinonimos.includes(norm)) colunas[campo] = idx;
+      if (colunas[campo] !== undefined) continue;
+      if (sinonimos.includes(norm) || sinonimos.some(s => palavras.includes(s))) colunas[campo] = idx;
     }
   });
   return colunas;
