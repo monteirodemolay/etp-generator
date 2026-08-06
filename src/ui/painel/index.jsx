@@ -71,6 +71,14 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
     : aba;
   const [showGuia, setShowGuia] = useState(false);
   const [subVisaoOf, setSubVisaoOfState] = useState(() => localStorage.getItem("hub_subaba_of") || "gestao"); // "gestao" | "relatorios"
+
+  // Se a aba lembrada de uma sessão anterior (F5, guardada no navegador) não
+  // é mais permitida pra esta pessoa -- por exemplo, perdeu acesso de Admin,
+  // ou entrou com outra conta no mesmo navegador -- volta pro Painel, em vez
+  // de ficar com a tela em branco.
+  useEffect(() => {
+    if (aba === "admin" && !permissoes.gerenciarEntidades) setAba("painel");
+  }, [aba, permissoes.gerenciarEntidades]);
   function setSubVisaoOf(nova) {
     setSubVisaoOfState(nova);
     try { localStorage.setItem("hub_subaba_of", nova); } catch { /* raro */ }
@@ -756,7 +764,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
             </>
           )}
 
-          {aba === "admin" && (
+          {aba === "admin" && permissoes.gerenciarEntidades && (
             <AdminView
               secretarias={secretarias} onSalvarSecretaria={onSalvarSecretaria}
               onNovaSecretaria={onNovaSecretaria} onExcluirSecretaria={onExcluirSecretaria}

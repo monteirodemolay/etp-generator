@@ -673,7 +673,7 @@ export default function App({ emailUsuario = null }) {
 
   // Quem está usando o sistema e o que pode fazer
   const usuarioAtual = usuarioPorEmail(usuarios, emailUsuario);
-  const permissoes = permissoesDe(usuarioAtual);
+  const permissoes = permissoesDe(usuarioAtual, usuarios.length);
   const secretariasVisiveis = entidadesVisiveis(usuarioAtual, secretarias);
   const podeTodas = podeVerTodasEntidades(usuarioAtual);
 

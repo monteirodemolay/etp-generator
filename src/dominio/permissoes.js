@@ -75,16 +75,30 @@ export function usuarioPorEmail(usuarios, email) {
   return (usuarios || []).find(u => u.email === alvo) || null;
 }
 
-// Permissões de quem está usando. Sem cadastro correspondente, trata como
-// administrador — só chega aqui quem já passou pelas Regras do Firestore, e
-// isso evita travar o primeiro acesso, quando ainda não há ninguém cadastrado.
-export function permissoesDe(usuario) {
-  if (!usuario || usuario.papel === "admin") {
+// Permissões de quem está usando.
+//
+// O fallback de administrador total (quando não há cadastro correspondente
+// ao e-mail logado) existe SÓ para o primeiro acesso de todos, antes de
+// existir qualquer usuário cadastrado no sistema -- sem isso, ninguém
+// conseguiria nem entrar para criar o primeiro cadastro de administrador.
+// Por isso exige totalUsuarios === 0: fora desse cenário bem específico, um
+// e-mail que não bate com nenhum cadastro (typo, timing de carregamento,
+// conta de outra pessoa) NUNCA deve virar acesso total por engano -- vira
+// a permissão mais restrita possível, sem nenhuma página liberada.
+export function permissoesDe(usuario, totalUsuarios = 1) {
+  if (usuario?.papel === "admin" || (!usuario && totalUsuarios === 0)) {
     return {
       admin: true, gerenciarUsuarios: true, gerenciarEntidades: true,
       criarDocumentos: true, editarDocumentos: true, excluirDocumentos: true, esvaziarLixeira: true,
       paginas: Object.fromEntries(PAGINAS_CONFIGURAVEIS.map(p => [p.id, true])),
       papel: "admin", semCadastro: !usuario,
+    };
+  }
+  if (!usuario) {
+    return {
+      admin: false, gerenciarUsuarios: false, gerenciarEntidades: false,
+      criarDocumentos: false, editarDocumentos: false, excluirDocumentos: false, esvaziarLixeira: false,
+      paginas: {}, papel: null, semCadastro: true,
     };
   }
   if (!usuario.ativo) {
