@@ -695,9 +695,17 @@ export default function App({ emailUsuario = null }) {
 
   // Filtro por secretaria — vale para as três coleções. Documentos antigos (sem secretariaId)
   // pertencem à primeira secretaria cadastrada, conforme secretariaDoDoc.
+  // "Todas as Entidades" no seletor nunca deveria significar "todas as
+  // entidades do sistema" para um usuário restrito — significa "todas as
+  // QUE ELE PODE VER". Checar contra secretariasVisiveis aqui é uma segunda
+  // trava (além da tela nem oferecer a opção "todas" para quem não é admin):
+  // se por qualquer motivo secretariaAtiva ficar em "todas" pra alguém sem
+  // acesso irrestrito — por exemplo, no instante entre o carregamento da
+  // página e o efeito que corrige isso — essa pessoa não vê documentos de
+  // entidades que não são dela, em vez de ver tudo por engano.
   function pertenceASecretariaAtiva(doc) {
-    if (secretariaAtiva === "todas") return true;
     const sec = secretariaDoDoc(doc, secretarias);
+    if (secretariaAtiva === "todas") return podeTodas || secretariasVisiveis.some(s => s.id === sec?.id);
     return sec?.id === secretariaAtiva;
   }
 

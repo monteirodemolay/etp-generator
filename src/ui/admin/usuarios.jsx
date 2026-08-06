@@ -162,9 +162,16 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
                       }}>
                       {p.rotulo}
                     </span>
-                    <p className="text-[11px] mt-1" style={{ color: C.inkMuted }}>
-                      {resumoEntidades(u, secretarias)}
-                    </p>
+                    {(() => {
+                      const semEntidade = u.papel !== "admin" && u.ativo !== false && (u.entidades || []).length === 0;
+                      return (
+                        <p className="text-[11px] mt-1 flex items-center gap-1 justify-end"
+                          style={{ color: semEntidade ? C.red : C.inkMuted, fontWeight: semEntidade ? 600 : 400 }}>
+                          {semEntidade && <Info size={10} />}
+                          {resumoEntidades(u, secretarias)}
+                        </p>
+                      );
+                    })()}
                   </div>
                   {u.ativo === false && (
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0"
@@ -228,6 +235,12 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
                           Marque as entidades. A estrela indica qual abre por padrão ao entrar. "Só ver" impede
                           criar, editar ou excluir documentos daquela entidade — a pessoa só consulta.
                         </p>
+                        {(u.entidades || []).length === 0 && (
+                          <p className="text-[11px] mb-2 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5"
+                            style={{ background: "rgba(166,64,61,0.1)", color: C.red, fontWeight: 600 }}>
+                            <Info size={11} /> Sem nenhuma entidade marcada — esta pessoa não vai enxergar nenhum documento até você marcar pelo menos uma abaixo.
+                          </p>
+                        )}
                         <div className="space-y-1.5 mb-4">
                           {secretarias.map(sec => {
                             const marcada = (u.entidades || []).includes(sec.id);
