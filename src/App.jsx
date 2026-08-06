@@ -310,13 +310,40 @@ export default function App({ emailUsuario = null }) {
       return existe ? prev.map(x => (x.id === atualizado.id ? atualizado : x)) : [...prev, atualizado];
     });
     storage.set("usr:" + atualizado.id, JSON.stringify(atualizado), false).catch(() => {});
+    sincronizarIndiceAcesso(atualizado);
+  }
+
+  // A regra do Firestore não enxerga o cadastro de usuários em si (não dá
+  // pra checar campos de um documento numa regra de LEITURA, só a
+  // existência de outro documento) -- por isso mantém, à parte, um "índice"
+  // minúsculo que só serve pra essa checagem: existe quando a pessoa está
+  // ativa, é apagado quando ela é desativada ou excluída. Ver "temCadastroAtivo"
+  // no firestore.rules.
+  function sincronizarIndiceAcesso(usuario) {
+    if (!usuario.email) return;
+    const chave = "usrByEmail:" + usuario.email;
+    if (usuario.ativo !== false) {
+      storage.set(chave, JSON.stringify({ usuarioId: usuario.id }), false).catch(() => {});
+    } else {
+      storage.delete(chave).catch(() => {});
+    }
   }
 
   async function excluirUsuario(id) {
     try {
+      const usuario = usuarios.find(x => x.id === id);
       await storage.delete("usr:" + id, false);
+      if (usuario?.email) await storage.delete("usrByEmail:" + usuario.email).catch(() => {});
       setUsuarios(prev => prev.filter(x => x.id !== id));
     } catch (err) { console.error(err); }
+  }
+
+  // Corrige de uma vez qualquer usuário cadastrado ANTES desta correção --
+  // alguém pode ter sido criado com o índice de acesso nunca tendo sido
+  // gerado (o caso que a Viviane pegou), silenciosamente sem conseguir ler
+  // nada, sem ninguém perceber até essa pessoa específica reclamar.
+  async function reconciliarAcessos() {
+    for (const u of usuarios) sincronizarIndiceAcesso(u);
   }
 
   // ----- Materiais Normativos -----
@@ -792,7 +819,7 @@ export default function App({ emailUsuario = null }) {
           onRecarregar={loadList}
           usuarios={usuarios} emailUsuario={emailUsuario} usuarioAtual={usuarioAtual} permissoes={permissoes}
           podeVerTodasEntidades={podeTodas}
-          onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario}
+          onSalvarUsuario={salvarUsuario} onExcluirUsuario={excluirUsuario} onReconciliarAcessos={reconciliarAcessos}
           normativos={normativos} onUploadNormativo={uploadNormativo} onExcluirNormativo={excluirNormativo}
           lixeira={lixeira} onRestaurar={restaurarDocumento}
           onApagarDefinitivo={apagarDefinitivo} onEsvaziar={esvaziarLixeira}

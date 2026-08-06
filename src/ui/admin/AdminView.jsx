@@ -30,7 +30,7 @@ export function AdminView({
   reparticoes, onSalvarReparticao, onExcluirReparticao,
   feriados, onSalvarFeriado, onExcluirFeriado,
   termos, onSalvarTermos,
-  usuarios, emailUsuario, onSalvarUsuario, onExcluirUsuario,
+  usuarios, emailUsuario, onSalvarUsuario, onExcluirUsuario, onReconciliarAcessos,
   etps, justificativas, declaracoes, ofs, onRecarregar,
 }) {
   const [subaba, setSubaba] = useState("entidades");
@@ -64,7 +64,8 @@ export function AdminView({
 
       {subaba === "usuarios" && (
         <UsuariosView usuarios={usuarios} secretarias={secretarias} emailAtual={emailUsuario}
-          onSalvar={onSalvarUsuario} onNovo={onSalvarUsuario} onExcluir={onExcluirUsuario} />
+          onSalvar={onSalvarUsuario} onNovo={onSalvarUsuario} onExcluir={onExcluirUsuario}
+          onReconciliarAcessos={onReconciliarAcessos} />
       )}
 
       {subaba === "dias-uteis" && (

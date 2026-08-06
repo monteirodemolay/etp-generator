@@ -53,7 +53,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
   reparticoes, onSalvarReparticao, onExcluirReparticao,
   feriados, onSalvarFeriado, onExcluirFeriado,
   termos, onSalvarTermos,
-  usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario,
+  usuarios, emailUsuario, usuarioAtual, permissoes, onSalvarUsuario, onExcluirUsuario, onReconciliarAcessos,
   normativos, onUploadNormativo, onExcluirNormativo,
   ofs, fornecedores, onSalvarFornecedor, onExcluirFornecedor, todasAsOfs, onRecarregarOfs,
   lixeira, onRestaurar, onApagarDefinitivo, onEsvaziar,
@@ -773,7 +773,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
               feriados={feriados} onSalvarFeriado={onSalvarFeriado} onExcluirFeriado={onExcluirFeriado}
               termos={termos} onSalvarTermos={onSalvarTermos}
               usuarios={usuarios} emailUsuario={emailUsuario}
-              onSalvarUsuario={onSalvarUsuario} onExcluirUsuario={onExcluirUsuario}
+              onSalvarUsuario={onSalvarUsuario} onExcluirUsuario={onExcluirUsuario} onReconciliarAcessos={onReconciliarAcessos}
               etps={base} justificativas={justificativas} declaracoes={declaracoes} ofs={ofs}
               onRecarregar={onRecarregar}
             />

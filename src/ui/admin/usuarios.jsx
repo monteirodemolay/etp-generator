@@ -13,7 +13,17 @@ import { PAPEIS, PAGINAS_CONFIGURAVEIS, ACOES_CONFIGURAVEIS,
          emptyUsuario, resumoEntidades } from "../../dominio/permissoes.js";
 
 // ---------- Usuários e permissões ----------
-export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNovo, onExcluir }) {
+export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNovo, onExcluir, onReconciliarAcessos }) {
+  const [reconciliando, setReconciliando] = useState(false);
+  const [reconciliado, setReconciliado] = useState(false);
+
+  async function handleReconciliar() {
+    setReconciliando(true);
+    setReconciliado(false);
+    await onReconciliarAcessos?.();
+    setReconciliando(false);
+    setReconciliado(true);
+  }
   const [editando, setEditando] = useState(null);   // id em edição
   const [confirmId, setConfirmId] = useState(null);
   const [novoEmail, setNovoEmail] = useState("");
@@ -75,6 +85,21 @@ export function UsuariosView({ usuarios, secretarias, emailAtual, onSalvar, onNo
           </div>
           <h1 className="serif text-2xl font-semibold" style={{ color: C.navy }}>Usuários e permissões</h1>
         </div>
+        <button onClick={handleReconciliar} disabled={reconciliando}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+          style={{ background: C.paperDark, color: C.navy }}>
+          {reconciliando ? "Corrigindo..." : reconciliado ? "✓ Acessos corrigidos" : "Reconciliar acessos"}
+        </button>
+      </div>
+
+      <div className="flex items-start gap-2 p-3 rounded-lg mb-3 text-xs leading-relaxed"
+        style={{ background: "rgba(166,131,46,0.1)", color: C.ink }}>
+        <Info size={14} className="shrink-0 mt-0.5" style={{ color: C.brass }} />
+        <span>
+          <b>"Reconciliar acessos"</b> conserta, de uma vez, qualquer pessoa que foi cadastrada aqui mas
+          nunca ganhou de fato acesso ao banco de dados por trás — pode acontecer sem nenhum aviso, e a
+          pessoa simplesmente não vê nada até alguém perceber. Sem risco em rodar de novo quando tiver dúvida.
+        </span>
       </div>
 
       <div className="flex items-start gap-2 p-3 rounded-lg mb-5 text-xs leading-relaxed"

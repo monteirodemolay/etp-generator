@@ -2,8 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Regra existente: base principal do sistema
-    function daEquipe() {
+    // Regra existente: base principal do sistema (mantida por compatibilidade --
+    // essas 4 pessoas continuam com acesso mesmo que o índice abaixo, por
+    // algum motivo, não exista para elas).
+    function naListaFixa() {
       return request.auth != null
         && request.auth.token.email in [
           'monteirodemolay@gmail.com',
@@ -11,6 +13,23 @@ service cloud.firestore {
           'barbara.dias@rioverde.go.gov.br',
           'leonardomarconi@gmail.com'
         ];
+    }
+
+    // Qualquer pessoa com um cadastro ATIVO na coleção de usuários do
+    // próprio sistema (Admin > Usuários) também é "da equipe" -- não só as
+    // 4 pessoas da lista fixa acima. O índice "usrByEmail:{email}" é criado
+    // e apagado automaticamente conforme o cadastro é salvo (ver
+    // salvarUsuario em App.jsx): existe enquanto a pessoa está ativa, some
+    // se ela for desativada ou excluída. Só a EXISTÊNCIA importa aqui --
+    // não dá pra ler campos de dentro do documento numa regra de leitura,
+    // então o próprio "existe ou não" já é o sinal de "pode ou não".
+    function temCadastroAtivo() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/dados/$('usrByEmail:' + request.auth.token.email));
+    }
+
+    function daEquipe() {
+      return naListaFixa() || temCadastroAtivo();
     }
 
     match /dados/{doc} {
