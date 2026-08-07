@@ -16,12 +16,12 @@ import { C } from "../tokens.js";
 import { AreaUpload } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, emptyOf, recalcularErrosLote } from "../../dominio/of.js";
 import { buscarFornecedorPorCnpj, upsertFornecedor, cnpjValido, normalizarCnpj } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor } from "../../of-servico.js";
+import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor, dispararLote } from "../../of-servico.js";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
 
-export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, secretariaId, municipioId, onFechar, onSalvarFornecedor, onConcluido }) {
+export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, secretariaId, municipioId, emailUsuario, onFechar, onSalvarFornecedor, onConcluido }) {
   const [itens, setItens] = useState([]); // { idLocal, arquivo, numeroOf, empresa, cnpj, emailFornecedor, pdfBase64, marcado }
   const [processando, setProcessando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
@@ -118,23 +118,49 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     const nomeEntidadeSnapshot = secretariaDoLote?.sigla || secretariaDoLote?.nome || null;
     const sucesso = []; const falhas = [];
     let fornecedoresAcumulados = fornecedores; // atualizado a cada volta, pra reconhecer o mesmo CNPJ dentro do próprio lote
+
+    // Junta as OFs do mesmo CNPJ num grupo só -- viram um único e-mail (ver
+    // dispararLote), em vez de um e-mail por OF pra mesma empresa. Sem CNPJ
+    // válido, cada item fica isolado no seu próprio grupo (não dá pra saber
+    // se são da mesma empresa sem o CNPJ).
+    const gruposPorCnpj = new Map();
     for (const item of prontos) {
+      const chave = cnpjValido(item.cnpj) ? normalizarCnpj(item.cnpj) : `_isolado_${item.idLocal}`;
+      if (!gruposPorCnpj.has(chave)) gruposPorCnpj.set(chave, []);
+      gruposPorCnpj.get(chave).push(item);
+    }
+
+    for (const grupo of gruposPorCnpj.values()) {
       try {
-        const salva = await salvarOf(emptyOf({
-          numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
-          emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
-        }));
-        await dispararNotificacaoFornecedor(salva);
-        if (cnpjValido(item.cnpj)) {
-          const atualizado = upsertFornecedor(fornecedoresAcumulados, {
-            cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
-          });
-          onSalvarFornecedor(atualizado);
-          fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
+        if (grupo.length === 1) {
+          const item = grupo[0];
+          const salva = await salvarOf(emptyOf({
+            numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
+            emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
+            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
+          }));
+          await dispararNotificacaoFornecedor(salva, emailUsuario);
+        } else {
+          const payloads = grupo.map(item => emptyOf({
+            numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
+            emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
+            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
+          }));
+          await dispararLote(payloads, secretariaId, emailUsuario);
         }
-        sucesso.push(item);
-      } catch (e2) { falhas.push({ item, motivo: e2.message || String(e2) }); }
+        for (const item of grupo) {
+          if (cnpjValido(item.cnpj)) {
+            const atualizado = upsertFornecedor(fornecedoresAcumulados, {
+              cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
+            });
+            onSalvarFornecedor(atualizado);
+            fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
+          }
+          sucesso.push(item);
+        }
+      } catch (e2) {
+        for (const item of grupo) falhas.push({ item, motivo: e2.message || String(e2) });
+      }
     }
     setResultado({ sucesso, falhas, modo: "disparo" });
     setDisparando(false);

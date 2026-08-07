@@ -116,6 +116,7 @@ export async function salvarOf(of) {
 }
 
 const COL_INDICE_FORNECEDOR = "of_fornecedor_indice";
+const COL_INDICE_LOTE = "of_lote_indice";
 
 // Mantém o índice que liga um fornecedor (CNPJ + e-mail) às OFs dele — é o
 // que permite a central pública funcionar sem nenhuma busca livre no banco
@@ -206,6 +207,78 @@ export async function dispararNotificacaoFornecedor(of, usuarioEmail) {
   });
 
   return payload;
+}
+
+// ---------- Lote: várias OFs da mesma empresa, um único e-mail ----------
+// Cada OF continua sendo salva e disparada normalmente (mesma trilha de
+// auditoria, mesmo índice de fornecedor, mesmo tudo) -- a única diferença é
+// que NÃO dispara um e-mail por OF: junta todas num e-mail só, com um link
+// pra tela de lote, onde a empresa confirma tudo de uma vez.
+export async function dispararLote(itensDoLote, secretariaId, usuarioEmail) {
+  if (itensDoLote.length === 0) return { loteId: null, ofsSalvas: [] };
+  const loteId = crypto.randomUUID();
+  const agora = new Date();
+  const ofsSalvas = [];
+
+  for (const item of itensDoLote) {
+    const token = item.token || crypto.randomUUID();
+    const payload = {
+      ...item, token, loteId, status: "Aguardando Aceite",
+      dataEnvioTimestamp: agora.getTime(), dataEnvioStr: agora.toLocaleString("pt-BR"),
+      disparadoPor: usuarioEmail || "desconhecido",
+      envios: [{ data: agora.toLocaleString("pt-BR"), timestamp: agora.getTime(), disparadoPor: usuarioEmail || "desconhecido" }],
+    };
+    await setDoc(doc(db, COL_OF, token), payload, { merge: true });
+    await manterIndiceFornecedor(payload);
+    ofsSalvas.push(payload);
+    registrarEvento({
+      tipo: TIPOS_EVENTO.OF_DISPARADA, usuarioEmail, secretariaId,
+      alvo: { tipo: "of", id: token, rotulo: `OF-${item.numeroOf}` },
+      detalhes: `Disparada em lote com outras ${itensDoLote.length - 1} OF(s) da mesma empresa, num único e-mail (lote ${loteId}).`,
+    });
+  }
+
+  // O índice loteId -> tokens é o que permite a tela pública (sem login)
+  // encontrar todas as OFs do lote a partir só do loteId na URL -- do mesmo
+  // jeito que of_fornecedor_indice já faz pra CNPJ+e-mail.
+  await setDoc(doc(db, COL_INDICE_LOTE, loteId), { tokens: ofsSalvas.map(o => o.token) });
+
+  const primeira = ofsSalvas[0];
+  const linkLote = `${window.location.origin}${window.location.pathname}?lote=${loteId}`;
+  const numerosOf = ofsSalvas.map(o => o.numeroOf).join(", ");
+  const credenciais = primeira.emailJsSnapshot || EMAILJS_PADRAO;
+  await emailjs.send(credenciais.serviceId, credenciais.templateIdOf, {
+    to_email: primeira.emailFornecedor,
+    empresa: primeira.empresa,
+    numero_of: numerosOf,
+    link_aceite: linkLote,
+  }, credenciais.publicKey);
+
+  return { loteId, ofsSalvas };
+}
+
+// Busca todas as OFs de um lote a partir só do loteId (URL pública) -- lê o
+// índice (get, nunca list) e depois cada OF individualmente, do mesmo jeito
+// que buscarOfPorToken já faz pra uma OF só.
+export async function buscarOfsPorLote(loteId) {
+  const indice = await getDoc(doc(db, COL_INDICE_LOTE, loteId));
+  if (!indice.exists()) return [];
+  const tokens = indice.data().tokens || [];
+  const ofs = await Promise.all(tokens.map(t => buscarOfPorToken(t)));
+  return ofs.filter(Boolean);
+}
+
+// Confirma cada OF do lote individualmente (mesma lógica de
+// confirmarRecebimento, cada uma ganhando seu próprio recibo e sua própria
+// chave de autenticidade) -- só o CLIQUE é único; o controle continua por OF.
+export async function confirmarRecebimentoLote(ofsDoLote) {
+  const confirmadas = [];
+  for (const of_ of ofsDoLote) {
+    if (of_.status !== "Aguardando Aceite") { confirmadas.push(of_); continue; } // já confirmada antes, não mexe
+    const atualizada = await confirmarRecebimento(of_.token, of_);
+    confirmadas.push(atualizada);
+  }
+  return confirmadas;
 }
 
 // ---------- Portal do fornecedor (público, sem login) ----------

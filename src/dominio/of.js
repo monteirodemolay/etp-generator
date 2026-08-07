@@ -413,6 +413,13 @@ export function emptyOf(dadosIniciais = {}) {
     // timbre: a Central do Fornecedor é pública e não tem acesso à lista de
     // entidades, então precisa que a OF já traga isso consigo.
     nomeEntidadeSnapshot: dadosIniciais.nomeEntidadeSnapshot || null,
+    // Quando várias OFs da mesma empresa são disparadas juntas (mesmo CNPJ,
+    // mesmo lote de importação), todas ganham o mesmo loteId -- usado só
+    // pra agrupar num único e-mail e numa única confirmação de "recebi
+    // tudo". Cada OF continua sendo um registro totalmente independente:
+    // prazo, entrega, notificação de atraso e disputa continuam por OF,
+    // sem nenhuma mudança aí.
+    loteId: dadosIniciais.loteId || null,
     // Repartição (setor) dentro da entidade que emitiu esta OF — opcional;
     // null quando a entidade não usa esse nível de divisão.
     reparticaoId: dadosIniciais.reparticaoId || null,

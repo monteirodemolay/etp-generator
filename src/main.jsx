@@ -6,6 +6,7 @@ import LimiteDeErro from "./LimiteDeErro.jsx";
 import { PortalFornecedor } from "./ui/of/PortalFornecedor.jsx";
 import { ConferenciaChave } from "./ui/of/ConferenciaChave.jsx";
 import { CentralFornecedor } from "./ui/of/CentralFornecedor.jsx";
+import { PortalLote } from "./ui/of/PortalLote.jsx";
 import { NotificacaoOf } from "./ui/of/NotificacaoOf.jsx";
 import { TermosPrivacidade } from "./ui/legal/TermosPrivacidade.jsx";
 
@@ -16,6 +17,7 @@ import { TermosPrivacidade } from "./ui/legal/TermosPrivacidade.jsx";
 // precisar de uma só para confirmar, conferir ou consultar.
 const params = new URLSearchParams(window.location.search);
 const tokenOf = params.get("of");
+const loteId = params.get("lote");
 const chaveRecibo = params.get("recibo");
 const central = params.get("central");
 const tokenNotificacao = params.get("notificacao");
@@ -24,6 +26,7 @@ const termos = params.get("termos");
 
 function Raiz() {
   if (tokenOf) return <PortalFornecedor token={tokenOf} />;
+  if (loteId) return <PortalLote loteId={loteId} />;
   if (central !== null) return <CentralFornecedor />;
   if (tokenNotificacao) return <NotificacaoOf token={tokenNotificacao} numero={numeroNotificacao} />;
   if (termos !== null) return <TermosPrivacidade />;
