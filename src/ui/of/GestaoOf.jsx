@@ -1396,6 +1396,7 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
         <ImportarLoteModal
           ofsExistentes={ofs} fornecedores={fornecedores} secretarias={secretarias}
           secretariaId={secretariaId} municipioId={municipioId} emailUsuario={emailUsuario}
+          reparticoes={reparticoes}
           onSalvarFornecedor={onSalvarFornecedor}
           onFechar={() => setLoteAberto(false)}
           onConcluido={onRecarregar}

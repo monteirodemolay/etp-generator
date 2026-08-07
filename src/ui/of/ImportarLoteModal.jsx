@@ -11,7 +11,7 @@
  */
 
 import React, { useState } from "react";
-import { X, Upload, AlertCircle, Loader2, Mail } from "lucide-react";
+import { X, Upload, AlertCircle, Loader2, Mail, ChevronDown, Settings2 } from "lucide-react";
 import { C } from "../tokens.js";
 import { AreaUpload } from "../comuns/index.jsx";
 import { extrairDadosDoPdf, gerarNumeroOfSugerido, emptyOf, recalcularErrosLote } from "../../dominio/of.js";
@@ -20,17 +20,38 @@ import { lerPdfDeArquivo, salvarOf, dispararNotificacaoFornecedor, dispararLote 
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
 import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
+import { reparticoesDaEntidade } from "../../dominio/reparticoes.js";
 
-export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, secretariaId, municipioId, emailUsuario, onFechar, onSalvarFornecedor, onConcluido }) {
-  const [itens, setItens] = useState([]); // { idLocal, arquivo, numeroOf, empresa, cnpj, emailFornecedor, pdfBase64, marcado }
+export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, secretariaId, municipioId, emailUsuario, reparticoes = [], onFechar, onSalvarFornecedor, onConcluido }) {
+  const [itens, setItens] = useState([]); // { idLocal, arquivo, numeroOf, empresa, cnpj, emailFornecedor, pdfBase64, marcado, prazoDias, tipoContagemPrazo, reparticaoId, personalizado }
   const [processando, setProcessando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [disparando, setDisparando] = useState(false);
   const [resultado, setResultado] = useState(null); // { sucesso: [], falhas: [] }
   const [erro, setErro] = useState("");
+  const [itemExpandidoId, setItemExpandidoId] = useState(null);
+
+  // Padrão aplicado a todas as OFs do lote, de uma vez -- qualquer item que
+  // não tenha sido personalizado individualmente usa isso. Mudar aqui
+  // atualiza todo mundo que ainda está no padrão; quem já foi personalizado
+  // (ver "personalizado" por item) não é mais tocado por essa mudança.
+  const [prazoDiasPadrao, setPrazoDiasPadrao] = useState(10);
+  const [tipoContagemPadrao, setTipoContagemPadrao] = useState("corridos");
+  const [reparticaoIdPadrao, setReparticaoIdPadrao] = useState("");
+  const reparticoesDaEntidadeAtiva = reparticoesDaEntidade(secretariaId, reparticoes);
 
   function recalcularErros(lista) {
     return recalcularErrosLote(lista, ofsExistentes);
+  }
+
+  // O que vale de verdade pra um item: o próprio valor, se foi
+  // personalizado, senão o padrão do lote inteiro.
+  function valoresEfetivos(item) {
+    return {
+      prazoDias: item.personalizado ? item.prazoDias : prazoDiasPadrao,
+      tipoContagemPrazo: item.personalizado ? item.tipoContagemPrazo : tipoContagemPadrao,
+      reparticaoId: item.personalizado ? item.reparticaoId : (reparticaoIdPadrao || null),
+    };
   }
 
   async function processarArquivos(fileList) {
@@ -55,6 +76,7 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
           pdfBase64,
           jaCadastrado: !!fornecedor,
           marcado: true,
+          personalizado: false, prazoDias: null, tipoContagemPrazo: null, reparticaoId: null,
         });
       } catch (e2) {
         novosItens.push({
@@ -90,10 +112,11 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     let fornecedoresAcumulados = fornecedores; // atualizado a cada volta, pra reconhecer o mesmo CNPJ dentro do próprio lote
     for (const item of itens.filter(i => !i.erroLeitura && i.erro !== "Número de OF repetido")) {
       try {
+        const efetivos = valoresEfetivos(item);
         await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
           emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-          timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
+          timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...efetivos,
         }));
         if (cnpjValido(item.cnpj)) {
           const atualizado = upsertFornecedor(fornecedoresAcumulados, {
@@ -134,17 +157,18 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
       try {
         if (grupo.length === 1) {
           const item = grupo[0];
+          const efetivos = valoresEfetivos(item);
           const salva = await salvarOf(emptyOf({
             numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
             emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
+            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...efetivos,
           }));
           await dispararNotificacaoFornecedor(salva, emailUsuario);
         } else {
           const payloads = grupo.map(item => emptyOf({
             numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
             emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
-            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
+            timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...valoresEfetivos(item),
           }));
           await dispararLote(payloads, secretariaId, emailUsuario);
         }
@@ -225,52 +249,147 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
 
               {itens.length > 0 && (
                 <>
+                  <div className="rounded-xl border p-3.5 mb-4" style={{ borderColor: C.border, background: C.paperDark }}>
+                    <div className="flex items-center gap-1.5 mb-2.5">
+                      <Settings2 size={13} style={{ color: C.brass }} />
+                      <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                        Configurações padrão do lote
+                      </span>
+                    </div>
+                    <p className="text-[11px] mb-3" style={{ color: C.inkMuted }}>
+                      Vale pra todas as OFs abaixo, exceto as que você personalizar individualmente (clique em
+                      "Personalizar" na linha dela).
+                    </p>
+                    <div className="grid sm:grid-cols-3 gap-3">
+                      <label className="block">
+                        <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Prazo de entrega (dias)</span>
+                        <input type="number" min="1" value={prazoDiasPadrao} onChange={e => setPrazoDiasPadrao(e.target.value)}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }} />
+                      </label>
+                      <label className="block">
+                        <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Como contar o prazo</span>
+                        <select value={tipoContagemPadrao} onChange={e => setTipoContagemPadrao(e.target.value)}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }}>
+                          <option value="corridos">Dias corridos</option>
+                          <option value="uteis">Dias úteis</option>
+                        </select>
+                      </label>
+                      {reparticoesDaEntidadeAtiva.length > 0 && (
+                        <label className="block">
+                          <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Repartição (opcional)</span>
+                          <select value={reparticaoIdPadrao} onChange={e => setReparticaoIdPadrao(e.target.value)}
+                            className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }}>
+                            <option value="">Nenhuma específica</option>
+                            {reparticoesDaEntidadeAtiva.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="rounded-xl border overflow-x-auto etp-scroll mb-4" style={{ borderColor: C.border }}>
                     <table className="w-full text-xs" style={{ minWidth: "680px" }}>
                       <thead>
                         <tr style={{ background: C.paperDark }}>
-                          {["", "Arquivo", "Nº OF", "Empresa", "E-mail", "Situação", ""].map(t => (
+                          {["", "Arquivo", "Nº OF", "Empresa", "E-mail", "Prazo", "Situação", ""].map(t => (
                             <th key={t} className="text-left px-2.5 py-2 font-semibold uppercase text-[10px]" style={{ color: C.inkMuted }}>{t}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {itens.map(item => (
-                          <tr key={item.idLocal} className="border-t" style={{ borderColor: C.border }}>
-                            <td className="px-2.5 py-2">
-                              <input type="checkbox" checked={item.marcado} disabled={!!item.erro || !!item.erroLeitura}
-                                onChange={e => atualizarItem(item.idLocal, { marcado: e.target.checked })} />
-                            </td>
-                            <td className="px-2.5 py-2" style={{ color: C.inkMuted, maxWidth: 120 }}>
-                              <span className="block truncate" title={item.arquivo}>{item.arquivo}</span>
-                            </td>
-                            <td className="px-2.5 py-2">
-                              <input value={item.numeroOf} onChange={e => atualizarItem(item.idLocal, { numeroOf: e.target.value })}
-                                className="w-24 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
-                            </td>
-                            <td className="px-2.5 py-2">
-                              <input value={item.empresa} onChange={e => atualizarItem(item.idLocal, { empresa: e.target.value })}
-                                className="w-32 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
-                              {item.jaCadastrado && <span className="block text-[10px]" style={{ color: C.green }}>já cadastrado</span>}
-                            </td>
-                            <td className="px-2.5 py-2">
-                              <input value={item.emailFornecedor} onChange={e => atualizarItem(item.idLocal, { emailFornecedor: e.target.value })}
-                                className="w-36 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
-                            </td>
-                            <td className="px-2.5 py-2">
-                              {item.erroLeitura ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(166,64,61,0.14)", color: C.red }}>{item.erroLeitura}</span>
-                              ) : item.erro ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(166,64,61,0.14)", color: C.red }}>{item.erro}</span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(76,124,89,0.14)", color: C.green }}>Pronta</span>
+                        {itens.map(item => {
+                          const expandido = itemExpandidoId === item.idLocal;
+                          const efetivos = valoresEfetivos(item);
+                          return (
+                            <React.Fragment key={item.idLocal}>
+                              <tr className="border-t" style={{ borderColor: C.border }}>
+                                <td className="px-2.5 py-2">
+                                  <input type="checkbox" checked={item.marcado} disabled={!!item.erro || !!item.erroLeitura}
+                                    onChange={e => atualizarItem(item.idLocal, { marcado: e.target.checked })} />
+                                </td>
+                                <td className="px-2.5 py-2" style={{ color: C.inkMuted, maxWidth: 120 }}>
+                                  <span className="block truncate" title={item.arquivo}>{item.arquivo}</span>
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <input value={item.numeroOf} onChange={e => atualizarItem(item.idLocal, { numeroOf: e.target.value })}
+                                    className="w-24 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <input value={item.empresa} onChange={e => atualizarItem(item.idLocal, { empresa: e.target.value })}
+                                    className="w-32 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
+                                  {item.jaCadastrado && <span className="block text-[10px]" style={{ color: C.green }}>já cadastrado</span>}
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <input value={item.emailFornecedor} onChange={e => atualizarItem(item.idLocal, { emailFornecedor: e.target.value })}
+                                    className="w-36 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <button onClick={() => setItemExpandidoId(expandido ? null : item.idLocal)}
+                                    className="flex items-center gap-1 text-[11px] whitespace-nowrap"
+                                    style={{ color: item.personalizado ? C.brass : C.inkMuted, fontWeight: item.personalizado ? 600 : 400 }}>
+                                    {efetivos.prazoDias} dia(s){item.personalizado ? " *" : ""}
+                                    <ChevronDown size={11} style={{ transform: expandido ? "rotate(180deg)" : "none" }} />
+                                  </button>
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  {item.erroLeitura ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(166,64,61,0.14)", color: C.red }}>{item.erroLeitura}</span>
+                                  ) : item.erro ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(166,64,61,0.14)", color: C.red }}>{item.erro}</span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(76,124,89,0.14)", color: C.green }}>Pronta</span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <button onClick={() => removerItem(item.idLocal)} style={{ color: C.red }}><X size={13} /></button>
+                                </td>
+                              </tr>
+                              {expandido && (
+                                <tr style={{ background: C.paperDark }}>
+                                  <td colSpan={8} className="px-4 py-3">
+                                    <p className="text-[10.5px] font-semibold uppercase tracking-wide mb-2" style={{ color: C.inkMuted }}>
+                                      Personalizar só esta OF (nº {item.numeroOf || "—"})
+                                    </p>
+                                    <div className="grid sm:grid-cols-3 gap-3 mb-2">
+                                      <label className="block">
+                                        <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Prazo de entrega (dias)</span>
+                                        <input type="number" min="1" value={item.personalizado ? (item.prazoDias ?? prazoDiasPadrao) : prazoDiasPadrao}
+                                          onChange={e => atualizarItem(item.idLocal, { personalizado: true, prazoDias: e.target.value, tipoContagemPrazo: item.tipoContagemPrazo ?? tipoContagemPadrao, reparticaoId: item.reparticaoId ?? (reparticaoIdPadrao || null) })}
+                                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }} />
+                                      </label>
+                                      <label className="block">
+                                        <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Como contar o prazo</span>
+                                        <select value={item.personalizado ? (item.tipoContagemPrazo ?? tipoContagemPadrao) : tipoContagemPadrao}
+                                          onChange={e => atualizarItem(item.idLocal, { personalizado: true, tipoContagemPrazo: e.target.value, prazoDias: item.prazoDias ?? prazoDiasPadrao, reparticaoId: item.reparticaoId ?? (reparticaoIdPadrao || null) })}
+                                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }}>
+                                          <option value="corridos">Dias corridos</option>
+                                          <option value="uteis">Dias úteis</option>
+                                        </select>
+                                      </label>
+                                      {reparticoesDaEntidadeAtiva.length > 0 && (
+                                        <label className="block">
+                                          <span className="text-[10.5px]" style={{ color: C.inkMuted }}>Repartição (opcional)</span>
+                                          <select value={item.personalizado ? (item.reparticaoId ?? reparticaoIdPadrao ?? "") : reparticaoIdPadrao}
+                                            onChange={e => atualizarItem(item.idLocal, { personalizado: true, reparticaoId: e.target.value || null, prazoDias: item.prazoDias ?? prazoDiasPadrao, tipoContagemPrazo: item.tipoContagemPrazo ?? tipoContagemPadrao })}
+                                            className="mt-1 w-full px-2.5 py-1.5 rounded-lg border text-xs bg-white" style={{ borderColor: C.border }}>
+                                            <option value="">Nenhuma específica</option>
+                                            {reparticoesDaEntidadeAtiva.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                                          </select>
+                                        </label>
+                                      )}
+                                    </div>
+                                    {item.personalizado && (
+                                      <button onClick={() => atualizarItem(item.idLocal, { personalizado: false, prazoDias: null, tipoContagemPrazo: null, reparticaoId: null })}
+                                        className="text-[11px] font-medium underline" style={{ color: C.inkMuted }}>
+                                        Voltar a usar o padrão do lote
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="px-2.5 py-2">
-                              <button onClick={() => removerItem(item.idLocal)} style={{ color: C.red }}><X size={13} /></button>
-                            </td>
-                          </tr>
-                        ))}
+                            </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
