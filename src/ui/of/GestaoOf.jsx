@@ -6,17 +6,17 @@
  * e-mail com confirmação prévia — nunca envia direto ao clicar.
  */
 
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Info, Loader2, PackageCheck, Link2, Check, Undo2, X, MoreHorizontal, MessageCircle, Send, FileText, Settings2, ArrowUp, ArrowDown, ArrowUpDown, Camera, MessageSquare, MessageSquareWarning } from "lucide-react";
 import { C } from "../tokens.js";
 import { ConfirmarExclusao, LinhaDoTempoDisputa } from "../comuns/index.jsx";
-import { extrairDadosDoPdf, gerarNumeroOfSugerido, numeroOfDuplicado,
+import { gerarNumeroOfSugerido, numeroOfDuplicado,
   calcularSituacao, emptyOf,
   GRUPOS_ABA_OF, grupoAbaDaSituacao, ordenarLinhasOf,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { lerPdfDeArquivo, salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual, abrirDisputaManual, adicionarMensagemDisputaEquipe, encerrarDisputa } from "../../of-servico.js";
+import { salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual, abrirDisputaManual, adicionarMensagemDisputaEquipe, encerrarDisputa } from "../../of-servico.js";
 import { proximoTurno, precisaAvisoSemResposta, disputaAtiva } from "../../dominio/disputa.js";
 import { METODOS_ENVIO_MANUAL, rotuloMetodoEnvio } from "../../dominio/envio-manual.js";
 import { comprimirImagemAnexo } from "../../dominio/imagem.js";
@@ -42,7 +42,6 @@ const COR_SITUACAO = {
 export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios = [], reparticoes = [], onSalvarReparticao, secretariaId, municipioId, onRecarregar, onSalvarFornecedor, emailUsuario }) {
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(emptyOf());
-  const [lendoPdf, setLendoPdf] = useState(false);
   const [aExcluir, setAExcluir] = useState(null);
   const [aDisparar, setADisparar] = useState(null); // OF aguardando confirmação de envio
   const [confirmandoEntregaDe, setConfirmandoEntregaDe] = useState(null); // OF cuja entrega está sendo confirmada
@@ -110,41 +109,12 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
   const [aviso, setAviso] = useState("");
-  const inputRef = useRef(null);
 
   function abrirNova() {
     if (!secretariaId) { setErro("Selecione uma entidade específica antes de criar uma OF."); return; }
     setEditando(emptyOf({ numeroOf: gerarNumeroOfSugerido(), secretariaId, municipioId }));
     setErro("");
     setModalAberto(true);
-  }
-
-  async function handleImportarPdf(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!secretariaId) { setErro("Selecione uma entidade específica antes de importar uma OF."); e.target.value = ""; return; }
-    setLendoPdf(true);
-    setErro("");
-    try {
-      const { pdfBase64, textoCompleto } = await lerPdfDeArquivo(file);
-      const extraido = extrairDadosDoPdf(textoCompleto);
-      const cnpjExtraidoNormalizado = normalizarCnpj(extraido.cnpj);
-      const fornecedor = cnpjExtraidoNormalizado ? buscarFornecedorPorCnpj(fornecedores, cnpjExtraidoNormalizado) : null;
-      setEditando(emptyOf({
-        numeroOf: extraido.numeroOf || gerarNumeroOfSugerido(),
-        empresa: fornecedor?.razaoSocial || extraido.empresa,
-        cnpj: cnpjExtraidoNormalizado,
-        emailFornecedor: fornecedor?.email || "",
-        telefoneFornecedor: fornecedor?.telefone || "",
-        pdfBase64,
-        secretariaId, municipioId,
-      }));
-      setModalAberto(true);
-    } catch (e2) {
-      setErro("Não foi possível ler o PDF: " + (e2.message || e2));
-    }
-    setLendoPdf(false);
-    e.target.value = "";
   }
 
   // Ao sair do campo CNPJ, busca no cadastro — se achar, preenche o resto.
@@ -728,17 +698,6 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
             style={{ background: C.brassLight, color: C.navyDark }}>
             <Upload size={15} /> Importar várias OFs
           </button>
-          <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold"
-            style={{
-              background: C.paperDark, color: semEntidadeEspecifica ? C.inkMuted : C.navy,
-              cursor: semEntidadeEspecifica ? "not-allowed" : "pointer", opacity: semEntidadeEspecifica ? 0.6 : 1,
-            }}
-            title={semEntidadeEspecifica ? "Selecione uma entidade específica primeiro" : undefined}>
-            {lendoPdf ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
-            {lendoPdf ? "Lendo PDF..." : "Importar OF (PDF)"}
-            <input ref={inputRef} type="file" accept="application/pdf" className="hidden"
-              onChange={handleImportarPdf} disabled={lendoPdf || semEntidadeEspecifica} />
-          </label>
           <button onClick={abrirNova} disabled={semEntidadeEspecifica}
             title={semEntidadeEspecifica ? "Selecione uma entidade específica primeiro" : undefined}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"

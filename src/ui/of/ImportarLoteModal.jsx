@@ -73,6 +73,7 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
           empresa: fornecedor?.razaoSocial || extraido.empresa || "",
           cnpj: cnpjNormalizado,
           emailFornecedor: fornecedor?.email || "",
+          telefoneFornecedor: fornecedor?.telefone || "",
           pdfBase64,
           jaCadastrado: !!fornecedor,
           marcado: true,
@@ -115,12 +116,12 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
         const efetivos = valoresEfetivos(item);
         await salvarOf(emptyOf({
           numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
-          emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
+          emailFornecedor: item.emailFornecedor, telefoneFornecedor: item.telefoneFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
           timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...efetivos,
         }));
         if (cnpjValido(item.cnpj)) {
           const atualizado = upsertFornecedor(fornecedoresAcumulados, {
-            cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
+            cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor, telefone: item.telefoneFornecedor,
           });
           onSalvarFornecedor(atualizado);
           fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
@@ -160,14 +161,14 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
           const efetivos = valoresEfetivos(item);
           const salva = await salvarOf(emptyOf({
             numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
-            emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
+            emailFornecedor: item.emailFornecedor, telefoneFornecedor: item.telefoneFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
             timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...efetivos,
           }));
           await dispararNotificacaoFornecedor(salva, emailUsuario);
         } else {
           const payloads = grupo.map(item => emptyOf({
             numeroOf: item.numeroOf, empresa: item.empresa, cnpj: item.cnpj,
-            emailFornecedor: item.emailFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
+            emailFornecedor: item.emailFornecedor, telefoneFornecedor: item.telefoneFornecedor, pdfBase64: item.pdfBase64, secretariaId, municipioId,
             timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot, ...valoresEfetivos(item),
           }));
           await dispararLote(payloads, secretariaId, emailUsuario);
@@ -175,7 +176,7 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
         for (const item of grupo) {
           if (cnpjValido(item.cnpj)) {
             const atualizado = upsertFornecedor(fornecedoresAcumulados, {
-              cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
+              cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor, telefone: item.telefoneFornecedor,
             });
             onSalvarFornecedor(atualizado);
             fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
@@ -321,6 +322,9 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
                                 </td>
                                 <td className="px-2.5 py-2">
                                   <input value={item.emailFornecedor} onChange={e => atualizarItem(item.idLocal, { emailFornecedor: e.target.value })}
+                                    className="w-36 px-1.5 py-1 rounded border text-xs mb-1" style={{ borderColor: C.border }} />
+                                  <input value={item.telefoneFornecedor} onChange={e => atualizarItem(item.idLocal, { telefoneFornecedor: e.target.value })}
+                                    placeholder="Telefone (opcional)"
                                     className="w-36 px-1.5 py-1 rounded border text-xs" style={{ borderColor: C.border }} />
                                 </td>
                                 <td className="px-2.5 py-2">
