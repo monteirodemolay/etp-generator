@@ -87,6 +87,7 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     const emailJsSnapshot = resolverCredenciaisEmailJs(secretariaDoLote);
     const nomeEntidadeSnapshot = secretariaDoLote?.sigla || secretariaDoLote?.nome || null;
     const sucesso = []; const falhas = [];
+    let fornecedoresAcumulados = fornecedores; // atualizado a cada volta, pra reconhecer o mesmo CNPJ dentro do próprio lote
     for (const item of itens.filter(i => !i.erroLeitura && i.erro !== "Número de OF repetido")) {
       try {
         await salvarOf(emptyOf({
@@ -95,9 +96,11 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
           timbreSnapshot, emailJsSnapshot, nomeEntidadeSnapshot,
         }));
         if (cnpjValido(item.cnpj)) {
-          onSalvarFornecedor(upsertFornecedor(fornecedores, {
+          const atualizado = upsertFornecedor(fornecedoresAcumulados, {
             cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
-          }));
+          });
+          onSalvarFornecedor(atualizado);
+          fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
         }
         sucesso.push(item);
       } catch (e2) { falhas.push({ item, motivo: e2.message || String(e2) }); }
@@ -114,6 +117,7 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
     const emailJsSnapshot = resolverCredenciaisEmailJs(secretariaDoLote);
     const nomeEntidadeSnapshot = secretariaDoLote?.sigla || secretariaDoLote?.nome || null;
     const sucesso = []; const falhas = [];
+    let fornecedoresAcumulados = fornecedores; // atualizado a cada volta, pra reconhecer o mesmo CNPJ dentro do próprio lote
     for (const item of prontos) {
       try {
         const salva = await salvarOf(emptyOf({
@@ -123,9 +127,11 @@ export function ImportarLoteModal({ ofsExistentes, fornecedores, secretarias, se
         }));
         await dispararNotificacaoFornecedor(salva);
         if (cnpjValido(item.cnpj)) {
-          onSalvarFornecedor(upsertFornecedor(fornecedores, {
+          const atualizado = upsertFornecedor(fornecedoresAcumulados, {
             cnpj: item.cnpj, razaoSocial: item.empresa, email: item.emailFornecedor,
-          }));
+          });
+          onSalvarFornecedor(atualizado);
+          fornecedoresAcumulados = [...fornecedoresAcumulados.filter(f => f.id !== atualizado.id), atualizado];
         }
         sucesso.push(item);
       } catch (e2) { falhas.push({ item, motivo: e2.message || String(e2) }); }
