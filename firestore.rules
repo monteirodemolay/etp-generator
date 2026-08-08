@@ -49,7 +49,7 @@ service cloud.firestore {
       allow get: if true;
       allow create: if daEquipe();
       allow delete: if daEquipe();
-      allow update: if daEquipe() || transicaoDoFornecedorEhValida() || disputaTransicaoDoFornecedorEhValida();
+      allow update: if daEquipe() || transicaoDoFornecedorEhValida() || disputaTransicaoDoFornecedorEhValida() || anexarNotaFiscalEhValido();
 
       function transicaoDoFornecedorEhValida() {
         let antes = resource.data;
@@ -99,6 +99,25 @@ service cloud.firestore {
           (antesD.mensagens.size() == 0 || antesD.mensagens.size() == 2);
 
         return apenasCamposDaDisputaMudaram && (abrindoComDivergencia || respondendoNaVez);
+      }
+
+      // Anexar Nota Fiscal: o fornecedor pode fazer isso a qualquer momento,
+      // sem depender do status da OF (diferente das transições acima) --
+      // só pode ACRESCENTAR exatamente uma nota ao final da lista, sem
+      // alterar nenhuma das que já existiam, e a nota nova não pode chegar
+      // já "atestada" (isso só a equipe faz, por outro caminho).
+      function anexarNotaFiscalEhValido() {
+        let antes = resource.data;
+        let depois = request.resource.data;
+        let apenasNotasMudaram = depois.diff(antes).affectedKeys().hasOnly(['notasFiscais', 'updatedAt']);
+
+        let antesLista = antes.get('notasFiscais', []);
+        let depoisLista = depois.get('notasFiscais', []);
+        let cresceuEmUm = depoisLista.size() == antesLista.size() + 1;
+        let notasAntigasIntactas = antesLista.size() == 0 || depoisLista[0:antesLista.size()] == antesLista;
+        let notaNovaSemAtesto = depoisLista[antesLista.size()].atestado == null;
+
+        return apenasNotasMudaram && cresceuEmUm && notasAntigasIntactas && notaNovaSemAtesto;
       }
     }
 

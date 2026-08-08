@@ -219,3 +219,42 @@ ${pesquisa.responsavelCargo ? `<p style="text-align:center">${escapeHtml(pesquis
     nomeArquivo: `pesquisa_precos_${(pesquisa.numeroProcesso || todayISO()).replace(/[^\w-]/g, "_")}.docx`,
   });
 }
+
+// Termo de Ateste da Nota Fiscal — documento formal certificando que o
+// produto/serviço descrito na nota foi recebido e conferido, pra instruir
+// o processo de pagamento. Só gerado depois que a nota já foi atestada
+// no sistema (o registro em si é o que vale; isto é só a versão impressa).
+export async function gerarTermoAtestoNotaFiscal(of, nota, cabecalho) {
+  const cab = await prepararCabecalho(cabecalho);
+  if (!nota.atestado) throw new Error("Esta Nota Fiscal ainda não foi atestada.");
+
+  const html = `
+<h1 style="text-align:center">TERMO DE ATESTE DE NOTA FISCAL</h1>
+<p style="text-align:center"><i>Lei nº 14.133/2021</i></p>
+<table>
+  <tr><td><b>Ordem de Fornecimento</b></td><td>nº ${escapeHtml(of.numeroOf)}</td></tr>
+  <tr><td><b>Fornecedor</b></td><td>${escapeHtml(of.empresa || "-")} — CNPJ ${escapeHtml(of.cnpj || "-")}</td></tr>
+  <tr><td><b>Nota Fiscal</b></td><td>${escapeHtml(nota.nomeArquivo)}${nota.numeroNF ? ` — nº ${escapeHtml(nota.numeroNF)}` : ""}</td></tr>
+  ${nota.valorNF ? `<tr><td><b>Valor</b></td><td>${escapeHtml(nota.valorNF)}</td></tr>` : ""}
+  <tr><td><b>Anexada em</b></td><td>${fmtDate(nota.anexadoEm)}</td></tr>
+</table>
+
+<p>Atesto, para os devidos fins, que o objeto descrito na Nota Fiscal acima foi recebido e conferido,
+correspondendo ao que foi efetivamente entregue no âmbito da Ordem de Fornecimento indicada, estando apto
+para prosseguimento do processo de pagamento.</p>
+
+${nota.atestado.observacao?.trim() ? `<p><b>Observação:</b> ${escapeHtml(nota.atestado.observacao)}</p>` : ""}
+
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:right">${fmtDate(nota.atestado.quando)}</p>
+<p style="text-align:center">&nbsp;</p>
+<p style="text-align:center">_______________________________________</p>
+<p style="text-align:center"><b>${escapeHtml(nota.atestado.nomeAtestador || "[Responsável]")}</b></p>
+<p style="text-align:center">${escapeHtml(nota.atestado.cargoAtestador || "")}</p>`;
+
+  baixarDocx({
+    corpoOoxml: htmlParaOoxml(html),
+    cabecalho: cab,
+    nomeArquivo: `atesto_nf_OF-${of.numeroOf}_${(nota.numeroNF || nota.id).replace(/[^\w-]/g, "_")}.docx`,
+  });
+}

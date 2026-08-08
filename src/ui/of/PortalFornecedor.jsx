@@ -7,10 +7,11 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia, adicionarMensagemDisputaFornecedor } from "../../of-servico.js";
+import { buscarOfPorToken, confirmarRecebimento, reportarDivergencia, adicionarMensagemDisputaFornecedor, anexarNotaFiscal } from "../../of-servico.js";
 import { proximoTurno, precisaAvisoSemResposta } from "../../dominio/disputa.js";
 import { fmtDateISO } from "../../dominio/datas.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
+import { comprimirImagemAnexo } from "../../dominio/imagem.js";
 import { ComprovanteOf } from "./ComprovanteOf.jsx";
 import { LinhaDoTempoDisputa } from "../comuns/index.jsx";
 
@@ -31,6 +32,10 @@ export function PortalFornecedor({ token }) {
   const [mensagemDisputa, setMensagemDisputa] = useState("");
   const [prazoPropostoDisputa, setPrazoPropostoDisputa] = useState("");
   const [enviandoDisputa, setEnviandoDisputa] = useState(false);
+  const [arquivoNF, setArquivoNF] = useState(null);
+  const [numeroNF, setNumeroNF] = useState("");
+  const [valorNF, setValorNF] = useState("");
+  const [enviandoNF, setEnviandoNF] = useState(false);
 
   useEffect(() => {
     buscarOfPorToken(token)
@@ -83,6 +88,31 @@ export function PortalFornecedor({ token }) {
       setErro("Não foi possível enviar sua resposta agora: " + (e.message || e));
     }
     setEnviandoDisputa(false);
+  }
+
+  async function handleAnexarNF() {
+    if (!arquivoNF) { setErro("Escolha o arquivo da Nota Fiscal antes de enviar."); return; }
+    setEnviandoNF(true);
+    setErro("");
+    try {
+      let dataUrl = await new Promise((resolve, reject) => {
+        const leitor = new FileReader();
+        leitor.onload = () => resolve(leitor.result);
+        leitor.onerror = reject;
+        leitor.readAsDataURL(arquivoNF);
+      });
+      if (arquivoNF.type.startsWith("image/")) dataUrl = await comprimirImagemAnexo(dataUrl);
+      const atualizado = await anexarNotaFiscal(token, {
+        arquivoBase64: dataUrl, nomeArquivo: arquivoNF.name, numeroNF: numeroNF.trim(), valorNF: valorNF.trim(),
+      });
+      setOf(atualizado);
+      setArquivoNF(null);
+      setNumeroNF("");
+      setValorNF("");
+    } catch (e) {
+      setErro("Não foi possível anexar a Nota Fiscal agora: " + (e.message || e));
+    }
+    setEnviandoNF(false);
   }
 
   const linkConferencia = of?.reciboImutavel?.chave
@@ -228,6 +258,61 @@ export function PortalFornecedor({ token }) {
               </div>
             )}
           </>
+        )}
+
+        {of && (
+          <div style={{ marginTop: 20, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+            <h4 style={{ margin: "0 0 10px 0", color: C.navy }}>📄 Notas Fiscais</h4>
+            <p style={{ fontSize: 12, color: C.inkMuted, margin: "0 0 12px 0" }}>
+              Pode anexar a qualquer momento, mesmo antes de confirmar o recebimento — inclusive mais de uma,
+              se a entrega for parcial.
+            </p>
+
+            {(of.notasFiscais || []).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                {of.notasFiscais.map(nf => (
+                  <div key={nf.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, color: C.ink }}>
+                        <b>{nf.nomeArquivo}</b>{nf.numeroNF ? ` — nº ${nf.numeroNF}` : ""}
+                      </span>
+                      <a href={nf.arquivoBase64} download={nf.nomeArquivo} style={{ fontSize: 11, color: "#2563eb" }}>Baixar</a>
+                    </div>
+                    <p style={{ margin: "4px 0 0 0", fontSize: 11, color: C.inkMuted }}>
+                      Anexada em {new Date(nf.anexadoEm).toLocaleString("pt-BR")}
+                      {nf.valorNF ? ` · R$ ${nf.valorNF}` : ""}
+                    </p>
+                    {nf.atestado ? (
+                      <p style={{ margin: "6px 0 0 0", fontSize: 11, fontWeight: "bold", color: C.green }}>
+                        ✅ Atestada em {new Date(nf.atestado.quando).toLocaleString("pt-BR")} por {nf.atestado.nomeAtestador}
+                      </p>
+                    ) : (
+                      <p style={{ margin: "6px 0 0 0", fontSize: 11, color: "#b45309" }}>
+                        {of.confirmacaoEntrega ? "Aguardando ateste da equipe" : "Só pode ser atestada depois da confirmação de recebimento"}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <label style={{ display: "block", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: C.inkMuted }}>Arquivo (PDF ou foto)</span>
+              <input type="file" accept="application/pdf,image/*" onChange={e => setArquivoNF(e.target.files?.[0] || null)}
+                style={{ display: "block", marginTop: 4, fontSize: 12 }} />
+            </label>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <input value={numeroNF} onChange={e => setNumeroNF(e.target.value)} placeholder="Número da NF (opcional)"
+                style={{ flex: 1, minWidth: 140, padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 12 }} />
+              <input value={valorNF} onChange={e => setValorNF(e.target.value)} placeholder="Valor (opcional)"
+                style={{ width: 120, padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 12 }} />
+            </div>
+            <button onClick={handleAnexarNF} disabled={enviandoNF || !arquivoNF}
+              style={{ background: C.navy, color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4,
+                cursor: "pointer", fontSize: 13, opacity: (enviandoNF || !arquivoNF) ? 0.6 : 1 }}>
+              {enviandoNF ? "Enviando..." : "Anexar Nota Fiscal"}
+            </button>
+          </div>
         )}
 
         {of && (

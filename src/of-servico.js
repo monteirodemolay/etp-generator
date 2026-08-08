@@ -29,7 +29,8 @@ import { db } from "./firebase.js";
 import emailjs from "@emailjs/browser";
 import * as pdfjsLib from "pdfjs-dist";
 import { extrairDadosDoPdf, calcularPrazoLimite, calcularPrazoLimiteISO,
-  calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega, chaveIndiceFornecedor } from "./dominio/of.js";
+  calcularPrazoLimiteComCalendario, montarConfirmacaoEntrega, chaveIndiceFornecedor,
+  emptyNotaFiscal, podeAtestarNotaFiscal } from "./dominio/of.js";
 import { diasFechadosNoPeriodo } from "./dominio/dias-uteis.js";
 import { fmtDateISO, todayISO } from "./dominio/datas.js";
 import storage from "./storage.js";
@@ -401,6 +402,69 @@ export async function desfazerConfirmacaoEntrega(token, motivo, usuarioEmail) {
   }
 
   return { ...of, confirmacaoEntrega: null };
+}
+
+// ---------- Notas Fiscais ----------
+// O fornecedor pode anexar a qualquer momento, quantas quiser (entregas
+// parciais, nota substituída etc.) -- não exige nenhuma confirmação prévia.
+export async function anexarNotaFiscal(token, { arquivoBase64, nomeArquivo, numeroNF, valorNF }) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const nota = emptyNotaFiscal({ arquivoBase64, nomeArquivo, numeroNF, valorNF });
+  const notasFiscais = [...(of.notasFiscais || []), nota];
+  await updateDoc(doc(db, COL_OF, token), { notasFiscais, updatedAt: Date.now() });
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_NOTA_FISCAL_ANEXADA, usuarioEmail: null, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Nota Fiscal "${nomeArquivo}" anexada pelo fornecedor${numeroNF ? ` (nº ${numeroNF})` : ""}.`,
+  });
+
+  return { ...of, notasFiscais };
+}
+
+// Só a equipe atesta, e só depois que a entrega já foi confirmada (ver
+// podeAtestarNotaFiscal). Atestar não trava mais nada -- pode atestar mais
+// de uma nota da mesma OF, se for o caso.
+export async function atestarNotaFiscal(token, notaId, { nomeAtestador, cargoAtestador, observacao }, usuarioEmail) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  if (!podeAtestarNotaFiscal(of)) throw new Error("Esta OF ainda não teve a entrega confirmada como recebida -- não é possível atestar a nota ainda.");
+
+  const atestado = { atestadoPor: usuarioEmail || "", nomeAtestador: nomeAtestador || "", cargoAtestador: cargoAtestador || "", quando: Date.now(), observacao: observacao || "" };
+  const notasFiscais = (of.notasFiscais || []).map(n => (n.id === notaId ? { ...n, atestado } : n));
+  await updateDoc(doc(db, COL_OF, token), { notasFiscais, updatedAt: Date.now() });
+
+  const nota = notasFiscais.find(n => n.id === notaId);
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_NOTA_FISCAL_ATESTADA, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Nota Fiscal "${nota?.nomeArquivo}"${nota?.numeroNF ? ` (nº ${nota.numeroNF})` : ""} atestada por ${nomeAtestador} (${cargoAtestador}).${observacao ? ` Observação: ${observacao}` : ""}`,
+  });
+
+  return { ...of, notasFiscais };
+}
+
+// Desfazer nunca apaga nada: o campo "atestado" volta pra null (podendo
+// atestar de novo depois), mas o que foi desfeito -- e por quê -- fica
+// registrado por completo, pra sempre, na auditoria.
+export async function desfazerAtestoNotaFiscal(token, notaId, motivo, usuarioEmail) {
+  const of = await buscarOfPorToken(token);
+  if (!of) throw new Error("Ordem de Fornecimento não encontrada.");
+  const notaAtual = (of.notasFiscais || []).find(n => n.id === notaId);
+  if (!notaAtual?.atestado) throw new Error("Esta Nota Fiscal não está atestada.");
+
+  const atestadoAnterior = notaAtual.atestado;
+  const notasFiscais = (of.notasFiscais || []).map(n => (n.id === notaId ? { ...n, atestado: null } : n));
+  await updateDoc(doc(db, COL_OF, token), { notasFiscais, updatedAt: Date.now() });
+
+  registrarEvento({
+    tipo: TIPOS_EVENTO.OF_NOTA_FISCAL_ATESTO_DESFEITO, usuarioEmail, secretariaId: of.secretariaId,
+    alvo: { tipo: "of", id: token, rotulo: `OF-${of.numeroOf}` },
+    detalhes: `Desfez o ateste da Nota Fiscal "${notaAtual.nomeArquivo}", feito por ${atestadoAnterior.nomeAtestador} em ${new Date(atestadoAnterior.quando).toLocaleString("pt-BR")}. Motivo do desfazimento: ${motivo}`,
+  });
+
+  return { ...of, notasFiscais };
 }
 
 // Fase 5: notificação formal de atraso/não entrega. Pode ser enviada quantas

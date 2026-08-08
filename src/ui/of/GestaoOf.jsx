@@ -11,12 +11,12 @@ import { Upload, Plus, Trash2, Mail, Printer, Download, Pencil, AlertCircle, Inf
 import { C } from "../tokens.js";
 import { ConfirmarExclusao, LinhaDoTempoDisputa } from "../comuns/index.jsx";
 import { gerarNumeroOfSugerido, numeroOfDuplicado,
-  calcularSituacao, emptyOf,
+  calcularSituacao, emptyOf, podeAtestarNotaFiscal,
   GRUPOS_ABA_OF, grupoAbaDaSituacao, ordenarLinhasOf,
   gerarLinkWhatsApp, montarMensagemWhatsApp } from "../../dominio/of.js";
 import { normalizarCnpj, formatarCnpj, cnpjValido,
   buscarFornecedorPorCnpj, upsertFornecedor, resumoHistoricoFornecedor } from "../../dominio/fornecedores.js";
-import { salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual, abrirDisputaManual, adicionarMensagemDisputaEquipe, encerrarDisputa } from "../../of-servico.js";
+import { salvarOf, excluirOf, dispararNotificacaoFornecedor, confirmarEntrega, desfazerConfirmacaoEntrega, dispararNotificacaoAtraso, registrarEnvioManual, abrirDisputaManual, adicionarMensagemDisputaEquipe, encerrarDisputa, atestarNotaFiscal, desfazerAtestoNotaFiscal } from "../../of-servico.js";
 import { proximoTurno, precisaAvisoSemResposta, disputaAtiva } from "../../dominio/disputa.js";
 import { METODOS_ENVIO_MANUAL, rotuloMetodoEnvio } from "../../dominio/envio-manual.js";
 import { comprimirImagemAnexo } from "../../dominio/imagem.js";
@@ -28,6 +28,7 @@ import { ComprovanteOf } from "./ComprovanteOf.jsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { resolverCabecalho, prepararCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
+import { gerarTermoAtestoNotaFiscal } from "../../docx/documentos.js";
 import { resolverCredenciaisEmailJs } from "../../dominio/emailjs-config.js";
 import { reparticoesDaEntidade } from "../../dominio/reparticoes.js";
 import { gerarQrCodeDataUrl } from "../../qrcode-servico.js";
@@ -106,6 +107,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
   const [dataEntregaForm, setDataEntregaForm] = useState(todayISO());
   const [naoEntregueForm, setNaoEntregueForm] = useState(false);
   const [salvandoEntrega, setSalvandoEntrega] = useState(false);
+  const [atestandoNota, setAtestandoNota] = useState(null); // { item, nota }
+  const [nomeAtestadorForm, setNomeAtestadorForm] = useState("");
+  const [cargoAtestadorForm, setCargoAtestadorForm] = useState("");
+  const [observacaoAtestoForm, setObservacaoAtestoForm] = useState("");
+  const [salvandoAtesto, setSalvandoAtesto] = useState(false);
+  const [desfazendoAtestoDe, setDesfazendoAtestoDe] = useState(null); // { item, nota }
+  const [motivoDesfazerAtesto, setMotivoDesfazerAtesto] = useState("");
+  const [desfazendoAtesto, setDesfazendoAtesto] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
   const [aviso, setAviso] = useState("");
@@ -230,6 +239,48 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
       setErro("Não foi possível desfazer: " + (e2.message || e2));
     }
     setDesfazendo(false);
+  }
+
+  function abrirAtestarNota(item, nota) {
+    setAtestandoNota({ item, nota });
+    setNomeAtestadorForm("");
+    setCargoAtestadorForm("");
+    setObservacaoAtestoForm("");
+    setErro("");
+  }
+
+  async function handleAtestarNota() {
+    if (!nomeAtestadorForm.trim() || !cargoAtestadorForm.trim()) { setErro("Informe seu nome e cargo antes de atestar."); return; }
+    setSalvandoAtesto(true);
+    try {
+      await atestarNotaFiscal(atestandoNota.item.token, atestandoNota.nota.id, {
+        nomeAtestador: nomeAtestadorForm.trim(), cargoAtestador: cargoAtestadorForm.trim(), observacao: observacaoAtestoForm.trim(),
+      }, emailUsuario);
+      setAtestandoNota(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível atestar: " + (e2.message || e2));
+    }
+    setSalvandoAtesto(false);
+  }
+
+  function abrirDesfazerAtesto(item, nota) {
+    setDesfazendoAtestoDe({ item, nota });
+    setMotivoDesfazerAtesto("");
+    setErro("");
+  }
+
+  async function handleDesfazerAtesto() {
+    if (!motivoDesfazerAtesto.trim()) { setErro("Informe o motivo do desfazimento."); return; }
+    setDesfazendoAtesto(true);
+    try {
+      await desfazerAtestoNotaFiscal(desfazendoAtestoDe.item.token, desfazendoAtestoDe.nota.id, motivoDesfazerAtesto.trim(), emailUsuario);
+      setDesfazendoAtestoDe(null);
+      onRecarregar();
+    } catch (e2) {
+      setErro("Não foi possível desfazer o ateste: " + (e2.message || e2));
+    }
+    setDesfazendoAtesto(false);
   }
 
   function abrirNotificacao(item) {
@@ -450,6 +501,14 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
       <style>@media print { .botao-imprimir { display: none; } }</style>
       </body></html>`);
     janela.document.close();
+  }
+
+  async function baixarComprovanteAtesto(item, nota) {
+    try {
+      await gerarTermoAtestoNotaFiscal(item, nota, resolverCabecalho(item, secretarias, TIMBRE_PADRAO));
+    } catch (e2) {
+      setErro("Não foi possível gerar o comprovante: " + (e2.message || e2));
+    }
   }
 
   async function gerarPacoteEncaminhamento(item) {
@@ -1132,6 +1191,47 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
                   <p className="text-xs px-2" style={{ color: C.inkMuted }}>Disponível depois que o fornecedor confirmar o recebimento.</p>
                 )}
 
+                <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Notas Fiscais</p>
+                {(item.notasFiscais?.length > 0) ? (
+                  <div className="px-2 space-y-1.5">
+                    {item.notasFiscais.map(nf => (
+                      <div key={nf.id} className="rounded-lg border p-2.5" style={{ borderColor: C.border }}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium truncate" style={{ color: C.ink }}>
+                            {nf.nomeArquivo}{nf.numeroNF ? ` — nº ${nf.numeroNF}` : ""}
+                          </span>
+                          <a href={nf.arquivoBase64} download={nf.nomeArquivo} className="text-[11px] shrink-0" style={{ color: "#2563eb" }}>Baixar</a>
+                        </div>
+                        {nf.atestado ? (
+                          <div className="mt-1.5 flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[11px] font-semibold" style={{ color: C.green }}>
+                              ✅ Atestada por {nf.atestado.nomeAtestador} em {new Date(nf.atestado.quando).toLocaleDateString("pt-BR")}
+                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button onClick={() => baixarComprovanteAtesto(item, nf)} className="text-[11px] font-medium" style={{ color: C.brass }}>
+                                Baixar comprovante
+                              </button>
+                              <button onClick={() => abrirDesfazerAtesto(item, nf)} className="text-[11px] font-medium" style={{ color: C.red }}>
+                                Desfazer
+                              </button>
+                            </div>
+                          </div>
+                        ) : podeAtestarNotaFiscal(item) ? (
+                          <button onClick={() => abrirAtestarNota(item, nf)} className="mt-1.5 text-[11px] font-semibold underline" style={{ color: C.brass }}>
+                            Atestar esta Nota Fiscal
+                          </button>
+                        ) : (
+                          <p className="mt-1.5 text-[11px]" style={{ color: C.inkMuted }}>
+                            Só pode ser atestada depois de confirmar a entrega como recebida.
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs px-2" style={{ color: C.inkMuted }}>O fornecedor ainda não anexou nenhuma Nota Fiscal.</p>
+                )}
+
                 <p className="text-[10.5px] font-semibold uppercase tracking-wide px-2 mb-1 mt-4" style={{ color: C.inkMuted }}>Notificação de atraso</p>
                 {(situacaoItem.atrasado || situacaoItem.naoEntregue || situacaoItem.precisaConfirmarEntrega) && (
                   <ItemAcao icone={AlertCircle} rotulo="Notificar atraso/não entrega" cor="#b45309" onClick={() => abrirNotificacao(item)}
@@ -1192,6 +1292,79 @@ export function GestaoOf({ ofs, fornecedores, secretarias, municipios, usuarios 
               <button type="button" onClick={handleDesfazerEntrega} disabled={desfazendo}
                 className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.red, color: "white" }}>
                 {desfazendo ? "Desfazendo..." : "Desfazer e avisar o fornecedor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {atestandoNota && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Atestar Nota Fiscal — OF nº {atestandoNota.item.numeroOf}
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              {atestandoNota.nota.nomeArquivo}{atestandoNota.nota.numeroNF ? ` — nº ${atestandoNota.nota.numeroNF}` : ""}. Isso
+              certifica que o produto descrito foi recebido e conferido de fato — fica registrado com seu
+              nome, cargo e a data de hoje.
+            </p>
+            <label className="block mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Seu nome</span>
+              <input value={nomeAtestadorForm} onChange={e => setNomeAtestadorForm(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+            <label className="block mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Seu cargo</span>
+              <input value={cargoAtestadorForm} onChange={e => setCargoAtestadorForm(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Observação (opcional)</span>
+              <textarea value={observacaoAtestoForm} onChange={e => setObservacaoAtestoForm(e.target.value)} rows={2}
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setAtestandoNota(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleAtestarNota} disabled={salvandoAtesto}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.green, color: "white" }}>
+                {salvandoAtesto ? "Atestando..." : "Atestar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {desfazendoAtestoDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.6)" }}>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-2" style={{ color: C.navy }}>
+              Desfazer ateste — OF nº {desfazendoAtestoDe.item.numeroOf}
+            </h2>
+            <p className="text-xs mb-3" style={{ color: C.inkMuted }}>
+              Isso volta a Nota Fiscal pro estado "aguardando ateste" — dá pra atestar de novo depois, se
+              precisar. O ateste anterior e o motivo abaixo ficam registrados por completo no log de
+              auditoria, sem possibilidade de apagar.
+            </p>
+            <label className="block mb-4">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>
+                Motivo (obrigatório)
+              </span>
+              <textarea value={motivoDesfazerAtesto} onChange={e => setMotivoDesfazerAtesto(e.target.value)} rows={3}
+                placeholder="Ex.: atestado por engano, nota errada"
+                className="mt-1 w-full px-3 py-2 rounded-lg border text-sm" style={{ borderColor: C.border }} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setDesfazendoAtestoDe(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleDesfazerAtesto} disabled={desfazendoAtesto}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.red, color: "white" }}>
+                {desfazendoAtesto ? "Desfazendo..." : "Desfazer ateste"}
               </button>
             </div>
           </div>

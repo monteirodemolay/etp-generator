@@ -226,6 +226,26 @@ export function montarConfirmacaoEntrega(dataEntregaReal, prazoLimiteISO, confir
   };
 }
 
+// ---------- Notas Fiscais ----------
+export function emptyNotaFiscal({ nomeArquivo, arquivoBase64, numeroNF, valorNF }) {
+  return {
+    id: "nf_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    nomeArquivo: nomeArquivo || "",
+    arquivoBase64: arquivoBase64 || "",
+    numeroNF: (numeroNF || "").trim(),
+    valorNF: valorNF || "",
+    anexadoEm: Date.now(),
+    atestado: null, // { atestadoPor, nomeAtestador, cargoAtestador, quando, observacao }
+  };
+}
+
+// Só pode atestar uma Nota Fiscal depois que a entrega foi confirmada como
+// realmente recebida (o "recebimento e aceite do produto") -- se a equipe
+// marcou como "não entregue", não faz sentido nenhum atestar a nota.
+export function podeAtestarNotaFiscal(of) {
+  return !!of.confirmacaoEntrega && of.confirmacaoEntrega.situacao !== SITUACAO_ENTREGA.NAO_ENTREGUE;
+}
+
 // ---------- Agrupamento por aba, para a tela de gestão ----------
 // "Entregue no prazo" e "fora do prazo" ficam juntos numa aba só
 // ("Entregues"), diferenciados pela cor do selo na tabela — separar em duas
@@ -413,6 +433,14 @@ export function emptyOf(dadosIniciais = {}) {
     // timbre: a Central do Fornecedor é pública e não tem acesso à lista de
     // entidades, então precisa que a OF já traga isso consigo.
     nomeEntidadeSnapshot: dadosIniciais.nomeEntidadeSnapshot || null,
+    // Notas Fiscais anexadas pelo fornecedor -- pode anexar quantas quiser,
+    // a qualquer momento (ex.: entregas parciais). Cada uma só pode ser
+    // "atestada" (pela equipe) depois que a entrega foi confirmada. Desfazer
+    // um ateste nunca apaga nada: o campo volta pra null, mas o evento fica
+    // registrado por completo na auditoria (mesmo cuidado já usado em
+    // desfazerConfirmacaoEntrega).
+    notasFiscais: dadosIniciais.notasFiscais || [], // { id, nomeArquivo, arquivoBase64, numeroNF, valorNF, anexadoEm, atestado }
+
     // Quando várias OFs da mesma empresa são disparadas juntas (mesmo CNPJ,
     // mesmo lote de importação), todas ganham o mesmo loteId -- usado só
     // pra agrupar num único e-mail e numa única confirmação de "recebi
