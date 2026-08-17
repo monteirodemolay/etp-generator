@@ -172,7 +172,7 @@ export function EditorView({ etp, activeSection, setActiveSection, onMeta, onSec
               ) : activeSection === "itens" ? (
                 <ItemsForm etp={etp} onItens={onItens} onMeta={onMeta} />
               ) : activeSection === "pca" ? (
-                <PCAForm etp={etp} onPca={onPca} onManuaisPca={onManuaisPca} />
+                <PCAForm etp={etp} onPca={onPca} onManuaisPca={onManuaisPca} secretarias={secretarias} />
               ) : (
                 <CotacoesForm etp={etp} onValoresAdotados={onValoresAdotados} onCotacoes={onCotacoes} onMeta={onMeta} />
               )}

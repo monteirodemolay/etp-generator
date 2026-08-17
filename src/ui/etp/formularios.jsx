@@ -13,7 +13,7 @@ import { objetoCompleto } from "../../dominio/etp.js";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Upload, Download, Trash2, Plus, Check, AlertCircle, Info, Loader2,
-  FileText, FileEdit, X, ListX, Search, Copy,
+  FileText, FileEdit, X, ListX, Search, Copy, RefreshCw,
 } from "lucide-react";
 import { C } from "../tokens.js";
 import { Field } from "../comuns/index.jsx";
@@ -23,6 +23,8 @@ import { newItem, parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti, gerarPlanilhaCotacaoFornecedor,
          parseCotacaoFornecedorSheet } from "../../dominio/planilhas.js";
 import { cruzarComPca, linhaPcaPorCodigo, buscarNoPca, mesmoCodigo } from "../../dominio/pca.js";
+import { buscarPcaOnline } from "../../dominio/pca-online.js";
+import { secretariaDoDoc } from "../../dominio/entidades.js";
 import { TIPOS_OBJETO, FONTES_COTACAO } from "../../dominio/opcoes.js";
 import { listaResponsaveis } from "../../dominio/etp.js";
 
@@ -550,7 +552,7 @@ export function ItemsForm({ etp, onItens, onMeta }) {
 
 // ---------- Alinhamento ao PCA ----------
 // ---------- Alinhamento ao PCA ----------
-export function PCAForm({ etp, onPca, onManuaisPca }) {
+export function PCAForm({ etp, onPca, onManuaisPca, secretarias }) {
   const itens = etp.itens || [];
   const pca = etp.pca;
   const manuais = etp.manuaisPca || {};
@@ -558,6 +560,9 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [showFaltantes, setShowFaltantes] = useState(false);
+  const [buscando, setBuscando] = useState(false);
+  const [buscaError, setBuscaError] = useState("");
+  const entidade = secretariaDoDoc(etp, secretarias);
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -577,6 +582,19 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
     }
     setImporting(false);
     e.target.value = "";
+  }
+
+  async function handleBuscarOnline() {
+    setBuscando(true);
+    setBuscaError("");
+    try {
+      const linhas = await buscarPcaOnline(entidade?.sigla);
+      onPca({ nomeArquivo: `Painel do PCA — ${entidade.sigla}`, importedAt: Date.now(), linhas, origem: "online" });
+    } catch (err) {
+      console.error(err);
+      setBuscaError(err.message || "Não foi possível buscar o PCA agora.");
+    }
+    setBuscando(false);
   }
 
   function atualizarManual(itemId, campo, valor) {
@@ -603,26 +621,40 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>2. Alinhamento ao PCA</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Importe a planilha exportada do painel do PCA. O app cruza os itens pelo código do produto e mostra
-        quais já estão previstos no plano.
+        Busque o PCA direto do painel, ou importe a planilha exportada de lá. O app cruza os itens pelo
+        código do produto e mostra quais já estão previstos no plano.
       </p>
 
       <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: "white" }}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <span className="text-sm font-semibold" style={{ color: C.navy }}>Planilha do PCA</span>
+          <span className="text-sm font-semibold" style={{ color: C.navy }}>PCA de {entidade?.sigla || entidade?.nome || "—"}</span>
           {pca && (
             <span className="text-xs" style={{ color: C.inkMuted }}>
-              {pca.nomeArquivo} · {pca.linhas.length} itens no painel · importada em {fmtDate(pca.importedAt)}
+              {pca.nomeArquivo} · {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importada"} em {fmtDate(pca.importedAt)}
             </span>
           )}
         </div>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
-        <button onClick={() => fileRef.current?.click()} disabled={importing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
-          style={{ background: C.navy, color: C.paper }}>
-          {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-          {importing ? "Importando..." : pca ? "Atualizar planilha do PCA" : "Importar planilha do PCA"}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={handleBuscarOnline} disabled={buscando || !entidade?.sigla}
+            title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : undefined}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+            style={{ background: C.navy, color: C.paper }}>
+            {buscando ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {buscando ? "Buscando..." : pca ? "Atualizar do painel do PCA" : "Buscar do painel do PCA"}
+          </button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
+          <button onClick={() => fileRef.current?.click()} disabled={importing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
+            style={{ borderColor: C.border, color: C.ink }}>
+            {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+            {importing ? "Importando..." : "Importar planilha manualmente"}
+          </button>
+        </div>
+        {buscaError && (
+          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
+            <AlertCircle size={12} /> {buscaError}
+          </p>
+        )}
         {importError && (
           <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
             <AlertCircle size={12} /> {importError}
@@ -636,7 +668,7 @@ export function PCAForm({ etp, onPca, onManuaisPca }) {
         </p>
       ) : !pca ? (
         <p className="text-sm" style={{ color: C.inkMuted }}>
-          Importe a planilha do PCA acima para ver o cruzamento.
+          Busque ou importe o PCA acima para ver o cruzamento.
         </p>
       ) : (
         <>

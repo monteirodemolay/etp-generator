@@ -7,7 +7,7 @@ import { mesmoCodigo } from "../../dominio/pca.js";
 
 import React, { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
-         Info, Loader2, ListChecks, ListX, X, Lock, Plus } from "lucide-react";
+         Info, Loader2, ListChecks, ListX, X, Lock, Plus, RefreshCw } from "lucide-react";
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
 import { cruzarComPca, buscarNoPca } from "../../dominio/pca.js";
@@ -19,7 +19,8 @@ import { escapeHtml } from "../../dominio/texto.js";
 import { gerarDocumentoPCAAvulso } from "../../docx/documentos.js";
 import { resolverCabecalho } from "../../docx/timbre.js";
 import { TIMBRE_PADRAO } from "../../docx/timbre-padrao.js";
-import { chavePcaEntidade } from "../../dominio/entidades.js";
+import { chavePcaEntidade, secretariaDoDoc } from "../../dominio/entidades.js";
+import { buscarPcaOnline } from "../../dominio/pca-online.js";
 import storage from "../../storage.js";
 import { lerPdfComPosicoes } from "../../pdf-posicoes-servico.js";
 import { detectarFormatoPdfPca, extrairItensDfd, extrairItensPedido, combinarItensDeMultiplosArquivos } from "../../dominio/pdf-pca.js";
@@ -32,8 +33,11 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const orgao = doc.orgao || "";
   const manuais = doc.manuais || {};
 
-  // A planilha do PCA é uma tabela de referência compartilhada entre todas as declarações —
-  // fica numa chave própria para não duplicar milhares de linhas em cada documento.
+  // A planilha do PCA é uma tabela de referência própria de cada entidade — fica numa chave
+  // separada (por entidade) para não duplicar milhares de linhas em cada documento, e para o
+  // PCA da FMAS não sobrescrever o da SEMAS. Ver dominio/entidades.js: chavePcaEntidade().
+  const entidade = secretariaDoDoc(doc, secretarias);
+  const chavePca = chavePcaEntidade(doc.secretariaId);
   const [pca, setPca] = useState(null);
   const [timbreGlobal, setTimbreGlobal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,25 +56,39 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const [buscaManual, setBuscaManual] = useState("");
   const [novoItemManual, setNovoItemManual] = useState(null); // {idProduto, descricao, unidade, quantidade} depois de escolher/digitar
   const [importingPca, setImportingPca] = useState(false);
+  const [buscandoPca, setBuscandoPca] = useState(false);
   const [errorItens, setErrorItens] = useState("");
   const [errorPca, setErrorPca] = useState("");
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
-      storage.get("pca:planilha", false).catch(() => null),
+      storage.get(chavePca, false).catch(() => null),
       storage.get("timbre:padrao", false).then(r => r?.value || null).catch(() => null),
     ]).then(([pcaRes, timbre]) => {
-      if (pcaRes?.value) setPca(JSON.parse(pcaRes.value));
+      setPca(pcaRes?.value ? JSON.parse(pcaRes.value) : null);
       if (timbre) setTimbreGlobal(timbre);
     }).finally(() => setLoading(false));
-  }, []);
+  }, [chavePca]);
 
   function atualizarItens(v) { onSalvar({ ...doc, itens: v }); }
   function atualizarObjeto(v) { onSalvar({ ...doc, objeto: v }); }
   function atualizarOrgao(v) { onSalvar({ ...doc, orgao: v }); }
   function atualizarPca(v) {
     setPca(v);
-    storage.set("pca:planilha", JSON.stringify(v), false).catch(() => {});
+    storage.set(chavePca, JSON.stringify(v), false).catch(() => {});
+  }
+  async function handleBuscarPcaOnline() {
+    setBuscandoPca(true);
+    setErrorPca("");
+    try {
+      const linhas = await buscarPcaOnline(entidade?.sigla);
+      atualizarPca({ nomeArquivo: `Painel do PCA — ${entidade.sigla}`, importedAt: Date.now(), linhas, origem: "online" });
+    } catch (err) {
+      console.error(err);
+      setErrorPca(err.message || "Não foi possível buscar o PCA agora.");
+    }
+    setBuscandoPca(false);
   }
   function atualizarManual(itemId, campo, valor) {
     const atual = manuais[itemId] || { codigo: "", sequencial: "" };
@@ -386,16 +404,25 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
 
               <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                  <span className="text-sm font-semibold" style={{ color: C.navy }}>2. Planilha do PCA</span>
-                  {pca && <span className="text-xs" style={{ color: C.inkMuted }}>{pca.nomeArquivo} · {pca.linhas.length} itens no painel · importada em {fmtDate(pca.importedAt)}</span>}
+                  <span className="text-sm font-semibold" style={{ color: C.navy }}>2. PCA de {entidade?.sigla || entidade?.nome || "—"}</span>
+                  {pca && <span className="text-xs" style={{ color: C.inkMuted }}>{pca.nomeArquivo} · {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importada"} em {fmtDate(pca.importedAt)}</span>}
                 </div>
-                <input ref={filePcaRef} type="file" accept=".xlsx,.xls" onChange={handleImportPca} className="hidden" />
-                <button onClick={() => filePcaRef.current?.click()} disabled={importingPca}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
-                  style={{ background: C.navy, color: C.paper }}>
-                  {importingPca ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                  {importingPca ? "Importando..." : pca ? "Atualizar planilha do PCA" : "Importar planilha do PCA"}
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={handleBuscarPcaOnline} disabled={buscandoPca || !entidade?.sigla}
+                    title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : undefined}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
+                    style={{ background: C.navy, color: C.paper }}>
+                    {buscandoPca ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    {buscandoPca ? "Buscando..." : pca ? "Atualizar do painel do PCA" : "Buscar do painel do PCA"}
+                  </button>
+                  <input ref={filePcaRef} type="file" accept=".xlsx,.xls" onChange={handleImportPca} className="hidden" />
+                  <button onClick={() => filePcaRef.current?.click()} disabled={importingPca}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
+                    style={{ borderColor: C.border, color: C.ink }}>
+                    {importingPca ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                    {importingPca ? "Importando..." : "Importar planilha manualmente"}
+                  </button>
+                </div>
                 {errorPca && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorPca}</p>}
               </div>
 
