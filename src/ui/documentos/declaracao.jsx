@@ -57,8 +57,11 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const [novoItemManual, setNovoItemManual] = useState(null); // {idProduto, descricao, unidade, quantidade} depois de escolher/digitar
   const [importingPca, setImportingPca] = useState(false);
   const [buscandoPca, setBuscandoPca] = useState(false);
+  const [mostrarImportarArquivoPca, setMostrarImportarArquivoPca] = useState(false);
   const [errorItens, setErrorItens] = useState("");
   const [errorPca, setErrorPca] = useState("");
+  const [arrastandoItens, setArrastandoItens] = useState(false);
+  const jaTentouAutoRef = useRef(null);
 
   useEffect(() => {
     setLoading(true);
@@ -70,6 +73,16 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
       if (timbre) setTimbreGlobal(timbre);
     }).finally(() => setLoading(false));
   }, [chavePca]);
+
+  // Padrão: assim que a entidade é conhecida (e o PCA salvo já foi carregado), busca o PCA
+  // dela direto do painel da Prefeitura de Rio Verde sozinho — sem exigir clique. Só não faz
+  // isso se já houver um PCA carregado (buscado ou importado à mão) ou se já tiver tentado
+  // para esta entidade nesta sessão.
+  useEffect(() => {
+    if (loading || !entidade?.sigla || pca || jaTentouAutoRef.current === entidade.sigla) return;
+    jaTentouAutoRef.current = entidade.sigla;
+    handleBuscarPcaOnline();
+  }, [loading, entidade?.sigla, pca]);
 
   function atualizarItens(v) { onSalvar({ ...doc, itens: v }); }
   function atualizarObjeto(v) { onSalvar({ ...doc, objeto: v }); }
@@ -95,9 +108,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
     onSalvar({ ...doc, manuais: { ...manuais, [itemId]: { ...atual, [campo]: valor } } });
   }
 
-  async function handleImportItens(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function importarPlanilhaItens(file) {
     setImportingItens(true);
     setErrorItens("");
     try {
@@ -113,11 +124,9 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
       setErrorItens(err.message || "Não foi possível importar esta planilha.");
     }
     setImportingItens(false);
-    e.target.value = "";
   }
 
-  async function handleImportPdfs(e) {
-    const arquivos = Array.from(e.target.files || []);
+  async function importarPdfsItens(arquivos) {
     if (arquivos.length === 0) return;
     setImportingPdf(true);
     setErrorPdf("");
@@ -146,7 +155,38 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
       setErrorPdf("Não foi possível ler um dos PDFs: " + (err.message || err));
     }
     setImportingPdf(false);
+  }
+
+  function handleImportItens(e) {
+    const file = e.target.files?.[0];
+    if (file) importarPlanilhaItens(file);
     e.target.value = "";
+  }
+
+  function handleImportPdfs(e) {
+    const arquivos = Array.from(e.target.files || []);
+    if (arquivos.length > 0) importarPdfsItens(arquivos);
+    e.target.value = "";
+  }
+
+  // Área de arrastar-e-soltar: aceita tanto um Excel do Sistema Centi quanto um ou mais PDFs
+  // (Pedido/DFD) soltos juntos — cada tipo vai pro mesmo caminho que o botão correspondente.
+  function processarArquivosSoltos(fileList) {
+    const arquivos = Array.from(fileList || []);
+    if (arquivos.length === 0) return;
+    const excel = arquivos.find(f => /\.(xlsx|xls)$/i.test(f.name));
+    const pdfs = arquivos.filter(f => /\.pdf$/i.test(f.name));
+    if (excel) importarPlanilhaItens(excel);
+    if (pdfs.length > 0) importarPdfsItens(pdfs);
+    if (!excel && pdfs.length === 0) {
+      setErrorItens("Nenhum arquivo Excel (.xlsx/.xls) ou PDF reconhecido entre os arquivos soltos.");
+    }
+  }
+
+  function handleDropItens(e) {
+    e.preventDefault();
+    setArrastandoItens(false);
+    processarArquivosSoltos(e.dataTransfer.files);
   }
 
   function confirmarItensRevisados() {
@@ -301,6 +341,20 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                   <span className="text-sm font-semibold" style={{ color: C.navy }}>1. Planilha de Itens</span>
                   <span className="text-xs" style={{ color: C.inkMuted }}>{itens.length} item(ns)</span>
                 </div>
+
+                <div
+                  onDragOver={e => { e.preventDefault(); setArrastandoItens(true); }}
+                  onDragLeave={() => setArrastandoItens(false)}
+                  onDrop={handleDropItens}
+                  className="mb-3 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 py-5 px-3 text-center"
+                  style={{ borderColor: arrastandoItens ? C.brass : C.border, background: arrastandoItens ? "rgba(166,131,46,0.06)" : "white" }}>
+                  <Upload size={18} style={{ color: arrastandoItens ? C.brass : C.inkMuted }} />
+                  <p className="text-xs font-medium" style={{ color: C.ink }}>
+                    Arraste um Excel (Sistema Centi) ou PDF (Pedido/DFD) aqui
+                  </p>
+                  <p className="text-[11px]" style={{ color: C.inkMuted }}>ou use um dos botões abaixo</p>
+                </div>
+
                 <div className="flex items-center gap-2 flex-wrap">
                   <input ref={fileItensRef} type="file" accept=".xlsx,.xls" onChange={handleImportItens} className="hidden" />
                   <button onClick={() => fileItensRef.current?.click()} disabled={importingItens}
@@ -403,27 +457,49 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
               </div>
 
               <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: C.paperDark }}>
-                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
                   <span className="text-sm font-semibold" style={{ color: C.navy }}>2. PCA de {entidade?.sigla || entidade?.nome || "—"}</span>
-                  {pca && <span className="text-xs" style={{ color: C.inkMuted }}>{pca.nomeArquivo} · {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importada"} em {fmtDate(pca.importedAt)}</span>}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
                   <button onClick={handleBuscarPcaOnline} disabled={buscandoPca || !entidade?.sigla}
-                    title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : undefined}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
-                    style={{ background: C.navy, color: C.paper }}>
-                    {buscandoPca ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                    {buscandoPca ? "Buscando..." : pca ? "Atualizar do painel do PCA" : "Buscar do painel do PCA"}
-                  </button>
-                  <input ref={filePcaRef} type="file" accept=".xlsx,.xls" onChange={handleImportPca} className="hidden" />
-                  <button onClick={() => filePcaRef.current?.click()} disabled={importingPca}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
-                    style={{ borderColor: C.border, color: C.ink }}>
-                    {importingPca ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                    {importingPca ? "Importando..." : "Importar planilha manualmente"}
+                    title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : "Atualizar do painel do PCA"}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium disabled:opacity-60"
+                    style={{ color: C.navy }}>
+                    {buscandoPca ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {buscandoPca ? "Buscando..." : "Atualizar"}
                   </button>
                 </div>
+                {pca ? (
+                  <p className="text-xs" style={{ color: C.inkMuted }}>
+                    {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importado de arquivo"} em {fmtDate(pca.importedAt)}
+                  </p>
+                ) : !buscandoPca && (
+                  <p className="text-xs" style={{ color: C.inkMuted }}>Ainda não buscado.</p>
+                )}
                 {errorPca && <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}><AlertCircle size={12} /> {errorPca}</p>}
+
+                <div className="mt-3 pt-3 border-t" style={{ borderColor: C.border }}>
+                  {!mostrarImportarArquivoPca ? (
+                    <button onClick={() => setMostrarImportarArquivoPca(true)}
+                      className="text-xs font-medium underline" style={{ color: C.inkMuted }}>
+                      Prefere importar um arquivo em vez de buscar do painel?
+                    </button>
+                  ) : (
+                    <>
+                      <input ref={filePcaRef} type="file" accept=".xlsx,.xls" onChange={handleImportPca} className="hidden" />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => filePcaRef.current?.click()} disabled={importingPca}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
+                          style={{ borderColor: C.border, color: C.ink }}>
+                          {importingPca ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                          {importingPca ? "Importando..." : "Importar planilha (.xlsx)"}
+                        </button>
+                        <button onClick={() => setMostrarImportarArquivoPca(false)}
+                          className="text-xs font-medium" style={{ color: C.inkMuted }}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               {itens.length > 0 && pca && (

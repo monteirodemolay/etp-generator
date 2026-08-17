@@ -562,7 +562,18 @@ export function PCAForm({ etp, onPca, onManuaisPca, secretarias }) {
   const [showFaltantes, setShowFaltantes] = useState(false);
   const [buscando, setBuscando] = useState(false);
   const [buscaError, setBuscaError] = useState("");
+  const [mostrarImportarArquivo, setMostrarImportarArquivo] = useState(false);
   const entidade = secretariaDoDoc(etp, secretarias);
+  const jaTentouAutoRef = useRef(null);
+
+  // Padrão: assim que a entidade é conhecida, busca o PCA dela direto do painel da Prefeitura
+  // de Rio Verde sozinho — sem exigir clique. Só não faz isso se já houver um PCA carregado
+  // (buscado ou importado à mão) ou se já tiver tentado para esta entidade nesta sessão.
+  useEffect(() => {
+    if (!entidade?.sigla || pca || jaTentouAutoRef.current === entidade.sigla) return;
+    jaTentouAutoRef.current = entidade.sigla;
+    handleBuscarOnline();
+  }, [entidade?.sigla, pca]);
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -621,45 +632,63 @@ export function PCAForm({ etp, onPca, onManuaisPca, secretarias }) {
     <div>
       <h2 className="serif text-2xl font-semibold mb-1" style={{ color: C.navy }}>2. Alinhamento ao PCA</h2>
       <p className="text-sm mb-4" style={{ color: C.inkMuted }}>
-        Busque o PCA direto do painel, ou importe a planilha exportada de lá. O app cruza os itens pelo
-        código do produto e mostra quais já estão previstos no plano.
+        O app busca o PCA direto do painel da Prefeitura de Rio Verde, pela sigla da entidade — sem precisar
+        exportar nada. O cruzamento com os itens é automático, pelo código do produto.
       </p>
 
       <div className="mb-5 p-4 rounded-lg border" style={{ borderColor: C.border, background: "white" }}>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
           <span className="text-sm font-semibold" style={{ color: C.navy }}>PCA de {entidade?.sigla || entidade?.nome || "—"}</span>
-          {pca && (
-            <span className="text-xs" style={{ color: C.inkMuted }}>
-              {pca.nomeArquivo} · {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importada"} em {fmtDate(pca.importedAt)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={handleBuscarOnline} disabled={buscando || !entidade?.sigla}
-            title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : undefined}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60"
-            style={{ background: C.navy, color: C.paper }}>
-            {buscando ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-            {buscando ? "Buscando..." : pca ? "Atualizar do painel do PCA" : "Buscar do painel do PCA"}
-          </button>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
-          <button onClick={() => fileRef.current?.click()} disabled={importing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
-            style={{ borderColor: C.border, color: C.ink }}>
-            {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-            {importing ? "Importando..." : "Importar planilha manualmente"}
+            title={!entidade?.sigla ? "Esta entidade não tem sigla cadastrada" : "Atualizar do painel do PCA"}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium disabled:opacity-60"
+            style={{ color: C.navy }}>
+            {buscando ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {buscando ? "Buscando..." : "Atualizar"}
           </button>
         </div>
+        {pca ? (
+          <p className="text-xs" style={{ color: C.inkMuted }}>
+            {pca.linhas.length} itens no painel · {pca.origem === "online" ? "buscado" : "importado de arquivo"} em {fmtDate(pca.importedAt)}
+          </p>
+        ) : !buscando && (
+          <p className="text-xs" style={{ color: C.inkMuted }}>Ainda não buscado.</p>
+        )}
         {buscaError && (
           <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
             <AlertCircle size={12} /> {buscaError}
           </p>
         )}
-        {importError && (
-          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
-            <AlertCircle size={12} /> {importError}
-          </p>
-        )}
+
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: C.border }}>
+          {!mostrarImportarArquivo ? (
+            <button onClick={() => setMostrarImportarArquivo(true)}
+              className="text-xs font-medium underline" style={{ color: C.inkMuted }}>
+              Prefere importar um arquivo em vez de buscar do painel?
+            </button>
+          ) : (
+            <>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => fileRef.current?.click()} disabled={importing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-60 border"
+                  style={{ borderColor: C.border, color: C.ink }}>
+                  {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {importing ? "Importando..." : "Importar planilha (.xlsx)"}
+                </button>
+                <button onClick={() => setMostrarImportarArquivo(false)}
+                  className="text-xs font-medium" style={{ color: C.inkMuted }}>
+                  Cancelar
+                </button>
+              </div>
+              {importError && (
+                <p className="text-xs mt-2 flex items-center gap-1" style={{ color: C.red }}>
+                  <AlertCircle size={12} /> {importError}
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {itens.length === 0 ? (
@@ -668,7 +697,7 @@ export function PCAForm({ etp, onPca, onManuaisPca, secretarias }) {
         </p>
       ) : !pca ? (
         <p className="text-sm" style={{ color: C.inkMuted }}>
-          Busque ou importe o PCA acima para ver o cruzamento.
+          Aguardando a busca do PCA acima para ver o cruzamento.
         </p>
       ) : (
         <>
