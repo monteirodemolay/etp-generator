@@ -80,6 +80,15 @@ function normalizarQuantidade(str) {
   return Number.isInteger(n) ? String(n) : String(n).replace(/\.?0+$/, "");
 }
 
+// A tabela pode continuar na página seguinte, com o cabeçalho repetido — e a descrição do
+// último item de uma página frequentemente continua no topo da próxima, ANTES do primeiro
+// item de lá. Por isso as âncoras (linhas de código) e as linhas de descrição de TODAS as
+// páginas são reunidas numa lista só (com este deslocamento de Y por página, pra manter a
+// ordem de leitura entre páginas) antes de calcular os cortes — do contrário o fim da
+// descrição do último item de uma página some, e o começo da descrição do primeiro item da
+// próxima página é perdido junto. Usado nos dois formatos (Pedido e DFD).
+const DESLOCAMENTO_POR_PAGINA = 100000;
+
 // ---------- Formato DFD ----------
 // Tabela: ITEM | CÓDIGO | DESCRIÇÃO | UNIDADE | QUANTIDADE
 // Cada linha "âncora" tem o número do item no início e termina em
@@ -87,12 +96,19 @@ function normalizarQuantidade(str) {
 // um fragmento de código. Código pode vir inteiro ali, ou quebrado em duas
 // partes: uma ANTES da âncora (fim da linha anterior) e outra DEPOIS
 // (início da linha seguinte), quando tem mais dígitos do que cabe na coluna.
+// A tabela pode continuar na página seguinte, com o cabeçalho ("ITEM") repetido — e a descrição
+// do último item de uma página frequentemente continua no topo da próxima, ANTES do primeiro
+// item de lá (mesmo raciocínio do formato Pedido, ver DESLOCAMENTO_POR_PAGINA acima). Por isso
+// as âncoras e as linhas de descrição de todas as páginas são reunidas antes de calcular os
+// cortes. Código, unidade e quantidade de cada item continuam resolvidos página a página (não
+// atravessam página), só a descrição precisa desse tratamento.
 export function extrairItensDfd(palavrasPorPagina) {
-  const todosItens = [];
+  const ancoras = [];
+  const linhasDescricaoTodas = [];
 
-  for (const palavras of palavrasPorPagina) {
+  palavrasPorPagina.forEach((palavras, pagina) => {
     const header = palavras.find(p => p.texto === "ITEM");
-    if (!header) continue;
+    if (!header) return;
 
     const rodape = palavras.find(p => /Centi|Assinatura/i.test(p.texto));
     const fimTop = rodape ? rodape.y : Infinity;
@@ -114,12 +130,12 @@ export function extrairItensDfd(palavrasPorPagina) {
 
     const linhas = agruparEmLinhas(corpo);
     const anchorRegex = /^(\d{1,3})\s+(?:(.*?)\s+)?(\S+)\s+(\d+,\d{4})\s*$/;
-    const ancoras = [];
+    const ancorasPagina = [];
     for (const l of linhas) {
       const m = l.texto.match(anchorRegex);
-      if (m) ancoras.push({ y: l.y, itemNum: m[1], meio: m[2] || "", unidade: m[3], quantidade: m[4] });
+      if (m) ancorasPagina.push({ y: l.y, itemNum: m[1], meio: m[2] || "", unidade: m[3], quantidade: m[4] });
     }
-    if (ancoras.length === 0) continue;
+    if (ancorasPagina.length === 0) return;
 
     // Limite entre a coluna estreita (item-num + fragmentos de código) e a
     // coluna larga de descrição. Precisa ser um limite justo — largo
@@ -127,20 +143,13 @@ export function extrairItensDfd(palavrasPorPagina) {
     // fragmento de código, quebrando a checagem de "só dígitos".
     const limiteColunaEstreita = 118;
     const linhasEsquerda = agruparEmLinhas(corpo.filter(p => p.x < limiteColunaEstreita));
-    const linhasDescricaoTodas = agruparEmLinhas(corpo.filter(p => p.x >= limiteColunaEstreita));
+    const linhasDescricaoPagina = agruparEmLinhas(corpo.filter(p => p.x >= limiteColunaEstreita));
+    const deslocamento = pagina * DESLOCAMENTO_POR_PAGINA;
 
-    // Cortes sensíveis a fim de frase — só pra coluna de descrição (ver pontoDeCorte acima). Os
-    // fragmentos de código continuam usando o meio geométrico puro: são só dígitos, sem frase
-    // pra respeitar, e usar o mesmo corte da descrição arriscaria cortar o número ao meio.
-    const ancorasY = ancoras.map(a => a.y);
-    const cortesDescricao = cortesEntreAncoras(ancorasY, linhasDescricaoTodas);
-
-    for (let i = 0; i < ancoras.length; i++) {
-      const a = ancoras[i];
-      const limiteAntes = i > 0 ? (ancoras[i - 1].y + a.y) / 2 : -Infinity;
-      const limiteDepois = i + 1 < ancoras.length ? (a.y + ancoras[i + 1].y) / 2 : fimReal;
-      const limiteAntesDesc = i > 0 ? cortesDescricao[i - 1] : -Infinity;
-      const limiteDepoisDesc = i < cortesDescricao.length ? cortesDescricao[i] : fimReal;
+    for (let i = 0; i < ancorasPagina.length; i++) {
+      const a = ancorasPagina[i];
+      const limiteAntes = i > 0 ? (ancorasPagina[i - 1].y + a.y) / 2 : -Infinity;
+      const limiteDepois = i + 1 < ancorasPagina.length ? (a.y + ancorasPagina[i + 1].y) / 2 : fimReal;
 
       // Fragmentos de código: linhas puramente numéricas na faixa
       // esquerda, dentro da janela deste item, que não sejam o próprio
@@ -156,44 +165,64 @@ export function extrairItensDfd(palavrasPorPagina) {
       if (mInline) { codigoInline = mInline[1]; meioLimpo = mInline[2]; }
       else if (/^\d{4,12}$/.test(a.meio.trim())) { codigoInline = a.meio.trim(); meioLimpo = ""; }
 
-      const codigo = fragmentosCodigo.join("") + codigoInline;
-
-      // Descrição: respeita a ordem vertical real — texto antes da âncora,
-      // o miolo da própria linha-âncora, e o texto depois, dentro da
-      // janela deste item.
-      const partesOrdenadas = [
-        ...linhasDescricaoTodas.filter(l => l.y > limiteAntesDesc && l.y < a.y).map(l => l.texto),
-        ...(meioLimpo ? [meioLimpo] : []),
-        ...linhasDescricaoTodas.filter(l => l.y > a.y && l.y < limiteDepoisDesc).map(l => l.texto),
-      ];
-
-      todosItens.push({
-        idProduto: codigo,
-        descricao: partesOrdenadas.join(" ").replace(/\s+/g, " ").trim(),
+      ancoras.push({
+        y: a.y + deslocamento,
+        codigo: fragmentosCodigo.join("") + codigoInline,
+        meioLimpo,
         unidade: a.unidade,
-        quantidade: normalizarQuantidade(a.quantidade),
+        quantidade: a.quantidade,
       });
     }
-  }
 
-  return todosItens;
+    for (const l of linhasDescricaoPagina) {
+      linhasDescricaoTodas.push({ y: l.y + deslocamento, texto: l.texto });
+    }
+  });
+
+  // Cortes sensíveis a fim de frase — só pra coluna de descrição (ver pontoDeCorte acima). Os
+  // fragmentos de código já foram resolvidos acima com o meio geométrico puro: são só dígitos,
+  // sem frase pra respeitar, e usar o mesmo corte da descrição arriscaria cortar o número ao meio.
+  const cortesDescricao = cortesEntreAncoras(ancoras.map(a => a.y), linhasDescricaoTodas);
+
+  return ancoras.map((a, i) => {
+    const limiteAntesDesc = i > 0 ? cortesDescricao[i - 1] : -Infinity;
+    const limiteDepoisDesc = i < cortesDescricao.length ? cortesDescricao[i] : Infinity;
+
+    // Descrição: respeita a ordem vertical real — texto antes da âncora,
+    // o miolo da própria linha-âncora, e o texto depois, dentro da
+    // janela deste item.
+    const partesOrdenadas = [
+      ...linhasDescricaoTodas.filter(l => l.y > limiteAntesDesc && l.y < a.y).map(l => l.texto),
+      ...(a.meioLimpo ? [a.meioLimpo] : []),
+      ...linhasDescricaoTodas.filter(l => l.y > a.y && l.y < limiteDepoisDesc).map(l => l.texto),
+    ];
+
+    return {
+      idProduto: a.codigo,
+      descricao: partesOrdenadas.join(" ").replace(/\s+/g, " ").trim(),
+      unidade: a.unidade,
+      quantidade: normalizarQuantidade(a.quantidade),
+    };
+  });
 }
 
 // ---------- Formato Pedido (Centi) ----------
 // Tabela: Código | Descrição | Un.medida | Situação | Valor Referência |
 // Quantidade | Realizada | Valor Total. O código nunca quebra em duas
 // linhas aqui (cabe na coluna), e a linha com os valores numéricos fica
-// isolada da descrição (que ocupa muitas linhas ao redor, acima e abaixo).
+// isolada da descrição (que ocupa muitas linhas ao redor, acima e abaixo). Também sujeita à
+// tabela continuar na página seguinte (ver DESLOCAMENTO_POR_PAGINA acima).
 export function extrairItensPedido(palavrasPorPagina) {
-  const todosItens = [];
+  const ancoras = [];
+  const linhasDescricaoTodas = [];
 
-  for (const palavras of palavrasPorPagina) {
+  palavrasPorPagina.forEach((palavras, pagina) => {
     const hCodigo = palavras.find(p => p.texto === "Código");
     const hDescricao = palavras.find(p => p.texto === "Descrição");
     // "Un.medida" pode chegar como um token só, ou quebrado em "Un." + "medida"
     // (varia conforme como o PDF original agrupa o texto).
     const hUnidade = palavras.find(p => p.texto === "Un.medida" || p.texto === "Un.");
-    if (!hCodigo || !hDescricao || !hUnidade) continue;
+    if (!hCodigo || !hDescricao || !hUnidade) return;
 
     const limiteDescInicio = (hCodigo.x + 30);
     const limiteDescFim = hUnidade.x - 10;
@@ -201,35 +230,38 @@ export function extrairItensPedido(palavrasPorPagina) {
     const rodape = palavras.find(p => /Centi|Assinatura/i.test(p.texto));
     const fimReal = rodape ? rodape.y : Infinity;
     const corpo = palavras.filter(p => p.y > hCodigo.y + 3 && p.y < fimReal);
+    const deslocamento = pagina * DESLOCAMENTO_POR_PAGINA;
 
     const linhasCodigo = agruparEmLinhas(corpo.filter(p => p.x < limiteDescInicio && /^\d{4,12}$/.test(p.texto)));
-    const todasLinhasNaFaixaDesc = agruparEmLinhas(corpo.filter(p => p.x >= limiteDescInicio && p.x < limiteDescFim));
-    const cortes = cortesEntreAncoras(linhasCodigo.map(l => l.y), todasLinhasNaFaixaDesc);
-
-    for (let i = 0; i < linhasCodigo.length; i++) {
-      const lc = linhasCodigo[i];
-      const limiteAntes = i > 0 ? cortes[i - 1] : -Infinity;
-      const limiteDepois = i < cortes.length ? cortes[i] : fimReal;
-
-      const descricao = todasLinhasNaFaixaDesc
-        .filter(l => l.y > limiteAntes && l.y < limiteDepois)
-        .map(l => l.texto).join(" ").replace(/\s+/g, " ").trim();
-
+    for (const lc of linhasCodigo) {
       // Na mesma linha Y do código: unidade + quantidade (2º número no
       // formato decimal, entre "Valor Referência" e "Realizada").
       const naLinha = corpo.filter(p => Math.abs(p.y - lc.y) < 3);
       const numeros = naLinha.filter(p => /^[\d.]+,\d{4}$/.test(p.texto)).sort((a, b) => a.x - b.x);
       const unidade = naLinha.find(p => /^[A-ZÇÃÕÁÉÍÓÚa-z]+$/.test(p.texto) && p.x < limiteDescInicio + 50)?.texto || "";
       const quantidade = numeros.length >= 2 ? numeros[1].texto : "";
-
-      todosItens.push({
+      ancoras.push({
+        y: lc.y + deslocamento,
         idProduto: lc.texto.trim(),
-        descricao,
         unidade: unidade || "UNIDADE",
         quantidade: normalizarQuantidade(quantidade),
       });
     }
-  }
+
+    for (const l of agruparEmLinhas(corpo.filter(p => p.x >= limiteDescInicio && p.x < limiteDescFim))) {
+      linhasDescricaoTodas.push({ y: l.y + deslocamento, texto: l.texto });
+    }
+  });
+
+  const cortes = cortesEntreAncoras(ancoras.map(a => a.y), linhasDescricaoTodas);
+  const todosItens = ancoras.map((a, i) => {
+    const limiteAntes = i > 0 ? cortes[i - 1] : -Infinity;
+    const limiteDepois = i < cortes.length ? cortes[i] : Infinity;
+    const descricao = linhasDescricaoTodas
+      .filter(l => l.y > limiteAntes && l.y < limiteDepois)
+      .map(l => l.texto).join(" ").replace(/\s+/g, " ").trim();
+    return { idProduto: a.idProduto, descricao, unidade: a.unidade, quantidade: a.quantidade };
+  });
 
   return todosItens;
 }
