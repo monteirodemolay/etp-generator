@@ -12,6 +12,7 @@ import { fmtDate, fmtDateISO } from "./datas.js";
 import { num } from "./valores.js";
 import { todayISO } from "./datas.js";
 import { objetoCompleto } from "./etp.js";
+import { mesclarItensRepetidos } from "./pca.js";
 
 
 export function newItem() {
@@ -46,13 +47,12 @@ export function parseCentiSheet(rows) {
   const cQtd = col("Quantidade");
   const cClass = col("Classificação");
 
-  const itens = [];
+  const brutos = [];
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i] || [];
     const nome = cNome !== -1 ? String(row[cNome] ?? "").trim() : "";
     if (!nome) continue;
-    itens.push({
-      id: "it_" + Math.random().toString(36).slice(2, 8),
+    brutos.push({
       idProduto: cId !== -1 ? String(row[cId] ?? "").trim() : "",
       descricao: nome,
       unidade: cUnidade !== -1 ? (String(row[cUnidade] ?? "").trim() || "UNIDADE") : "UNIDADE",
@@ -60,6 +60,9 @@ export function parseCentiSheet(rows) {
       classificacao: cClass !== -1 ? String(row[cClass] ?? "").trim() : "",
     });
   }
+  // O mesmo código pode se repetir na planilha (ex.: entregas parceladas do mesmo item) — mescla
+  // numa linha só com a quantidade somada, em vez de duplicar (ver mesclarItensRepetidos).
+  const itens = mesclarItensRepetidos(brutos).map(it => ({ ...it, id: "it_" + Math.random().toString(36).slice(2, 8) }));
 
   return {
     itens,

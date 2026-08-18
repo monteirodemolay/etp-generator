@@ -13,6 +13,8 @@
  * — o mesmo já usado pela importação de planilha (dominio/planilhas.js).
  */
 
+import { mesclarItensRepetidos } from "./pca.js";
+
 // ---------- Detecção do formato ----------
 export function detectarFormatoPdfPca(texto) {
   if (/DOCUMENTO\s+DE\s+FORMALIZA[ÇC][ÃA]O\s+DA\s+DEMANDA/i.test(texto)) return "dfd";
@@ -37,6 +39,37 @@ function agruparEmLinhas(palavras, tolerancia = 3) {
     y: l[0].y,
     texto: [...l].sort((a, b) => a.x - b.x).map(p => p.texto).join(" "),
   }));
+}
+
+// A coluna de descrição é um texto corrido, sem nenhum separador visual entre um item e o
+// próximo (mesma fonte, mesmo recuo, mesmo espaçamento de linha) — o único jeito de saber onde
+// uma descrição acaba e a próxima começa é a posição da linha-âncora (código + unidade +
+// quantidade) de cada item, e o meio geométrico entre duas âncoras é só um palpite. Na prática,
+// esse palpite frequentemente cai NO MEIO de uma frase (ex.: ".. COR" | "PRÓPRIA E SEM
+// MANCHAS .."), partindo a descrição ao meio e emendando o resto no item vizinho.
+//
+// Quando uma linha inteira termina em pontuação de fim de frase (. ! ? :), isso quase sempre
+// significa que o parágrafo realmente terminou ali — do contrário o texto teria continuado
+// preenchendo a mesma linha até a margem, em vez de pular pra próxima. Por isso, entre duas
+// âncoras, preferimos cortar na linha com pontuação final mais próxima do meio geométrico, em
+// vez de cortar cegamente na metade — cai no fim de uma frase, não no meio dela.
+function pontoDeCorte(linhasDoIntervalo, meioGeometrico) {
+  const comPontuacaoFinal = linhasDoIntervalo.filter(l => /[.!?:]$/.test(l.texto.trim()));
+  if (comPontuacaoFinal.length === 0) return meioGeometrico;
+  const maisProxima = comPontuacaoFinal.reduce((a, b) =>
+    Math.abs(b.y - meioGeometrico) < Math.abs(a.y - meioGeometrico) ? b : a
+  );
+  return maisProxima.y + 0.01; // +epsilon: inclui a própria linha no item ANTERIOR ao corte
+}
+
+// Um ponto de corte por intervalo entre duas âncoras consecutivas (não por item) — vira o
+// limite "depois" do item i e o limite "antes" do item i+1 ao mesmo tempo.
+function cortesEntreAncoras(ancorasY, linhasDescricao) {
+  return ancorasY.slice(0, -1).map((y, i) => {
+    const proxima = ancorasY[i + 1];
+    const doIntervalo = linhasDescricao.filter(l => l.y > y && l.y < proxima);
+    return pontoDeCorte(doIntervalo, (y + proxima) / 2);
+  });
 }
 
 function normalizarQuantidade(str) {
@@ -96,10 +129,18 @@ export function extrairItensDfd(palavrasPorPagina) {
     const linhasEsquerda = agruparEmLinhas(corpo.filter(p => p.x < limiteColunaEstreita));
     const linhasDescricaoTodas = agruparEmLinhas(corpo.filter(p => p.x >= limiteColunaEstreita));
 
+    // Cortes sensíveis a fim de frase — só pra coluna de descrição (ver pontoDeCorte acima). Os
+    // fragmentos de código continuam usando o meio geométrico puro: são só dígitos, sem frase
+    // pra respeitar, e usar o mesmo corte da descrição arriscaria cortar o número ao meio.
+    const ancorasY = ancoras.map(a => a.y);
+    const cortesDescricao = cortesEntreAncoras(ancorasY, linhasDescricaoTodas);
+
     for (let i = 0; i < ancoras.length; i++) {
       const a = ancoras[i];
       const limiteAntes = i > 0 ? (ancoras[i - 1].y + a.y) / 2 : -Infinity;
       const limiteDepois = i + 1 < ancoras.length ? (a.y + ancoras[i + 1].y) / 2 : fimReal;
+      const limiteAntesDesc = i > 0 ? cortesDescricao[i - 1] : -Infinity;
+      const limiteDepoisDesc = i < cortesDescricao.length ? cortesDescricao[i] : fimReal;
 
       // Fragmentos de código: linhas puramente numéricas na faixa
       // esquerda, dentro da janela deste item, que não sejam o próprio
@@ -121,9 +162,9 @@ export function extrairItensDfd(palavrasPorPagina) {
       // o miolo da própria linha-âncora, e o texto depois, dentro da
       // janela deste item.
       const partesOrdenadas = [
-        ...linhasDescricaoTodas.filter(l => l.y > limiteAntes && l.y < a.y).map(l => l.texto),
+        ...linhasDescricaoTodas.filter(l => l.y > limiteAntesDesc && l.y < a.y).map(l => l.texto),
         ...(meioLimpo ? [meioLimpo] : []),
-        ...linhasDescricaoTodas.filter(l => l.y > a.y && l.y < limiteDepois).map(l => l.texto),
+        ...linhasDescricaoTodas.filter(l => l.y > a.y && l.y < limiteDepoisDesc).map(l => l.texto),
       ];
 
       todosItens.push({
@@ -163,11 +204,12 @@ export function extrairItensPedido(palavrasPorPagina) {
 
     const linhasCodigo = agruparEmLinhas(corpo.filter(p => p.x < limiteDescInicio && /^\d{4,12}$/.test(p.texto)));
     const todasLinhasNaFaixaDesc = agruparEmLinhas(corpo.filter(p => p.x >= limiteDescInicio && p.x < limiteDescFim));
+    const cortes = cortesEntreAncoras(linhasCodigo.map(l => l.y), todasLinhasNaFaixaDesc);
 
     for (let i = 0; i < linhasCodigo.length; i++) {
       const lc = linhasCodigo[i];
-      const limiteAntes = i > 0 ? (linhasCodigo[i - 1].y + lc.y) / 2 : -Infinity;
-      const limiteDepois = i + 1 < linhasCodigo.length ? (lc.y + linhasCodigo[i + 1].y) / 2 : fimReal;
+      const limiteAntes = i > 0 ? cortes[i - 1] : -Infinity;
+      const limiteDepois = i < cortes.length ? cortes[i] : fimReal;
 
       const descricao = todasLinhasNaFaixaDesc
         .filter(l => l.y > limiteAntes && l.y < limiteDepois)
@@ -193,14 +235,16 @@ export function extrairItensPedido(palavrasPorPagina) {
 }
 
 // ---------- Combinação de múltiplos arquivos ----------
-// Junta os itens de vários arquivos (Pedidos ou DFDs) num único conjunto,
-// ordenado por código do produto — ou, quando não há código, pela ordem
-// de chegada (arquivo, depois posição no arquivo).
+// Junta os itens de vários arquivos (Pedidos ou DFDs) num único conjunto, ordenado por código
+// do produto — ou, quando não há código, pela ordem de chegada (arquivo, depois posição no
+// arquivo). Quando o mesmo item aparece mais de uma vez (mesmo código repetido em Pedidos
+// diferentes, entregas parceladas do mesmo Pedido, etc.), mescla numa linha só com as
+// quantidades somadas — ver mesclarItensRepetidos() — em vez de duplicar a linha.
 export function combinarItensDeMultiplosArquivos(resultadosPorArquivo) {
   const todos = [];
   resultadosPorArquivo.forEach((r, idxArquivo) => {
     r.itens.forEach((item, idxItem) => {
-      todos.push({ ...item, id: "it_" + Math.random().toString(36).slice(2, 8), _origem: r.nomeArquivo, _ordem: idxArquivo * 10000 + idxItem });
+      todos.push({ ...item, _ordem: idxArquivo * 10000 + idxItem });
     });
   });
   todos.sort((a, b) => {
@@ -209,5 +253,6 @@ export function combinarItensDeMultiplosArquivos(resultadosPorArquivo) {
     if (b.idProduto) return 1;
     return a._ordem - b._ordem;
   });
-  return todos.map(({ _origem, _ordem, ...item }) => item);
+  const semOrdem = todos.map(({ _ordem, ...item }) => item);
+  return mesclarItensRepetidos(semOrdem).map(item => ({ ...item, id: "it_" + Math.random().toString(36).slice(2, 8) }));
 }

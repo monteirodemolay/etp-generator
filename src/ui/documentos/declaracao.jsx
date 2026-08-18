@@ -691,24 +691,54 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
             <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
               Confira código, descrição e quantidade antes de confirmar — a leitura de PDF é melhor esforço,
               e pode errar em casos raros. Pode editar qualquer campo aqui, ou remover um item indevido.
+              Itens com o mesmo código em arquivos diferentes (ou parcelas do mesmo Pedido) já vêm somados
+              numa linha só, marcada abaixo.
             </p>
             <div className="space-y-2 mb-4">
-              {revisandoPdf.map((it, idx) => (
-                <div key={idx} className="rounded-lg border p-3 grid sm:grid-cols-12 gap-2 items-start" style={{ borderColor: C.border }}>
-                  <input value={it.idProduto} onChange={e => atualizarItemRevisado(idx, "idProduto", e.target.value)}
-                    placeholder="Código" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs font-mono" style={{ borderColor: C.border }} />
-                  <textarea value={it.descricao} onChange={e => atualizarItemRevisado(idx, "descricao", e.target.value)}
-                    rows={2} placeholder="Descrição" className="sm:col-span-6 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
-                  <input value={it.unidade} onChange={e => atualizarItemRevisado(idx, "unidade", e.target.value)}
-                    placeholder="Unidade" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
-                  <input value={it.quantidade} onChange={e => atualizarItemRevisado(idx, "quantidade", e.target.value)}
-                    placeholder="Qtd." className="sm:col-span-1 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
-                  <button onClick={() => removerItemRevisado(idx)} title="Remover este item"
-                    className="sm:col-span-1 flex justify-center py-1.5" style={{ color: C.red }}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
+              {revisandoPdf.map((it, idx) => {
+                const semCodigo = !it.idProduto?.trim();
+                const semDescricao = !it.descricao?.trim();
+                const comProblema = semCodigo || semDescricao;
+                return (
+                  <div key={idx} className="rounded-lg border p-3" style={{ borderColor: comProblema ? C.red : C.border, background: comProblema ? "rgba(166,64,61,0.04)" : "white" }}>
+                    {(comProblema || it.repeticoes > 1) && (
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        {semCodigo && (
+                          <span className="flex items-center gap-1 text-[10.5px] font-semibold" style={{ color: C.red }}>
+                            <AlertCircle size={11} /> Sem código — confira manualmente
+                          </span>
+                        )}
+                        {semDescricao && (
+                          <span className="flex items-center gap-1 text-[10.5px] font-semibold" style={{ color: C.red }}>
+                            <AlertCircle size={11} /> Sem descrição
+                          </span>
+                        )}
+                        {it.repeticoes > 1 && (
+                          <span className="flex items-center gap-1 text-[10.5px] font-semibold" style={{ color: C.brass }}>
+                            <Info size={11} /> Somado de {it.repeticoes} ocorrências repetidas
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="grid sm:grid-cols-12 gap-2 items-start">
+                      <input value={it.idProduto} onChange={e => atualizarItemRevisado(idx, "idProduto", e.target.value)}
+                        placeholder="Código" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs font-mono"
+                        style={{ borderColor: semCodigo ? C.red : C.border }} />
+                      <textarea value={it.descricao} onChange={e => atualizarItemRevisado(idx, "descricao", e.target.value)}
+                        rows={4} placeholder="Descrição" className="sm:col-span-6 px-2 py-1.5 rounded border text-xs leading-relaxed"
+                        style={{ borderColor: semDescricao ? C.red : C.border }} />
+                      <input value={it.unidade} onChange={e => atualizarItemRevisado(idx, "unidade", e.target.value)}
+                        placeholder="Unidade" className="sm:col-span-2 px-2 py-1.5 rounded border text-xs" style={{ borderColor: C.border }} />
+                      <input value={it.quantidade} onChange={e => atualizarItemRevisado(idx, "quantidade", e.target.value)}
+                        placeholder="Qtd." className="sm:col-span-1 px-2 py-1.5 rounded border text-xs font-semibold" style={{ borderColor: C.border }} />
+                      <button onClick={() => removerItemRevisado(idx)} title="Remover este item"
+                        className="sm:col-span-1 flex justify-center py-1.5" style={{ color: C.red }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setRevisandoPdf(null)}

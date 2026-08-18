@@ -10,6 +10,8 @@
  * manualmente a linha correta; esse vínculo entra aqui como "manuais".
  */
 
+import { num } from "./valores.js";
+
 // Cruza um item da Planilha de Itens com as linhas do PCA — por código (Sistema Centi) e, na falta dele, por descrição
 // Normaliza um código para comparação: o Excel ora entrega texto, ora número, às vezes com
 // espaço rígido ou zeros à esquerda. Sem isso, códigos iguais deixam de casar.
@@ -124,4 +126,44 @@ export function pcaSugestaoPorDescricao(item, pcaLinhas) {
     if (!doPca) return false;
     return doPca === alvo || doPca.includes(alvo) || alvo.includes(doPca);
   }) || null;
+}
+
+// Soma uma lista de quantidades (em qualquer formato usual — "1.000,0000", "1000", "1000.5")
+// e devolve como texto limpo: inteiro sem decimais quando for o caso, senão com as casas
+// decimais que sobrarem.
+function somarQuantidades(quantidades) {
+  const total = quantidades.reduce((soma, q) => soma + num(q), 0);
+  return Number.isInteger(total) ? String(total) : String(total).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+}
+
+// O mesmo item pode aparecer mais de uma vez ao importar de vários arquivos juntos (o mesmo
+// código em Pedidos diferentes, entregas parceladas do mesmo Pedido, ou linhas repetidas numa
+// planilha) — sem isso, cada repetição vira uma linha própria na Declaração de previsão no PCA,
+// quando deveria ser UM item só, com as quantidades somadas. Casa pelo código do produto
+// (tolerante a zeros à esquerda, como o cruzamento com o PCA — ver mesmoCodigo); na falta de
+// código nos dois lados, casa pela descrição.
+export function mesclarItensRepetidos(itens) {
+  const grupos = [];
+  for (const it of itens || []) {
+    const temCodigo = !!normalizarCodigo(it.idProduto);
+    const descNorm = normalizarTexto(it.descricao);
+    const grupo = grupos.find(g => temCodigo
+      ? mesmoCodigo(g.idProduto, it.idProduto)
+      : (!normalizarCodigo(g.idProduto) && descNorm && normalizarTexto(g.descricao) === descNorm));
+    if (grupo) {
+      grupo._quantidades.push(it.quantidade);
+      grupo._repeticoes += 1;
+      // Entre as repetições, mantém o código e a descrição mais completos (mais longos) —
+      // a extração de PDF às vezes acerta um pouco melhor numa ocorrência que na outra.
+      if ((it.idProduto || "").length > (grupo.idProduto || "").length) grupo.idProduto = it.idProduto;
+      if ((it.descricao || "").length > (grupo.descricao || "").length) grupo.descricao = it.descricao;
+    } else {
+      grupos.push({ ...it, _quantidades: [it.quantidade], _repeticoes: 1 });
+    }
+  }
+  return grupos.map(({ _quantidades, _repeticoes, ...item }) => ({
+    ...item,
+    quantidade: somarQuantidades(_quantidades),
+    repeticoes: _repeticoes, // >1: quantidade é a soma de mais de uma ocorrência do mesmo item
+  }));
 }
