@@ -443,7 +443,7 @@ export function ListView({ etps, todosEtps, justificativas, declaracoes,
                   </div>
                 ) : (
                   <div className="overflow-x-auto etp-scroll">
-                    <table className="w-full text-sm" style={{ minWidth: "560px" }}>
+                    <table className="w-full text-sm table-fixed" style={{ minWidth: "560px" }}>
                       <thead>
                         <tr style={{ background: C.paperDark }}>
                           <th className="text-left px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: C.inkMuted }}>Título / Objeto</th>
