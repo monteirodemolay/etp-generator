@@ -10,7 +10,7 @@ import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
          Info, Loader2, ListChecks, ListX, X, Lock, Plus, RefreshCw } from "lucide-react";
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
-import { cruzarComPca, buscarNoPca } from "../../dominio/pca.js";
+import { cruzarComPca, buscarNoPca, normalizarTexto } from "../../dominio/pca.js";
 import * as XLSX from "xlsx";
 import { parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti } from "../../dominio/planilhas.js";
@@ -52,6 +52,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const [importingPdf, setImportingPdf] = useState(false);
   const [errorPdf, setErrorPdf] = useState("");
   const [revisandoPdf, setRevisandoPdf] = useState(null); // array de itens extraídos, aguardando confirmação
+  const [revisandoDocumento, setRevisandoDocumento] = useState(null); // itens prontos pra virar o Word, aguardando conferência da descrição
   const [adicionandoManual, setAdicionandoManual] = useState(false);
   const [buscaManual, setBuscaManual] = useState("");
   const [novoItemManual, setNovoItemManual] = useState(null); // {idProduto, descricao, unidade, quantidade} depois de escolher/digitar
@@ -280,19 +281,45 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   const itensFaltantes = matches.filter(m => !m.previsto).map(m => m.item); // ainda sem sequencial nenhum
   const totalmenteAlinhado = itens.length > 0 && pca && encontrados === itens.length;
 
-  function baixarDocumento() {
-    const linhasTabela = matches.filter(m => m.previsto).map((m, idx) => {
+  // Abre a conferência antes de gerar o Word: por padrão, usa a descrição do PCA quando o item
+  // está vinculado a uma linha de lá (é o texto confiável — digitado direto no painel, não
+  // extraído de PDF) e ela diverge da descrição importada. O servidor confere e pode editar
+  // qualquer descrição, ou trocar de volta pra importada, antes de confirmar.
+  function abrirRevisaoDocumento() {
+    const linhas = matches.filter(m => m.previsto).map((m, idx) => {
+      const codigoCenti = (m.item.idProduto || "").trim();
+      const codigoPca = (m.pcaRow?.codigo || "").trim();
+      const descricaoImportada = (m.item.descricao || "").trim();
+      const descricaoPca = (m.pcaRow?.produto || "").trim();
+      const divergente = !!(descricaoPca && normalizarTexto(descricaoPca) !== normalizarTexto(descricaoImportada));
+      return {
+        key: m.item.id ?? idx,
+        codigoCenti, codigoPca,
+        sequencial: m.sequencial || "-",
+        descricaoImportada, descricaoPca, divergente,
+        // Prefere a do PCA quando existe e diverge -- é o texto confiável; sem PCA ou iguais, mantém a importada.
+        descricao: divergente ? descricaoPca : (descricaoImportada || descricaoPca),
+      };
+    });
+    setRevisandoDocumento(linhas);
+  }
+
+  function atualizarLinhaDocumento(key, descricao) {
+    setRevisandoDocumento(prev => prev.map(l => (l.key === key ? { ...l, descricao } : l)));
+  }
+
+  function confirmarGerarDocumento() {
+    const linhasTabela = revisandoDocumento.map((l, idx) => {
       // Quando o código do Pedido (Centi) é diferente do código sob o qual o item está
       // cadastrado no PCA, mostra os dois juntos — "5241938422 / 14157343" (o segundo, do
       // PCA, em negrito) — para comprovar que é o mesmo item, só sob outra numeração.
-      const centi = (m.item.idProduto || "").trim();
-      const pcaCodigo = (m.pcaRow?.codigo || "").trim();
-      const idCelula = (centi && pcaCodigo && !mesmoCodigo(centi, pcaCodigo))
-        ? `${escapeHtml(centi)} / <b>${escapeHtml(pcaCodigo)}</b>`
-        : escapeHtml(m.codigo || "-");
-      return `<tr><td>${idx + 1}</td><td>${idCelula}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${escapeHtml(m.sequencial || "-")}</td></tr>`;
+      const idCelula = (l.codigoCenti && l.codigoPca && !mesmoCodigo(l.codigoCenti, l.codigoPca))
+        ? `${escapeHtml(l.codigoCenti)} / <b>${escapeHtml(l.codigoPca)}</b>`
+        : escapeHtml(l.codigoPca || l.codigoCenti || "-");
+      return `<tr><td>${idx + 1}</td><td>${idCelula}</td><td>${escapeHtml(l.descricao || "-")}</td><td>${escapeHtml(l.sequencial || "-")}</td></tr>`;
     }).join("");
     gerarDocumentoPCAAvulso({ objeto, orgao, cabecalho, linhasTabela }).catch(e => console.error(e));
+    setRevisandoDocumento(null);
   }
 
   function irParaJustificativa() {
@@ -580,10 +607,10 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                   <input value={orgao} onChange={e => atualizarOrgao(e.target.value)}
                     className="mt-1.5 w-full px-3 py-2.5 rounded-lg border text-sm bg-white" style={{ borderColor: C.border }} />
                 </label>
-                <button onClick={baixarDocumento} disabled={encontrados === 0 || !objeto.trim()}
+                <button onClick={abrirRevisaoDocumento} disabled={encontrados === 0 || !objeto.trim()}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
                   style={{ background: C.navy, color: C.paper }}>
-                  <Download size={15} /> Baixar documento (Word)
+                  <Download size={15} /> Conferir e baixar documento (Word)
                 </button>
                 {(encontrados === 0 || !objeto.trim()) && (
                   <p className="text-xs mt-2" style={{ color: C.inkMuted }}>
@@ -677,6 +704,62 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
                   <Download size={14} /> Baixar planilha para inclusão no Centi ({itensFaltantes.length} pendente(s))
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revisandoDocumento && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(18,32,50,0.65)" }}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto etp-scroll rounded-xl bg-white shadow-xl p-6">
+            <h2 className="serif text-lg font-semibold mb-1" style={{ color: C.navy }}>
+              Conferir descrições antes de gerar o documento ({revisandoDocumento.length})
+            </h2>
+            <p className="text-xs mb-4" style={{ color: C.inkMuted }}>
+              Quando o item está vinculado a uma linha do PCA e a descrição de lá é diferente da importada,
+              a descrição do PCA já vem selecionada por padrão — é o texto confiável, digitado direto no
+              painel, sem o risco de sair cortado como às vezes acontece na leitura de PDF. Edite qualquer
+              campo se precisar, ou alterne entre as duas versões.
+            </p>
+            <div className="space-y-3 mb-4">
+              {revisandoDocumento.map(l => (
+                <div key={l.key} className="rounded-lg border p-3" style={{ borderColor: l.divergente ? C.brass : C.border, background: l.divergente ? "rgba(166,131,46,0.04)" : "white" }}>
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                    <span className="text-xs font-mono" style={{ color: C.inkMuted }}>
+                      {l.codigoCenti && l.codigoPca && !mesmoCodigo(l.codigoCenti, l.codigoPca)
+                        ? <>{l.codigoCenti} / <b style={{ color: C.navy }}>{l.codigoPca}</b></>
+                        : (l.codigoPca || l.codigoCenti || "—")}
+                      {" · seq. "}{l.sequencial}
+                    </span>
+                    {l.divergente && (
+                      <div className="flex items-center gap-1.5 text-[10.5px]">
+                        <Info size={11} style={{ color: C.brass }} />
+                        <button onClick={() => atualizarLinhaDocumento(l.key, l.descricaoPca)}
+                          className="font-semibold underline" style={{ color: l.descricao === l.descricaoPca ? C.navy : C.inkMuted }}>
+                          usar a do PCA
+                        </button>
+                        <span style={{ color: C.inkMuted }}>·</span>
+                        <button onClick={() => atualizarLinhaDocumento(l.key, l.descricaoImportada)}
+                          className="font-semibold underline" style={{ color: l.descricao === l.descricaoImportada ? C.navy : C.inkMuted }}>
+                          usar a importada
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <textarea value={l.descricao} onChange={e => atualizarLinhaDocumento(l.key, e.target.value)}
+                    rows={3} className="w-full px-2.5 py-2 rounded border text-xs leading-relaxed" style={{ borderColor: C.border }} />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRevisandoDocumento(null)}
+                className="px-3.5 py-2 rounded-lg text-sm font-medium" style={{ background: "white", color: C.inkMuted, border: `1px solid ${C.border}` }}>
+                Cancelar
+              </button>
+              <button onClick={confirmarGerarDocumento}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold" style={{ background: C.navy, color: C.paper }}>
+                <span className="inline-flex items-center gap-2"><Download size={14} /> Confirmar e baixar</span>
+              </button>
             </div>
           </div>
         </div>

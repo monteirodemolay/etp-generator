@@ -12,7 +12,7 @@ import { prepararCabecalho } from "./timbre.js";
 import { escapeHtml } from "../dominio/texto.js";
 import { fmtDate, fmtDateISO, todayISO } from "../dominio/datas.js";
 import { listaResponsaveis, objetoCompleto, linhaAssinaturaData } from "../dominio/etp.js";
-import { cruzarComPca } from "../dominio/pca.js";
+import { cruzarComPca, normalizarTexto } from "../dominio/pca.js";
 import { secoesParaRelatorio } from "../dominio/numeracao.js";
 import { gerarRelatorioEstimativaHtml } from "../dominio/estimativa.js";
 import { brl } from "../dominio/valores.js";
@@ -76,16 +76,27 @@ export async function gerarDocumentoWord(etp, cabecalho) {
     ? responsaveis.map(r => r.nome + (r.cargo ? ` (${r.cargo})` : "")).join("; ")
     : "-";
 
+  // O item importado (do Excel/PDF) pode ter uma descrição truncada ou malformatada pela
+  // extração; quando ele está vinculado a uma linha do PCA e a descrição de lá diverge da
+  // importada, prefere a do PCA — é o texto confiável, digitado direto no painel.
+  const matchesPca = pca ? cruzarComPca(itens, pca, etp.manuaisPca) : null;
+  function descricaoParaDocumento(it, match) {
+    const importada = (it.descricao || "").trim();
+    const doPca = (match?.pcaRow?.produto || "").trim();
+    if (doPca && normalizarTexto(doPca) !== normalizarTexto(importada)) return doPca;
+    return importada || doPca || "-";
+  }
+
   const linhasItens = itens.map((it, idx) =>
-    `<tr><td>${idx + 1}</td><td>${escapeHtml(it.descricao || "-")}</td><td>${escapeHtml(it.unidade || "")}</td><td>${escapeHtml(String(it.quantidade || "-"))}</td></tr>`
+    `<tr><td>${idx + 1}</td><td>${escapeHtml(descricaoParaDocumento(it, matchesPca?.[idx]))}</td><td>${escapeHtml(it.unidade || "")}</td><td>${escapeHtml(String(it.quantidade || "-"))}</td></tr>`
   ).join("");
 
   const quadroQuantitativos = itens.length > 0
     ? `<h3>Quadro de quantitativos</h3><table><tr><th>Item</th><th>Descrição</th><th>Und.</th><th>Qtd.</th></tr>${linhasItens}</table>`
     : "";
 
-  const linhasPca = pca ? cruzarComPca(itens, pca, etp.manuaisPca).map((m, idx) =>
-    `<tr><td>${idx + 1}</td><td>${escapeHtml(m.item.descricao || "-")}</td><td>${m.previsto ? "Sim" : "Não"}</td><td>${escapeHtml(m.sequencial || "—")}</td></tr>`
+  const linhasPca = matchesPca ? matchesPca.map((m, idx) =>
+    `<tr><td>${idx + 1}</td><td>${escapeHtml(descricaoParaDocumento(m.item, m))}</td><td>${m.previsto ? "Sim" : "Não"}</td><td>${escapeHtml(m.sequencial || "—")}</td></tr>`
   ).join("") : "";
 
   const relatorioEstimativa = gerarRelatorioEstimativaHtml(etp);
