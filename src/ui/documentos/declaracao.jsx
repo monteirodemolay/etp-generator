@@ -3,14 +3,12 @@
  * alinhamento dos itens ao Plano de Contratações Anual.
  */
 
-import { mesmoCodigo } from "../../dominio/pca.js";
-
 import React, { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Upload, Download, Trash2, FileText, Check, AlertCircle,
          Info, Loader2, ListChecks, ListX, X, Lock, Plus, RefreshCw } from "lucide-react";
 import { C } from "../tokens.js";
 import { VinculoPca } from "../etp/formularios.jsx";
-import { cruzarComPca, buscarNoPca, normalizarTexto } from "../../dominio/pca.js";
+import { cruzarComPca, buscarNoPca, normalizarTexto, mesmoCodigo, mesclarItensRepetidos } from "../../dominio/pca.js";
 import * as XLSX from "xlsx";
 import { parseCentiSheet, parsePCASheet, baixarModeloPlanilha,
          baixarPlanilhaInclusaoCenti } from "../../dominio/planilhas.js";
@@ -86,6 +84,21 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   }, [loading, entidade?.sigla, pca]);
 
   function atualizarItens(v) { onSalvar({ ...doc, itens: v }); }
+
+  // Uma Declaração corresponde a UM processo só -- quando o processo tem mais de um Pedido,
+  // DFD ou planilha (às vezes importados em momentos diferentes), cada nova importação deve
+  // ACRESCENTAR a esses itens, não substituir a lista inteira. Itens com o mesmo código são
+  // reconhecidos e mesclados numa linha só, com a quantidade somada (mesclarItensRepetidos já
+  // faz isso dentro de uma única importação; aqui ele roda de novo sobre itens já salvos +
+  // os recém-importados, pra pegar repetições ENTRE importações diferentes também). Pra
+  // recomeçar do zero, o botão "Limpar lista" continua disponível.
+  function adicionarItensImportados(novosItens) {
+    const combinados = mesclarItensRepetidos([...itens, ...novosItens]).map(it => ({
+      ...it,
+      id: it.id || ("it_" + Math.random().toString(36).slice(2, 8)),
+    }));
+    atualizarItens(combinados);
+  }
   function atualizarObjeto(v) { onSalvar({ ...doc, objeto: v }); }
   function atualizarOrgao(v) { onSalvar({ ...doc, orgao: v }); }
   function atualizarPca(v) {
@@ -119,7 +132,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
       const result = parseCentiSheet(rows);
       if (result.itens.length === 0) throw new Error("Nenhum item encontrado nesta planilha.");
-      atualizarItens(result.itens);
+      adicionarItensImportados(result.itens);
     } catch (err) {
       console.error(err);
       setErrorItens(err.message || "Não foi possível importar esta planilha.");
@@ -191,8 +204,7 @@ export function DeclaracaoView({ doc, secretarias, onSalvar, onBack, onGerarJust
   }
 
   function confirmarItensRevisados() {
-    atualizarItens(revisandoPdf.map(it => ({
-      id: "it_" + Math.random().toString(36).slice(2, 8),
+    adicionarItensImportados(revisandoPdf.map(it => ({
       idProduto: it.idProduto, descricao: it.descricao, unidade: it.unidade || "UNIDADE",
       quantidade: it.quantidade, classificacao: "",
     })));
